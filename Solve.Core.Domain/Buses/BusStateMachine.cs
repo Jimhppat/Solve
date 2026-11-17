@@ -15,17 +15,6 @@ public readonly record struct BusTransition(BusState From, BusTrigger Trigger, B
 }
 
 /// <summary>
-/// 总线错误码
-/// </summary>
-public static class BusErrors
-{
-    public const string InvalidTransitionCode = "Bus.InvalidTransition";
-
-    public static Error InvalidTransition(BusState from, BusTrigger trigger)
-        => new(InvalidTransitionCode, $"总线状态 {from} 不接受触发 {trigger}。");
-}
-
-/// <summary>
 /// 单条总线的生命周期状态机。只负责"能不能迁移、迁到哪"，不做 I/O、不计时。
 /// </summary>
 /// <remarks>
