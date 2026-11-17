@@ -80,4 +80,17 @@ public static class BusErrors
 
     public static Error UnhandledException(Exception exception)
         => new(UnhandledExceptionCode, $"未处理异常 {exception.GetType().Name}：{exception.Message}");
+
+    // ---------- 注册表（BusManager）----------
+
+    public const string AlreadyRegisteredCode = "Bus.AlreadyRegistered";
+    public const string NotRegisteredCode = "Bus.NotRegistered";
+    public const string ResourceConflictCode = "Bus.ResourceConflict";
+
+    public static Error AlreadyRegistered(BusId id) => new(AlreadyRegisteredCode, $"总线 {id} 已注册。");
+
+    public static Error NotRegistered(BusId id) => new(NotRegisteredCode, $"总线 {id} 未注册。");
+
+    public static Error ResourceConflict(string resource, BusId owner)
+        => new(ResourceConflictCode, $"物理资源 {resource} 已被总线 {owner} 占用。");
 }
