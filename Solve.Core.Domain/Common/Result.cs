@@ -14,6 +14,34 @@ public sealed record Error(string Code, string Message)
 }
 
 /// <summary>
+/// 无返回值操作（打开、写入、关闭）的结果。语义同 <see cref="Result{T}"/>。
+/// </summary>
+public readonly struct Result
+{
+    private readonly Error? _error;
+
+    private Result(Error? error, bool isSuccess)
+    {
+        _error = error;
+        IsSuccess = isSuccess;
+    }
+
+    public bool IsSuccess { get; }
+
+    public bool IsFailure => !IsSuccess;
+
+    public Error Error => IsSuccess
+        ? throw new InvalidOperationException("成功的 Result 没有错误。")
+        : _error ?? Error.Uninitialized;
+
+    public static Result Success() => new(null, true);
+
+    public static Result Failure(Error error) => new(error ?? throw new ArgumentNullException(nameof(error)), false);
+
+    public override string ToString() => IsSuccess ? "Success" : $"Failure({Error})";
+}
+
+/// <summary>
 /// 表示可预期失败（校验失败、非法迁移、通信失败）的返回值；不可预期的编程错误仍然抛出异常。
 /// </summary>
 public readonly struct Result<T>

@@ -19,4 +19,30 @@ public static class BusErrors
 
     public static Error InvalidField(string field, string message)
         => new(DescriptorCodePrefix + field, message);
+
+    // ---------- 物理通道（Transport）----------
+
+    public const string NotOpenCode = "Bus.Transport.NotOpen";
+    public const string AlreadyOpenCode = "Bus.Transport.AlreadyOpen";
+    public const string OpenFailedCode = "Bus.Transport.OpenFailed";
+    public const string IoFailedCode = "Bus.Transport.IoFailed";
+    public const string ConnectionClosedCode = "Bus.Transport.ConnectionClosed";
+    public const string UnsupportedDescriptorCode = "Bus.Transport.UnsupportedDescriptor";
+    public const string InvalidDescriptorCode = "Bus.Transport.InvalidDescriptor";
+
+    public static Error NotOpen() => new(NotOpenCode, "物理通道未打开。");
+
+    public static Error AlreadyOpen() => new(AlreadyOpenCode, "物理通道已打开。");
+
+    public static Error OpenFailed(string detail) => new(OpenFailedCode, $"打开物理通道失败：{detail}");
+
+    public static Error IoFailed(string detail) => new(IoFailedCode, $"物理通道读写失败：{detail}");
+
+    public static Error ConnectionClosed() => new(ConnectionClosedCode, "物理通道已关闭或被对端断开。");
+
+    public static Error UnsupportedDescriptor(Type descriptorType)
+        => new(UnsupportedDescriptorCode, $"不支持的总线类型：{descriptorType.Name}。");
+
+    public static Error InvalidDescriptor(IReadOnlyList<Error> errors)
+        => new(InvalidDescriptorCode, "总线配置无效：" + string.Join("；", errors.Select(e => e.ToString())));
 }
