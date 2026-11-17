@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Solve.Core.Domain\Solve.Core.Domain.csproj" />
     <ProjectReference Include="..\Solve.Adapters.Hardware\Solve.Adapters.Hardware.csproj" />
+    <ProjectReference Include="..\Solve.Adapters.Persistence\Solve.Adapters.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

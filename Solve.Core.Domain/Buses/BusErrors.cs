@@ -93,4 +93,20 @@ public static class BusErrors
 
     public static Error ResourceConflict(string resource, BusId owner)
         => new(ResourceConflictCode, $"物理资源 {resource} 已被总线 {owner} 占用。");
+
+    // ---------- 配置存储 ----------
+
+    public const string StorageFailedCode = "Bus.Storage.Failed";
+    public const string StorageNotFoundCode = "Bus.Storage.NotFound";
+    public const string StorageConflictCode = "Bus.Storage.Conflict";
+    public const string StorageCorruptRowCode = "Bus.Storage.CorruptRow";
+
+    public static Error StorageFailed(string detail) => new(StorageFailedCode, $"配置存储失败：{detail}");
+
+    public static Error StorageNotFound(BusId id) => new(StorageNotFoundCode, $"配置中不存在总线 {id}。");
+
+    public static Error StorageConflict(string detail) => new(StorageConflictCode, $"配置冲突：{detail}");
+
+    public static Error StorageCorruptRow(string field, string detail)
+        => new(StorageCorruptRowCode, $"配置行字段 {field} 无法解析：{detail}");
 }
