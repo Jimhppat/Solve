@@ -7,7 +7,10 @@
         Title="Solve"
         Width="1280" Height="800"
         MinWidth="960" MinHeight="600"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        WindowState="Maximized"
+        WindowDecorations="BorderOnly"
+        ExtendClientAreaToDecorationsHint="True">
 
     <Window.Resources>
         <!-- Semi 默认在浮层展开时给内容区压一层深色遮罩；监控界面下遮罩会盖住故障行，
@@ -16,6 +19,43 @@
     </Window.Resources>
 
     <Window.Styles>
+        <!-- 标题栏内的按钮默认会被当成拖拽区吞掉点击；以后放进工具槽位的按钮自动标记为 User，正常接收输入 -->
+        <Style Selector="Border#TitleBar StackPanel :is(Button)">
+            <Setter Property="WindowDecorationProperties.ElementRole" Value="User" />
+        </Style>
+
+        <!-- 系统按钮：46×40 直角，与 Windows 原生尺寸一致；关闭按钮悬停为危险色 -->
+        <Style Selector="Button.caption">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+        </Style>
+        <Style Selector="Button.caption /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
+        </Style>
+        <Style Selector="Button.caption:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill1}" />
+        </Style>
+        <Style Selector="Button.caption:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill2}" />
+        </Style>
+        <Style Selector="Button.caption.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Button.caption.close:pointerover PathIcon">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorWhite}" />
+        </Style>
+        <Style Selector="Button.caption PathIcon">
+            <Setter Property="Width" Value="12" />
+            <Setter Property="Height" Value="12" />
+        </Style>
+
         <!-- 图标栏按钮：静止时透明，只在悬停/展开时给一层浅填充，避免常驻色块抢表格的注意力 -->
         <Style Selector="ToggleButton.rail">
             <Setter Property="Width" Value="40" />
@@ -94,6 +134,63 @@
     </Window.Styles>
 
     <DockPanel>
+
+        <!-- 自绘标题栏（Rider 式）：整条是拖拽区，左右两个工具槽位留给以后的按钮，
+             最右侧是自绘的系统按钮，通过 ElementRole 交给 Win32 处理（保留贴靠布局、双击最大化等系统行为） -->
+        <Border x:Name="TitleBar" DockPanel.Dock="Top" Height="40"
+                Background="{DynamicResource SemiColorFill0}"
+                BorderBrush="{DynamicResource SemiColorBorder}"
+                BorderThickness="0,0,0,1"
+                WindowDecorationProperties.ElementRole="TitleBar">
+            <Grid ColumnDefinitions="56,Auto,*,Auto,Auto">
+
+                <!-- 应用标识：与下方 56 宽图标栏同列对齐 -->
+                <Border Grid.Column="0" Width="24" Height="24"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
+                        Background="{DynamicResource SemiColorPrimary}">
+                    <TextBlock Text="S" FontSize="13" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{DynamicResource SemiColorWhite}" />
+                </Border>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Solve" FontSize="13" FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource SemiColorText0}" />
+                    <!-- 左侧工具槽位：以后放工程/配置切换之类的下拉按钮 -->
+                    <StackPanel x:Name="TitleBarLeftTools" Orientation="Horizontal" Spacing="4"
+                                VerticalAlignment="Center" Margin="8,0,0,0" />
+                </StackPanel>
+
+                <!-- 第 2 列留空：作为拖拽区 -->
+
+                <!-- 右侧工具槽位：以后放运行、搜索、设置之类的图标按钮 -->
+                <StackPanel x:Name="TitleBarRightTools" Grid.Column="3"
+                            Orientation="Horizontal" Spacing="4"
+                            VerticalAlignment="Center" Margin="0,0,8,0" />
+
+                <StackPanel Grid.Column="4" Orientation="Horizontal">
+                    <Button Classes="caption" ToolTip.Tip="最小化" Click="OnMinimizeClick"
+                            WindowDecorationProperties.ElementRole="MinimizeButton">
+                        <PathIcon Data="{DynamicResource SemiIconMinus}" />
+                    </Button>
+                    <Button Classes="caption" ToolTip.Tip="最大化" Click="OnMaximizeClick"
+                            WindowDecorationProperties.ElementRole="MaximizeButton">
+                        <Panel>
+                            <PathIcon Data="{DynamicResource SemiIconMaximize2}"
+                                      IsVisible="{Binding $parent[Window].WindowState, Converter={x:Static ObjectConverters.NotEqual}, ConverterParameter={x:Static WindowState.Maximized}}" />
+                            <PathIcon Data="{DynamicResource SemiIconRestore}"
+                                      IsVisible="{Binding $parent[Window].WindowState, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static WindowState.Maximized}}" />
+                        </Panel>
+                    </Button>
+                    <Button Classes="caption close" ToolTip.Tip="关闭" Click="OnCloseClick"
+                            WindowDecorationProperties.ElementRole="CloseButton">
+                        <PathIcon Data="{DynamicResource SemiIconClose}" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
 
         <!-- 状态栏放在 SplitView 外面：侧栏展开时也不会遮住在线/故障统计 -->
         <Border DockPanel.Dock="Bottom"
