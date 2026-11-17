@@ -61,6 +61,15 @@ public sealed class SqliteDatabase
             ON buses (trim(port_name) COLLATE NOCASE)
             WHERE kind = 'serial';
         """,
+
+        // v2：应用级键值设置（如 bus.hardware_enabled）。只新增表，不改动 v1 数据。
+        """
+        CREATE TABLE app_settings (
+            key         TEXT NOT NULL PRIMARY KEY CHECK (length(key) BETWEEN 1 AND 128),
+            value       TEXT NOT NULL,
+            updated_at  TEXT NOT NULL   -- ISO 8601 UTC
+        ) STRICT;
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;
