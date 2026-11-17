@@ -45,4 +45,39 @@ public static class BusErrors
 
     public static Error InvalidDescriptor(IReadOnlyList<Error> errors)
         => new(InvalidDescriptorCode, "总线配置无效：" + string.Join("；", errors.Select(e => e.ToString())));
+
+    // ---------- 运行时（BusRuntime）----------
+
+    public const string TimeoutCode = "Bus.Timeout";
+    public const string ChannelLockedCode = "Bus.ChannelLocked";
+    public const string ChannelBusyCode = "Bus.ChannelBusy";
+    public const string InterlockActiveCode = "Bus.InterlockActive";
+    public const string SafetyTrippedCode = "Bus.SafetyTripped";
+    public const string HeartbeatLostCode = "Bus.HeartbeatLost";
+    public const string RetryExhaustedCode = "Bus.RetryExhausted";
+    public const string UnhandledExceptionCode = "Bus.UnhandledException";
+
+    public static Error Timeout(string operation, TimeSpan timeout)
+        => new(TimeoutCode, $"{operation}超时（{timeout.TotalMilliseconds:0} ms）。");
+
+    public static Error ChannelLocked(BusState state)
+        => new(ChannelLockedCode, $"总线处于 {state}，通道已锁定，不允许收发。");
+
+    public static Error ChannelBusy(TimeSpan waited)
+        => new(ChannelBusyCode, $"等待通道锁超过 {waited.TotalMilliseconds:0} ms，通道被其他事务占用。");
+
+    public static Error InterlockActive(string detail)
+        => new(InterlockActiveCode, $"安全联锁未解除，禁止复位：{detail}");
+
+    public static Error SafetyTripped(string reason)
+        => new(SafetyTrippedCode, $"安全跳闸：{reason}");
+
+    public static Error HeartbeatLost()
+        => new(HeartbeatLostCode, "心跳丢失。");
+
+    public static Error RetryExhausted(int attempts)
+        => new(RetryExhaustedCode, $"自动重连 {attempts} 次均失败，进入故障锁存。");
+
+    public static Error UnhandledException(Exception exception)
+        => new(UnhandledExceptionCode, $"未处理异常 {exception.GetType().Name}：{exception.Message}");
 }
