@@ -55,7 +55,7 @@ public partial class App : Application
                 Dispatcher.UIThread.UnhandledException += (_, e) => OnUiThreadException(desktop, host, e);
 
                 // 日志管线在 UI 之前就已创建：先接入日志页与主控台最近日志，启动过程中的日志也能看到
-                vm.AttachLogFeed(host.Logging.Feed, host.Options.LogDirectory);
+                vm.AttachLogFeed(host.Logging.Feed, host.Options.LogDirectory, host.LogArchive);
 
                 _ = Task.Run(async () =>
                 {

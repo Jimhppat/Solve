@@ -11,6 +11,7 @@ using Solve.Adapters.Persistence.Settings;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.Logging;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Desktop.Logging;
@@ -51,6 +52,7 @@ public sealed class AppHost : IAsyncDisposable
         Options = options;
 
         _logging = LoggingPipeline.Create(options.LogDirectory, options.LoggingSettingsPath);
+        LogArchive = new FileLogArchive(options.LogDirectory);
 
         // 日志器的生命周期归管线所有：工厂释放时不连带释放，由 _logging 统一刷写
         _loggerFactory = new SerilogLoggerFactory(_logging.Logger, dispose: false);
@@ -88,6 +90,11 @@ public sealed class AppHost : IAsyncDisposable
     /// 黑匣子日志管线；供接入框架日志（如 Avalonia）等需要 Serilog 根日志器的场合
     /// </summary>
     public LoggingPipeline Logging => _logging;
+
+    /// <summary>
+    /// 按日期保存的历史日志，供运行日志页查看与导出
+    /// </summary>
+    public ILogArchive LogArchive { get; }
 
     /// <summary>
     /// 总线注册表；启动完成前或配置库不可用时为 null
