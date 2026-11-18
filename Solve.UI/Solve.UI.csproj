@@ -32,6 +32,18 @@
         <DependentUpon>MasterConsoleView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\RuntimeLogView.axaml.cs">
+        <DependentUpon>RuntimeLogView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\RecentLogList.axaml.cs">
+        <DependentUpon>RecentLogList.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\LevelFilterPanel.axaml.cs">
+        <DependentUpon>LevelFilterPanel.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
     </ItemGroup>
 
 </Project>
