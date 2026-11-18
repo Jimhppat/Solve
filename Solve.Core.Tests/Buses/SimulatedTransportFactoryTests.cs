@@ -11,6 +11,8 @@ public sealed class SimulatedTransportFactoryTests
         protected override void CollectLinkErrors(List<Error> errors)
         {
         }
+
+        public override bool RequiresTransportRebuild(BusDescriptor other) => other is not UnknownBusDescriptor;
     }
 
     private readonly SimulatedTransportFactory _factory = new();

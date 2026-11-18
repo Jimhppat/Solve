@@ -31,6 +31,11 @@ public interface IBusConfigurationRepository
     Task<Result<BusConfigurationSnapshot>> LoadAllAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// 按 Id 读取单条配置并执行领域校验。记录不存在返回 Success(null)；配置损坏返回错误。
+    /// </summary>
+    Task<Result<BusDescriptor?>> GetByIdAsync(BusId id, CancellationToken cancellationToken);
+
+    /// <summary>
     /// 按 Id 新增或更新。描述无效返回 Bus.InvalidDescriptor；串口名与其他记录冲突返回 Bus.Storage.Conflict。
     /// </summary>
     Task<Result> SaveAsync(BusDescriptor descriptor, CancellationToken cancellationToken);

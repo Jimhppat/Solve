@@ -28,8 +28,8 @@ public sealed class BusRuntime : IAsyncDisposable
 {
     private const int MaxLoggedPacketBytes = 256;
 
-    private readonly BusDescriptor _descriptor;
-    private readonly IBusTransport _transport;
+    private BusDescriptor _descriptor;
+    private IBusTransport _transport;
     private readonly IBusSafetyInterlock _interlock;
     private readonly ILogger _logger;
     private readonly BusRuntimeOptions _options;
@@ -116,7 +116,16 @@ public sealed class BusRuntime : IAsyncDisposable
 
     public BusId Id => _descriptor.Id;
 
-    public BusDescriptor Descriptor => _descriptor;
+    public BusDescriptor Descriptor
+    {
+        get
+        {
+            lock (_stateGate)
+            {
+                return _descriptor;
+            }
+        }
+    }
 
     public BusState State => _machine.State;
 
@@ -196,6 +205,113 @@ public sealed class BusRuntime : IAsyncDisposable
     {
         ThrowIfDisposed();
         return ToResult(Fire(BusTrigger.HeartbeatLost, BusErrors.HeartbeatLost()));
+    }
+
+    /// <summary>
+    /// 重配置总线参数：软参数（Tier 1）在线热更新；硬参数（Tier 2）安全重建物理通道。
+    /// </summary>
+    public async Task<Result> ReconfigureAsync(
+        BusDescriptor newDescriptor,
+        IBusTransportFactory transportFactory,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(newDescriptor);
+        ArgumentNullException.ThrowIfNull(transportFactory);
+        ThrowIfDisposed();
+
+        if (newDescriptor.Id != Id)
+            return Result.Failure(BusErrors.InvalidField("Id", $"描述符 Id {newDescriptor.Id} 与总线 Id {Id} 不匹配。"));
+
+        var errors = newDescriptor.Validate();
+        if (errors.Count > 0)
+            return Result.Failure(BusErrors.InvalidDescriptor(errors));
+
+        BusDescriptor oldDescriptor;
+        lock (_stateGate)
+        {
+            oldDescriptor = _descriptor;
+        }
+
+        var rebuildRequired = oldDescriptor.RequiresTransportRebuild(newDescriptor);
+        if (!rebuildRequired)
+        {
+            // Tier 1 软参数：在线热更新，无需断开物理通道
+            lock (_stateGate)
+            {
+                _descriptor = newDescriptor;
+            }
+
+            _logger.LogInformation("Bus {BusId} 软参数热更新成功", Id);
+            return Result.Success();
+        }
+
+        // Tier 2 硬参数：需要重建物理通道
+        // 1. 获取通道排他锁，保证没有事务正在收发
+        if (!await _channelLock.WaitAsync(_options.ChannelLockTimeout, cancellationToken).ConfigureAwait(false))
+            return Result.Failure(BusErrors.ChannelBusy(_options.ChannelLockTimeout));
+
+        try
+        {
+            ThrowIfDisposed();
+
+            // 2. 取消在途 I/O 与会话
+            CancelSession();
+
+            // 3. 关闭旧物理通道并安全释放
+            try
+            {
+                await _transport.CloseAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Bus {BusId} 重配置关闭旧物理通道异常，继续销毁", Id);
+            }
+
+            try
+            {
+                await _transport.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Bus {BusId} 重配置释放旧物理通道异常", Id);
+            }
+
+            // 4. 创建新物理通道
+            var created = transportFactory.Create(newDescriptor);
+            if (created.IsFailure)
+            {
+                _logger.LogCritical("Bus {BusId} 重配置创建新物理通道失败：{Error}，执行安全跳闸", Id, created.Error);
+                Fire(BusTrigger.SafetyTrip, created.Error);
+                return Result.Failure(created.Error);
+            }
+
+            _transport = created.Value;
+
+            // 5. 更新描述符并判断状态协同
+            BusState state;
+            lock (_stateGate)
+            {
+                _descriptor = newDescriptor;
+                state = _machine.State;
+            }
+
+            _logger.LogInformation("Bus {BusId} 物理通道重构完成（{OldDesc} -> {NewDesc}）当前状态={State}",
+                Id, oldDescriptor.GetType().Name, newDescriptor.GetType().Name, state);
+
+            // 6. 状态协同：若原处于活动状态（Connected / Connecting / Reconnecting），先优雅关闭再触发重连
+            if (state is BusState.Connected or BusState.Connecting or BusState.Reconnecting)
+            {
+                Fire(BusTrigger.Disconnect, cause: null);
+                Fire(BusTrigger.Closed, cause: null);
+                Fire(BusTrigger.Connect, cause: null, onAccepted: () => _session = new CancellationTokenSource());
+            }
+
+            return Result.Success();
+        }
+        finally
+        {
+            _channelLock.Release();
+        }
     }
 
     // ==================== 事务 ====================

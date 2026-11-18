@@ -1,9 +1,21 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 
 namespace Solve.Core.Application.Buses;
+
+/// <summary>
+/// 总线注册表集合变动事件基类。
+/// </summary>
+public abstract record BusRegistryEvent(BusId BusId);
+
+public sealed record BusRegistered(BusId BusId, BusDescriptor Descriptor) : BusRegistryEvent(BusId);
+
+public sealed record BusUnregistered(BusId BusId) : BusRegistryEvent(BusId);
+
+public sealed record BusReconfigured(BusId BusId, BusDescriptor Descriptor) : BusRegistryEvent(BusId);
 
 /// <summary>
 /// 总线注册表：按描述创建/注销 <see cref="BusRuntime"/>，并防止多条总线争用同一物理资源。
@@ -20,6 +32,7 @@ public sealed class BusManager : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly BusRuntimeOptions _options;
     private readonly TimeProvider _time;
+    private readonly Channel<BusRegistryEvent> _registryEvents;
 
     private readonly Lock _gate = new();
     private readonly Dictionary<BusId, BusRuntime> _buses = [];
@@ -42,7 +55,18 @@ public sealed class BusManager : IAsyncDisposable
         _logger = loggerFactory.CreateLogger<BusManager>();
         _options = options ?? BusRuntimeOptions.Default;
         _time = timeProvider ?? TimeProvider.System;
+        _registryEvents = Channel.CreateBounded<BusRegistryEvent>(
+            new BoundedChannelOptions(_options.StateEventCapacity)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleWriter = false,
+            });
     }
+
+    /// <summary>
+    /// 总线集合变动事件流（新增、删除、重配置）。
+    /// </summary>
+    public ChannelReader<BusRegistryEvent> RegistryEvents => _registryEvents.Reader;
 
     /// <summary>
     /// 当前已注册总线的快照
@@ -89,6 +113,7 @@ public sealed class BusManager : IAsyncDisposable
                 return created;
 
             _buses.Add(descriptor.Id, created.Value);
+            _registryEvents.Writer.TryWrite(new BusRegistered(descriptor.Id, descriptor));
             _logger.LogInformation("注册总线 {BusId} {Name} ({Type})", descriptor.Id, descriptor.Name, descriptor.GetType().Name);
             return created;
         }
@@ -124,8 +149,53 @@ public sealed class BusManager : IAsyncDisposable
         }
 
         await runtime.DisposeAsync().ConfigureAwait(false);
+        _registryEvents.Writer.TryWrite(new BusUnregistered(id));
         _logger.LogInformation("注销总线 {BusId}", id);
         return Result.Success();
+    }
+
+    /// <summary>
+    /// 重配置已注册总线：先做排己查重，然后由运行时执行软更新或物理通道重构。
+    /// </summary>
+    public async Task<Result> ReconfigureAsync(BusDescriptor descriptor, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+
+        var errors = descriptor.Validate();
+        if (errors.Count > 0)
+            return Result.Failure(BusErrors.InvalidDescriptor(errors));
+
+        BusRuntime? runtime;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            if (!_buses.TryGetValue(descriptor.Id, out runtime))
+                return Result.Failure(BusErrors.NotRegistered(descriptor.Id));
+
+            if (FindResourceOwner(descriptor, excludeBusId: descriptor.Id) is { } conflict)
+                return Result.Failure(conflict);
+        }
+
+        var reconfigured = await runtime.ReconfigureAsync(descriptor, _transportFactory, cancellationToken).ConfigureAwait(false);
+        if (reconfigured.IsFailure)
+            return reconfigured;
+
+        _registryEvents.Writer.TryWrite(new BusReconfigured(descriptor.Id, descriptor));
+        _logger.LogInformation("总线 {BusId} {Name} 重配置成功", descriptor.Id, descriptor.Name);
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// 预检候选总线描述是否与现有总线存在物理资源冲突（如串口占用），支持排除自身。
+    /// </summary>
+    public Error? ValidateResourceConflict(BusDescriptor candidate, BusId? excludeBusId = null)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        lock (_gate)
+        {
+            return FindResourceOwner(candidate, excludeBusId);
+        }
     }
 
     /// <summary>
@@ -158,11 +228,12 @@ public sealed class BusManager : IAsyncDisposable
         }
 
         await Task.WhenAll(buses.Select(b => b.DisposeAsync().AsTask())).ConfigureAwait(false);
+        _registryEvents.Writer.TryComplete();
         _logger.LogInformation("BusManager 已释放 {Count} 条总线", buses.Length);
     }
 
     // 调用方必须持有 _gate
-    private Error? FindResourceOwner(BusDescriptor candidate)
+    private Error? FindResourceOwner(BusDescriptor candidate, BusId? excludeBusId = null)
     {
         // 同一串口只能被一个进程内句柄打开；TCP 允许多连接同一端点（由设备自身限制连接数）
         if (candidate is not SerialBusDescriptor serial)
@@ -170,6 +241,9 @@ public sealed class BusManager : IAsyncDisposable
 
         foreach (var existing in _buses.Values)
         {
+            if (excludeBusId.HasValue && existing.Id == excludeBusId.Value)
+                continue;
+
             if (existing.Descriptor is SerialBusDescriptor other
                 && string.Equals(other.PortName.Trim(), serial.PortName.Trim(), StringComparison.OrdinalIgnoreCase))
             {

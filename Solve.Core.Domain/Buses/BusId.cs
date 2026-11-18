@@ -9,6 +9,8 @@
 /// </remarks>
 public readonly record struct BusId(Guid Value)
 {
+    public static readonly BusId Empty = default;
+
     /// <summary>
     /// 基于毫秒级时间生成 UUIDv7 总线标识（按创建时间有序，便于日志与存储排序）
     /// </summary>

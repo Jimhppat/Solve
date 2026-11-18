@@ -285,4 +285,27 @@ public sealed class SqliteBusConfigurationRepositoryTests : IAsyncLifetime
 
         Assert.Equal(19, ex.SqliteErrorCode); // SQLITE_CONSTRAINT
     }
+
+    [Fact]
+    public async Task GetByIdAsync_WhenNotExists_ReturnsSuccessNull()
+    {
+        var result = await _repository.GetByIdAsync(BusId.New(), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Value);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_WhenExists_ReturnsDescriptor()
+    {
+        var descriptor = Serial("COM7");
+        await _repository.SaveAsync(descriptor, CancellationToken.None);
+
+        var result = await _repository.GetByIdAsync(descriptor.Id, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Value);
+        Assert.Equal(descriptor.Id, result.Value.Id);
+        Assert.Equal("COM7", Assert.IsType<SerialBusDescriptor>(result.Value).PortName);
+    }
 }

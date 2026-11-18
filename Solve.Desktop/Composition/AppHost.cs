@@ -44,6 +44,7 @@ public sealed class AppHost : IAsyncDisposable
 
     private Task<StartupReport>? _startup;
     private BusManager? _buses;
+    private BusManagementService? _busService;
     private bool _disposed;
 
     private AppHost(DesktopOptions options)
@@ -107,6 +108,20 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// 总线管理用例服务；启动完成前或配置库不可用时为 null
+    /// </summary>
+    public IBusManagementService? BusService
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _busService;
+            }
+        }
+    }
+
+    /// <summary>
     /// 在线程池上启动总线系统，幂等。返回的任务不会以异常结束，结果见 <see cref="StartupReport"/>。
     /// </summary>
     public Task<StartupReport> Start()
@@ -163,6 +178,7 @@ public sealed class AppHost : IAsyncDisposable
         {
             buses = _buses;
             _buses = null;
+            _busService = null;
         }
 
         if (buses is not null)
@@ -224,6 +240,14 @@ public sealed class AppHost : IAsyncDisposable
 
             var repository = new SqliteBusConfigurationRepository(
                 database.Value, _loggerFactory.CreateLogger<SqliteBusConfigurationRepository>());
+
+            var service = new BusManagementService(
+                manager, repository, _loggerFactory.CreateLogger<BusManagementService>());
+            lock (_gate)
+            {
+                _busService = service;
+            }
+
             var snapshot = await repository.LoadAllAsync(cancellationToken).ConfigureAwait(false);
             if (snapshot.IsFailure)
             {

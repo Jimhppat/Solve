@@ -18,4 +18,13 @@ public sealed record TcpBusDescriptor(BusId Id, string Name, string Host, int Po
         if (Port is < 1 or > 65535)
             errors.Add(BusErrors.InvalidField("Port", $"端口必须在 [1, 65535] 之间，当前为 {Port}。"));
     }
+
+    public override bool RequiresTransportRebuild(BusDescriptor other)
+    {
+        if (other is not TcpBusDescriptor tcp)
+            return true;
+
+        return !string.Equals(Host.Trim(), tcp.Host.Trim(), StringComparison.OrdinalIgnoreCase)
+            || Port != tcp.Port;
+    }
 }

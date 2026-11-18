@@ -51,4 +51,10 @@ public abstract record BusDescriptor(BusId Id, string Name)
     /// 派生类校验各自的物理链路参数
     /// </summary>
     protected abstract void CollectLinkErrors(List<Error> errors);
+
+    /// <summary>
+    /// 判断与另一个描述符相比是否改变了物理链路参数（如串口名、波特率、TCP Host/Port）。
+    /// 返回 true 表示必须关闭并重建物理通道（Tier 2 硬参数）；返回 false 表示仅软参数变化（Tier 1），可在线热更新。
+    /// </summary>
+    public abstract bool RequiresTransportRebuild(BusDescriptor other);
 }

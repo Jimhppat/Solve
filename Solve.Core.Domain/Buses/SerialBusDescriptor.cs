@@ -75,4 +75,16 @@ public sealed record SerialBusDescriptor(BusId Id, string Name, string PortName)
         if (StopBits == SerialStopBits.Two && DataBits == 5)
             errors.Add(BusErrors.InvalidField("StopBits", "5 数据位不能与 2 停止位搭配。"));
     }
+
+    public override bool RequiresTransportRebuild(BusDescriptor other)
+    {
+        if (other is not SerialBusDescriptor serial)
+            return true;
+
+        return !string.Equals(PortName.Trim(), serial.PortName.Trim(), StringComparison.OrdinalIgnoreCase)
+            || BaudRate != serial.BaudRate
+            || DataBits != serial.DataBits
+            || Parity != serial.Parity
+            || StopBits != serial.StopBits;
+    }
 }

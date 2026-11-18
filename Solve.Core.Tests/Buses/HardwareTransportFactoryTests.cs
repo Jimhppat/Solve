@@ -17,6 +17,8 @@ public sealed class HardwareTransportFactoryTests
         protected override void CollectLinkErrors(List<Error> errors)
         {
         }
+
+        public override bool RequiresTransportRebuild(BusDescriptor other) => other is not UnknownBusDescriptor;
     }
 
     private readonly HardwareTransportFactory _factory = new(NullLoggerFactory.Instance);

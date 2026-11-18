@@ -46,6 +46,30 @@ public sealed class SqliteBusConfigurationRepository : IBusConfigurationReposito
          ORDER BY created_at, id;
         """;
 
+    private const string SelectByIdSql = """
+        SELECT id                         AS Id,
+               kind                       AS Kind,
+               name                       AS Name,
+               connect_timeout_ms         AS ConnectTimeoutMs,
+               read_timeout_ms            AS ReadTimeoutMs,
+               write_timeout_ms           AS WriteTimeoutMs,
+               reconnect_initial_delay_ms AS ReconnectInitialDelayMs,
+               reconnect_max_delay_ms     AS ReconnectMaxDelayMs,
+               reconnect_multiplier       AS ReconnectMultiplier,
+               reconnect_max_attempts     AS ReconnectMaxAttempts,
+               port_name                  AS PortName,
+               baud_rate                  AS BaudRate,
+               data_bits                  AS DataBits,
+               parity                     AS Parity,
+               stop_bits                  AS StopBits,
+               host                       AS Host,
+               port                       AS Port,
+               created_at                 AS CreatedAt,
+               updated_at                 AS UpdatedAt
+          FROM buses
+         WHERE id = @Id;
+        """;
+
     // 更新时保留 created_at，只刷新 updated_at；kind 变化时另一类链路字段被置 NULL，满足表级 CHECK
     private const string UpsertSql = """
         INSERT INTO buses (
@@ -131,6 +155,33 @@ public sealed class SqliteBusConfigurationRepository : IBusConfigurationReposito
 
         _logger.LogInformation("加载总线配置 {Valid} 条，无效 {Invalid} 条", descriptors.Count, issues.Count);
         return Result<BusConfigurationSnapshot>.Success(new BusConfigurationSnapshot(descriptors, issues));
+    }
+
+    public async Task<Result<BusDescriptor?>> GetByIdAsync(BusId id, CancellationToken cancellationToken)
+    {
+        BusRow? row;
+        try
+        {
+            await using var connection = await _database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            row = await connection.QuerySingleOrDefaultAsync<BusRow>(
+                _database.Command(SelectByIdSql, cancellationToken, new { Id = id.Value.ToString("D") })).ConfigureAwait(false);
+        }
+        catch (SqliteException ex)
+        {
+            return Result<BusDescriptor?>.Failure(StorageFailure($"查询总线 {id}", ex));
+        }
+
+        if (row is null)
+            return Result<BusDescriptor?>.Success(null);
+
+        var mapped = BusRowMapper.ToDescriptor(row, out var problems);
+        if (mapped.IsFailure)
+        {
+            _logger.LogError("总线配置 {BusId} 存在损坏无法解析：{Problems}", id, string.Join("；", problems.Select(p => p.ToString())));
+            return Result<BusDescriptor?>.Failure(BusErrors.InvalidDescriptor(problems));
+        }
+
+        return Result<BusDescriptor?>.Success(mapped.Value);
     }
 
     public async Task<Result> SaveAsync(BusDescriptor descriptor, CancellationToken cancellationToken)
