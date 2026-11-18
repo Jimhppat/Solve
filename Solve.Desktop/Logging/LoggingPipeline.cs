@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using System.Threading;
 using Microsoft.Extensions.Configuration;
 using Serilog;
@@ -8,6 +9,7 @@ using Serilog.Debugging;
 using Serilog.Events;
 using Serilog.Settings.Configuration;
 using Serilog.Sinks.Async;
+using Serilog.Sinks.File;
 using Solve.Core.Application.Logging;
 
 namespace Solve.Desktop.Logging;
@@ -23,11 +25,6 @@ namespace Solve.Desktop.Logging;
 public sealed class LoggingPipeline : IDisposable
 {
     /// <summary>
-    /// 日志文件名前缀；滚动后的文件名形如 solve-20261118.log、solve-20261118_001.log
-    /// </summary>
-    public const string FilePrefix = "solve-";
-
-    /// <summary>
     /// Serilog 自身故障（写盘失败、运行中配置改错等）的记录文件，与日志文件同目录
     /// </summary>
     public const string SelfLogFileName = "serilog-selflog.txt";
@@ -37,8 +34,16 @@ public sealed class LoggingPipeline : IDisposable
     /// </summary>
     public const string SettingsSection = "Serilog";
 
-    private const string OutputTemplate =
+    /// <summary>
+    /// 日志文件的行格式。<see cref="LogTextParser"/> 按此格式读回历史日志，修改时两处必须同步（有往返测试把关）
+    /// </summary>
+    internal const string OutputTemplate =
         "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {SourceContext}: {Message:l}{NewLine}{Exception}";
+
+    /// <summary>
+    /// 单个日志文件的大小上限，超出后同一天续写到 _001、_002…
+    /// </summary>
+    public const long FileSizeLimitBytes = 50L * 1024 * 1024;
 
     private const int QueueCapacity = 10_000;
     private const int SelfLogLineLimit = 1_000;
@@ -180,17 +185,29 @@ public sealed class LoggingPipeline : IDisposable
     /// <summary>
     /// 只含文件输出的日志器，作为 <see cref="SwitchableFileSink"/> 的当前输出。级别由根日志器过滤，这里全部放行。
     /// </summary>
+    /// <remarks>
+    /// <para>按每条日志自身的本地日期分文件（2026_11_18.log）：午夜前产生、午夜后才出队的日志仍写进前一天。
+    /// 同时最多保持两天的文件打开，跨午夜时新旧日期交替出现不会反复开关文件，更早的立即关闭。</para>
+    /// <para>保留期由 <see cref="RetentionHooks"/> 按天数与总大小清理，不用 Serilog 自带的按文件数保留（它只认同一天的分卷）。
+    /// 清理只管这个目录：切换目录后旧目录中的日志原地保留、不再清理（与设置页的说明一致）。</para>
+    /// </remarks>
     private static Logger CreateFileLogger(string logDirectory)
-        => new LoggerConfiguration()
+    {
+        var retention = new RetentionHooks(logDirectory);
+        return new LoggerConfiguration()
             .MinimumLevel.Verbose()
-            .WriteTo.File(
-                path: Path.Combine(logDirectory, FilePrefix + ".log"),
-                outputTemplate: OutputTemplate,
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: 30,
-                fileSizeLimitBytes: 50L * 1024 * 1024,
-                rollOnFileSizeLimit: true)
+            .WriteTo.Map(
+                logEvent => DateOnly.FromDateTime(logEvent.Timestamp.LocalDateTime),
+                (date, dated) => dated.File(
+                    path: DailyLogFiles.PathFor(logDirectory, date),
+                    outputTemplate: OutputTemplate,
+                    fileSizeLimitBytes: FileSizeLimitBytes,
+                    rollOnFileSizeLimit: true,
+                    retainedFileCountLimit: null,
+                    hooks: retention),
+                2)
             .CreateLogger();
+    }
 
     private static Logger Build(IConfiguration? settings, DroppedEventMonitor monitor, LogFeedSink feed, SwitchableFileSink file)
     {
@@ -216,7 +233,7 @@ public sealed class LoggingPipeline : IDisposable
             .WriteTo.Async(
                 sink =>
                 {
-                    // 文件输出可在运行中切换目录（设置页），见 SwitchableFileSink
+                    // 按日期命名的文件输出，可在运行中切换目录（设置页），见 SwitchableFileSink 与 CreateFileLogger
                     sink.Sink(file);
 #if DEBUG
                     sink.Debug(outputTemplate: OutputTemplate);
@@ -310,6 +327,19 @@ public sealed class LoggingPipeline : IDisposable
                     // 自诊断输出本身也写不进去时已无处可报，放弃
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// 每次打开日志文件（启动、跨天、单文件超限续写）时清理过期与超限的日志。
+    /// 在异步队列的后台线程上执行，不占用业务线程；清理失败只记自诊断，不影响写入。
+    /// </summary>
+    private sealed class RetentionHooks(string directory) : FileLifecycleHooks
+    {
+        public override Stream OnFileOpened(string path, Stream underlyingStream, Encoding encoding)
+        {
+            DailyLogFiles.Prune(directory, DateOnly.FromDateTime(DateTime.Now), protectedPath: path);
+            return underlyingStream;
         }
     }
 

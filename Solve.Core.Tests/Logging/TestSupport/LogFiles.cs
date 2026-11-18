@@ -15,18 +15,10 @@ public sealed class LoggingPipelineCollection
 internal static class LogFiles
 {
     /// <summary>
-    /// 读取目录下全部日志文件。按读写共享打开：日志管线未释放时文件仍被写入端占用。
+    /// 按时间顺序读取目录下全部日志文件。按读写共享打开：日志管线未释放时文件仍被写入端占用。
     /// </summary>
     public static string ReadAll(string logDirectory)
-    {
-        if (!Directory.Exists(logDirectory))
-            return string.Empty;
-
-        return string.Concat(Directory
-            .GetFiles(logDirectory, LoggingPipeline.FilePrefix + "*.log")
-            .Order()
-            .Select(Read));
-    }
+        => string.Concat(DailyLogFiles.List(logDirectory).Select(f => Read(f.Path)));
 
     public static string Read(string path)
     {

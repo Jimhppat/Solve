@@ -122,9 +122,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 接入日志源：运行日志页与主控台的最近日志各自订阅。须在 UI 线程上调用，只能调用一次。
     /// </summary>
-    public void AttachLogFeed(ILogFeed feed, string logDirectory)
+    /// <param name="archive">历史日志；只接给运行日志页，主控台的最近日志只看实时</param>
+    public void AttachLogFeed(ILogFeed feed, string logDirectory, ILogArchive? archive = null)
     {
-        RuntimeLog.Attach(feed, logDirectory);
+        RuntimeLog.Attach(feed, logDirectory, archive);
         MasterConsole.RecentLog.Attach(feed, logDirectory);
     }
 
@@ -133,7 +134,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     public void AttachLogDirectorySettings(ILogDirectorySettings settings) => Settings.AttachLogDirectory(settings);
 
-    // 设置页切换目录后，日志页与主控台的「打开日志目录」随之指向新目录
+    // 设置页切换目录后，日志页与主控台的「打开日志目录」随之指向新目录；日志页的按日期查看改读新目录
     private void OnLogDirectoryChanged(string logDirectory)
     {
         RuntimeLog.UpdateLogDirectory(logDirectory);

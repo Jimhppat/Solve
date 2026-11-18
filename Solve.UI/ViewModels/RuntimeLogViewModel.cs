@@ -3,17 +3,33 @@ using System.Threading.Channels;
 using Avalonia.Threading;
 using Solve.Core.Application.Common;
 using Solve.Core.Application.Logging;
+using Solve.Core.Domain.Common;
 
 namespace Solve.UI.ViewModels;
 
 /// <summary>
-/// 运行日志列表：订阅实时日志，按级别（五类，可多选）与关键字筛选。
+/// 日志来源：实时日志，或某一天的历史日志
+/// </summary>
+public sealed record LogSourceOption(string Label, DateOnly? Date)
+{
+    public static readonly LogSourceOption Live = new("实时", null);
+
+    public static LogSourceOption ForDate(DateOnly date, DateOnly today)
+        => new(date == today ? $"{date:yyyy-MM-dd}（今天）" : $"{date:yyyy-MM-dd}", date);
+
+    public override string ToString() => Label;
+}
+
+/// <summary>
+/// 运行日志列表：订阅实时日志，按级别（五类，可多选）与关键字筛选；接入历史日志后还可按日期查看与导出。
 /// 运行日志页与主控台的最近日志控件各用一个实例，各自订阅、互不影响。
 /// </summary>
 /// <remarks>
-/// <para>只是一个窗口，完整记录以日志文件为准：界面最多保留最近 <see cref="Capacity"/> 条，清空也只清界面。</para>
+/// <para>只是一个窗口，完整记录以日志文件为准：实时最多保留最近 <see cref="Capacity"/> 条，清空也只清界面。</para>
 /// <para>新日志在后台按批取出、每 <see cref="BatchInterval"/> 最多向 UI 线程投递一次，日志密集时界面刷新频率不随之上升。</para>
-/// <para>除 <see cref="Attach"/> 中启动的后台读取循环外，所有成员都只能在 UI 线程上使用。</para>
+/// <para>查看历史期间实时日志照常在后台累积，切回「实时」时不缺失。历史读取在后台进行，切换来源会取消上一次读取。</para>
+/// <para>除 <see cref="Attach"/> 中启动的后台读取循环外，所有成员都只能在 UI 线程上使用；
+/// 读取与导出的结果回到 UI 线程后再更新界面。</para>
 /// </remarks>
 public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
 {
@@ -22,16 +38,34 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     /// </summary>
     public const int DefaultCapacity = 2_000;
 
+    /// <summary>
+    /// 历史日志最多显示的条数：一天的日志可能很多，只取最后这些条，超出时提示
+    /// </summary>
+    public const int HistoryCapacity = 10_000;
+
     public static readonly TimeSpan BatchInterval = TimeSpan.FromMilliseconds(100);
 
-    private readonly List<LogEntryItem> _all;
+    /// <summary>
+    /// 读取、导出历史日志的超时：磁盘异常（网络盘断开等）时不让界面一直停在「正在读取」
+    /// </summary>
+    public static readonly TimeSpan ArchiveTimeout = TimeSpan.FromSeconds(30);
 
-    // 按 LogCategory 下标：是否显示、保留条数。筛选在热路径上，用数组而不是逐项查找
+    private readonly LogBuffer _live;
+
+    // 正在查看的历史日志；为 null 表示显示实时日志
+    private LogBuffer? _history;
+
+    // 按 LogCategory 下标：是否显示。筛选在热路径上，用数组而不是逐项查找
     private readonly bool[] _shown = new bool[LogCategories.All.Count];
-    private readonly int[] _counts = new int[LogCategories.All.Count];
 
     private ObservableCollection<LogEntryItem> _entries = [];
     private EventSubscription<LogEntry>? _subscription;
+    private ILogArchive? _archive;
+    private CancellationTokenSource? _loadCts;
+    private LogSourceOption _selectedSource = LogSourceOption.Live;
+    private bool _isLoading;
+    private bool _isExporting;
+    private string? _statusText;
     private string _searchText = string.Empty;
     private bool _autoScroll = true;
     private string? _logDirectory;
@@ -44,14 +78,13 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     {
     }
 
-    /// <param name="capacity">界面保留的最多条数，超出时丢弃最旧的</param>
+    /// <param name="capacity">实时日志保留的最多条数，超出时丢弃最旧的</param>
     /// <param name="shownCategories">初始显示的级别</param>
     public RuntimeLogViewModel(int capacity, IEnumerable<LogCategory> shownCategories)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         ArgumentNullException.ThrowIfNull(shownCategories);
-        Capacity = capacity;
-        _all = new List<LogEntryItem>(capacity);
+        _live = new LogBuffer(capacity);
 
         foreach (var category in shownCategories)
             _shown[(int)category] = true;
@@ -60,16 +93,16 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
             .Select(c => new LogLevelFilterOption(c, _shown[(int)c], OnLevelFilterChangedByUser))
             .ToArray();
 
-        ClearCommand = new RelayCommand(Clear);
+        ClearCommand = new RelayCommand(Clear, () => IsLive);
         JumpToLatestCommand = new RelayCommand(() => AutoScroll = true);
         ShowAllLevelsCommand = new RelayCommand(() => SetShownCategories(LogCategories.All));
         ShowProblemsOnlyCommand = new RelayCommand(() => SetShownCategories(LogCategories.Problems));
     }
 
     /// <summary>
-    /// 界面保留的最多条数，超出时丢弃最旧的
+    /// 实时日志保留的最多条数，超出时丢弃最旧的
     /// </summary>
-    public int Capacity { get; }
+    public int Capacity => _live.Capacity;
 
     public string PageTitle => "运行日志";
 
@@ -174,20 +207,81 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
 
     public bool HasLogDirectory => _logDirectory is not null;
 
-    public int TotalCount => _all.Count;
+    // ==================== 来源：实时 / 历史 ====================
 
-    public int WarningCount => _counts[(int)LogCategory.Warning];
+    /// <summary>
+    /// 是否接入了历史日志（按日期查看与导出）。主控台的最近日志只看实时，不接入
+    /// </summary>
+    public bool CanBrowseHistory => _archive is not null;
+
+    /// <summary>
+    /// 可选来源：「实时」在最前，其后为有日志的日期（从新到旧）
+    /// </summary>
+    public ObservableCollection<LogSourceOption> Sources { get; } = [LogSourceOption.Live];
+
+    public LogSourceOption SelectedSource
+    {
+        get => _selectedSource;
+        set
+        {
+            // 下拉框更换数据源时可能短暂写入 null；选同一项不重新读取
+            if (value is null || Equals(value, _selectedSource))
+                return;
+
+            _ = SelectSourceAsync(value);
+        }
+    }
+
+    public bool IsLive => _selectedSource.Date is null;
+
+    public bool IsLoading
+    {
+        get => _isLoading;
+        private set => SetProperty(ref _isLoading, value);
+    }
+
+    /// <summary>
+    /// 读取、导出的进度与结果；没有可提示的内容时为 null
+    /// </summary>
+    public string? StatusText
+    {
+        get => _statusText;
+        private set
+        {
+            if (SetProperty(ref _statusText, value))
+                OnPropertyChanged(nameof(HasStatus));
+        }
+    }
+
+    public bool HasStatus => _statusText is not null;
+
+    /// <summary>
+    /// 导出的日期：查看历史时为所选日期，实时时为今天
+    /// </summary>
+    public DateOnly ExportDate => _selectedSource.Date ?? DateOnly.FromDateTime(DateTime.Now);
+
+    public string ExportFileName => _archive?.SuggestExportFileName(ExportDate) ?? string.Empty;
+
+    public string ExportTip => $"导出 {ExportDate:yyyy-MM-dd} 的日志文件（同日分卷合并为一个文件）";
+
+    public bool CanExport => _archive is not null && !_isExporting;
+
+    // ==================== 统计 ====================
+
+    public int TotalCount => Current.Items.Count;
+
+    public int WarningCount => Current.Counts[(int)LogCategory.Warning];
 
     /// <summary>
     /// 错误与致命合计
     /// </summary>
-    public int ErrorCount => _counts[(int)LogCategory.Error] + _counts[(int)LogCategory.Critical];
+    public int ErrorCount => Current.Counts[(int)LogCategory.Error] + Current.Counts[(int)LogCategory.Critical];
 
     public string SummaryText
     {
         get
         {
-            var summary = $"共 {_all.Count} 条 · 警告 {WarningCount} · 错误 {ErrorCount}";
+            var summary = $"共 {TotalCount} 条 · 警告 {WarningCount} · 错误 {ErrorCount}";
             return IsFiltered ? $"{summary} · 筛选出 {Entries.Count} 条" : summary;
         }
     }
@@ -200,7 +294,11 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
         {
             if (!_shown.Contains(true))
                 return "未选择任何级别";
-            return _all.Count == 0 ? "暂无日志" : "没有符合筛选条件的日志";
+            if (_isLoading)
+                return "正在读取日志…";
+            if (Current.Items.Count == 0)
+                return IsLive ? "暂无日志" : "该日没有可显示的日志";
+            return "没有符合筛选条件的日志";
         }
     }
 
@@ -222,6 +320,8 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     /// 显示的日志有变化（新增一批或重新筛选）后触发，视图据此滚动到底部
     /// </summary>
     public event EventHandler? EntriesChanged;
+
+    private LogBuffer Current => _history ?? _live;
 
     private bool IsFiltered => _shown.Contains(false) || !string.IsNullOrWhiteSpace(_searchText);
 
@@ -245,7 +345,8 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 接入日志源：先显示订阅时刻缓存的最近日志，之后的日志在后台读取并按批追加。只能接入一次。
     /// </summary>
-    public void Attach(ILogFeed feed, string logDirectory)
+    /// <param name="archive">历史日志；为 null 时只看实时（主控台的最近日志）</param>
+    public void Attach(ILogFeed feed, string logDirectory, ILogArchive? archive = null)
     {
         ArgumentNullException.ThrowIfNull(feed);
         ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
@@ -258,19 +359,43 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
         Append(recent);
 
         _ = Task.Run(() => PumpAsync(subscription.Reader));
+
+        if (archive is not null)
+        {
+            _archive = archive;
+            OnPropertyChanged(nameof(CanBrowseHistory));
+            OnPropertyChanged(nameof(CanExport));
+            OnPropertyChanged(nameof(ExportFileName));
+            _ = RefreshSourcesAsync();
+        }
     }
 
     /// <summary>
-    /// 日志目录在设置页切换后更新「打开日志目录」的目标。须在 UI 线程上调用。
+    /// 日志目录在设置页切换后调用：更新「打开日志目录」的目标；接入了历史日志时，按日期查看随之改读新目录。须在 UI 线程上调用。
     /// </summary>
+    /// <remarks>
+    /// 正在查看的是旧目录里的某一天：切回「实时」，不能把旧目录的内容留在界面上当成新目录的。
+    /// 旧目录中的日志原地保留，仍可用「打开日志目录」之外的方式查看。
+    /// </remarks>
     public void UpdateLogDirectory(string logDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
+        if (string.Equals(_logDirectory, logDirectory, StringComparison.OrdinalIgnoreCase))
+            return;
+
         LogDirectory = logDirectory;
+        if (_archive is null)
+            return;
+
+        if (!IsLive)
+            _ = SelectSourceAsync(LogSourceOption.Live);
+
+        StatusText = "日志目录已切换，按日期查看改为读取新目录";
+        _ = RefreshSourcesAsync();
     }
 
     /// <summary>
-    /// 追加一批日志，超出 <see cref="Capacity"/> 时丢弃最旧的。
+    /// 追加一批实时日志，超出 <see cref="Capacity"/> 时丢弃最旧的。
     /// </summary>
     public void Append(IReadOnlyList<LogEntry> entries)
     {
@@ -278,21 +403,25 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
         if (entries.Count == 0)
             return;
 
+        // 正在查看历史：实时日志只在后台累积，切回「实时」时一并显示
+        var visible = _history is null;
+
         // 一批就超过容量时，前面那些加进来也会马上被挤掉，直接跳过
         var shown = 0;
-        for (var i = Math.Max(0, entries.Count - Capacity); i < entries.Count; i++)
+        for (var i = Math.Max(0, entries.Count - _live.Capacity); i < entries.Count; i++)
         {
             var item = new LogEntryItem(entries[i]);
-            _all.Add(item);
-            _counts[(int)item.Category]++;
-            if (Shows(item))
+            _live.Add(item);
+            if (visible && Shows(item))
             {
                 Entries.Add(item);
                 shown++;
             }
         }
 
-        TrimToCapacity();
+        TrimLive(visible);
+        if (!visible)
+            return;
 
         // 未读的一定是显示集合末尾那几条：被挤掉的只会是最旧的，所以上限就是当前显示条数
         if (!_autoScroll)
@@ -301,10 +430,218 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
         NotifyChanged();
     }
 
+    /// <summary>
+    /// 切换来源。选历史日期时在后台读取该天的日志；读取期间再次切换会取消上一次读取，只采用最后一次的结果。
+    /// 不抛出：读取失败、超时都以 <see cref="StatusText"/> 提示。
+    /// </summary>
+    public async Task SelectSourceAsync(LogSourceOption source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        CancelLoad();
+        SetSelectedSource(source);
+
+        if (source.Date is not { } date || _archive is null)
+        {
+            _history = null;
+            IsLoading = false;
+            StatusText = null;
+            Refilter();
+            return;
+        }
+
+        var cts = new CancellationTokenSource(ArchiveTimeout);
+        _loadCts = cts;
+        _history = new LogBuffer(HistoryCapacity);
+        IsLoading = true;
+        StatusText = $"正在读取 {date:yyyy-MM-dd} 的日志…";
+
+        // 先清空显示：读取期间不能让人把实时日志误当成那一天的历史
+        Refilter();
+
+        Result<LogDay> result;
+        try
+        {
+            result = await _archive.ReadDayAsync(date, HistoryCapacity, cts.Token);
+        }
+        catch (OperationCanceledException) when (!ReferenceEquals(_loadCts, cts))
+        {
+            // 已切换到别的来源，这次结果作废
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            result = Result<LogDay>.Failure(new Error("Log.ReadTimeout", $"超过 {ArchiveTimeout.TotalSeconds:0} 秒仍未读完"));
+        }
+        catch (Exception ex)
+        {
+            // 在 UI 线程上继续执行：异常不能逃逸，否则会触发全站安全跳闸并退出程序
+            result = Result<LogDay>.Failure(new Error("Log.ReadFailed", ex.Message));
+        }
+
+        if (!ReferenceEquals(_loadCts, cts))
+            return;
+
+        _loadCts = null;
+        cts.Dispose();
+        IsLoading = false;
+
+        if (result.IsFailure)
+        {
+            StatusText = $"读取失败：{result.Error.Message}";
+            Refilter();
+            return;
+        }
+
+        var day = result.Value;
+        foreach (var entry in day.Entries)
+            _history.Add(new LogEntryItem(entry));
+
+        StatusText = day.IsTruncated
+            ? $"该日共 {day.TotalCount} 条，仅显示最后 {day.Entries.Count} 条"
+            : $"该日共 {day.TotalCount} 条";
+        Refilter();
+    }
+
+    /// <summary>
+    /// 重新列出有日志的日期（日志目录可能已新增当天文件或清理了过期文件）。不抛出，失败以 <see cref="StatusText"/> 提示。
+    /// </summary>
+    public async Task RefreshSourcesAsync()
+    {
+        if (_archive is null)
+            return;
+
+        Result<IReadOnlyList<DateOnly>> dates;
+        try
+        {
+            using var cts = new CancellationTokenSource(ArchiveTimeout);
+            dates = await _archive.GetAvailableDatesAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "读取日志目录超时";
+            return;
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"读取日志目录失败：{ex.Message}";
+            return;
+        }
+
+        if (dates.IsFailure)
+        {
+            StatusText = dates.Error.Message;
+            return;
+        }
+
+        // 正在查看的日期即使刚被清理也保留在列表里，否则下拉框会突然变成空选
+        var available = dates.Value.ToList();
+        if (_selectedSource.Date is { } selected && !available.Contains(selected))
+            available.Add(selected);
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var desired = new List<LogSourceOption> { LogSourceOption.Live };
+        desired.AddRange(available.OrderByDescending(d => d).Select(d => LogSourceOption.ForDate(d, today)));
+        SyncSources(desired);
+
+        // 跨午夜后「（今天）」的标注会移走：换成新的选项实例，不重新读取
+        if (_selectedSource.Date is { } current
+            && desired.FirstOrDefault(o => o.Date == current) is { } renamed
+            && !Equals(renamed, _selectedSource))
+        {
+            SetSelectedSource(renamed);
+        }
+    }
+
+    /// <summary>
+    /// 把 <see cref="ExportDate"/> 的日志文件写入 <paramref name="destination"/>。不抛出，结果以 <see cref="StatusText"/> 提示。
+    /// </summary>
+    /// <param name="destinationName">目标文件名，仅用于提示</param>
+    public async Task ExportAsync(Stream destination, string destinationName)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (_archive is null || _isExporting)
+            return;
+
+        var date = ExportDate;
+        SetExporting(true);
+        StatusText = $"正在导出 {date:yyyy-MM-dd} 的日志…";
+
+        Result result;
+        try
+        {
+            using var cts = new CancellationTokenSource(ArchiveTimeout);
+            result = await _archive.ExportDayAsync(date, destination, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            result = Result.Failure(new Error("Log.ExportTimeout", $"超过 {ArchiveTimeout.TotalSeconds:0} 秒仍未完成"));
+        }
+        catch (Exception ex)
+        {
+            result = Result.Failure(new Error("Log.ExportFailed", ex.Message));
+        }
+        finally
+        {
+            SetExporting(false);
+        }
+
+        StatusText = result.IsSuccess
+            ? $"已导出 {date:yyyy-MM-dd} 的日志：{destinationName}"
+            : $"导出失败：{result.Error.Message}";
+    }
+
+    /// <summary>
+    /// 视图在打开保存对话框、创建目标文件时出错（无写权限、U 盘被拔出等），由视图转交提示
+    /// </summary>
+    public void ReportExportFailure(string reason) => StatusText = $"导出失败：{reason}";
+
     private bool Shows(LogEntryItem item) => _shown[(int)item.Category] && item.MatchesSearch(_searchText);
 
     private IReadOnlyList<LogCategory> SelectedCategories()
         => LogCategories.All.Where(c => _shown[(int)c]).ToList();
+
+    private void SetSelectedSource(LogSourceOption source)
+    {
+        if (!SetProperty(ref _selectedSource, source, nameof(SelectedSource)))
+            return;
+
+        OnPropertyChanged(nameof(IsLive));
+        OnPropertyChanged(nameof(ExportDate));
+        OnPropertyChanged(nameof(ExportFileName));
+        OnPropertyChanged(nameof(ExportTip));
+        ClearCommand.RaiseCanExecuteChanged();
+    }
+
+    private void SetExporting(bool value)
+    {
+        _isExporting = value;
+        OnPropertyChanged(nameof(CanExport));
+    }
+
+    private void SyncSources(IReadOnlyList<LogSourceOption> desired)
+    {
+        // 就地增删而不是整体替换：下拉框保持当前选中项，不闪烁
+        for (var i = Sources.Count - 1; i >= 0; i--)
+        {
+            if (!desired.Contains(Sources[i]))
+                Sources.RemoveAt(i);
+        }
+
+        // 剩下的与 desired 同序（都是「实时」在前、日期从新到旧），按位置补齐缺的
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i >= Sources.Count || !Equals(Sources[i], desired[i]))
+                Sources.Insert(i, desired[i]);
+        }
+    }
+
+    private void CancelLoad()
+    {
+        // 只取消不释放：读取任务可能仍在使用令牌；超时定时器随取消一起失效
+        _loadCts?.Cancel();
+        _loadCts = null;
+    }
 
     private void OnLevelFilterChangedByUser()
     {
@@ -321,40 +658,42 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
         Refilter();
     }
 
-    private void TrimToCapacity()
+    private void TrimLive(bool visible)
     {
-        var overflow = _all.Count - Capacity;
+        var overflow = _live.Items.Count - _live.Capacity;
         if (overflow <= 0)
             return;
 
         for (var i = 0; i < overflow; i++)
         {
-            var removed = _all[i];
-            _counts[(int)removed.Category]--;
+            var removed = _live.Items[i];
+            _live.Counts[(int)removed.Category]--;
 
-            // 显示集合是 _all 的有序子序列：被挤掉的条目如果在显示，一定排在显示集合最前面
-            if (Entries.Count > 0 && ReferenceEquals(Entries[0], removed))
+            // 显示集合是实时缓冲的有序子序列：被挤掉的条目如果在显示，一定排在显示集合最前面
+            if (visible && Entries.Count > 0 && ReferenceEquals(Entries[0], removed))
                 Entries.RemoveAt(0);
         }
 
-        _all.RemoveRange(0, overflow);
+        _live.Items.RemoveRange(0, overflow);
     }
 
     private void Refilter()
     {
         // 整体替换而不是逐条增删：筛选变化时只触发一次列表重建。列表重建后原来的阅读位置已不存在，未读数随之归零
-        Entries = new ObservableCollection<LogEntryItem>(_all.Where(Shows));
+        Entries = new ObservableCollection<LogEntryItem>(Current.Items.Where(Shows));
         _unseenCount = 0;
         NotifyChanged();
     }
 
     /// <summary>
-    /// 只清空界面上的日志，日志文件不受影响
+    /// 只清空界面上的实时日志，日志文件不受影响；查看历史时不可用
     /// </summary>
     private void Clear()
     {
-        _all.Clear();
-        Array.Clear(_counts);
+        if (!IsLive)
+            return;
+
+        _live.Clear();
         _unseenCount = 0;
         Entries = [];
         NotifyChanged();
@@ -379,7 +718,7 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     private void NotifyChanged()
     {
         foreach (var option in LevelFilters)
-            option.Count = _counts[(int)option.Category];
+            option.Count = Current.Counts[(int)option.Category];
 
         OnPropertyChanged(nameof(TotalCount));
         OnPropertyChanged(nameof(WarningCount));
@@ -407,6 +746,31 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        CancelLoad();
         _subscription?.Dispose();
+    }
+
+    /// <summary>
+    /// 一组日志及其按级别的计数
+    /// </summary>
+    private sealed class LogBuffer(int capacity)
+    {
+        public int Capacity { get; } = capacity;
+
+        public List<LogEntryItem> Items { get; } = new(Math.Min(capacity, 4096));
+
+        public int[] Counts { get; } = new int[LogCategories.All.Count];
+
+        public void Add(LogEntryItem item)
+        {
+            Items.Add(item);
+            Counts[(int)item.Category]++;
+        }
+
+        public void Clear()
+        {
+            Items.Clear();
+            Array.Clear(Counts);
+        }
     }
 }

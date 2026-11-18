@@ -40,13 +40,11 @@
 
     <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
 
-        <!-- 标题、统计与工具 -->
-        <Border Grid.Row="0" Classes="panel" Padding="20,10">
-            <DockPanel LastChildFill="True">
-                <StackPanel DockPanel.Dock="Left"
-                            Orientation="Horizontal"
-                            Spacing="10"
-                            VerticalAlignment="Center">
+        <!-- 标题、统计与工具。分两行：第一行标题、统计与读取/导出状态；第二行工具按钮自动换行，
+             最小窗口（960 宽）下来源、级别、搜索、导出等按钮也不会被挤出卡片 -->
+        <Border Grid.Row="0" Classes="panel" Padding="20,12">
+            <StackPanel Spacing="10">
+                <WrapPanel ItemSpacing="10" LineSpacing="6">
                     <TextBlock Text="{Binding PageTitle}"
                                FontSize="15"
                                FontWeight="SemiBold"
@@ -60,13 +58,21 @@
                                    FontSize="12"
                                    Foreground="{DynamicResource SemiColorText2}" />
                     </Border>
-                </StackPanel>
+                    <TextBlock IsVisible="{Binding HasStatus}"
+                               Text="{Binding StatusText}"
+                               FontSize="12"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource SemiColorText2}" />
+                </WrapPanel>
 
-                <StackPanel DockPanel.Dock="Right"
-                            Orientation="Horizontal"
-                            Spacing="8"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center">
+                <WrapPanel ItemSpacing="8" LineSpacing="8">
+                    <!-- 来源：实时，或有日志的日期（展开时重新列出）。查看历史期间实时日志照常在后台累积 -->
+                    <ComboBox Width="170"
+                              IsVisible="{Binding CanBrowseHistory}"
+                              ItemsSource="{Binding Sources}"
+                              SelectedItem="{Binding SelectedSource}"
+                              DropDownOpened="OnSourcesDropDownOpened"
+                              ToolTip.Tip="查看实时日志，或某一天的历史日志" />
                     <!-- 级别多选：浮层里五类各自勾选，按钮上显示简短说明，悬停看已选全部级别 -->
                     <DropDownButton Width="120"
                                     HorizontalContentAlignment="Left"
@@ -91,10 +97,19 @@
                         </TextBox.InnerLeftContent>
                     </TextBox>
                     <CheckBox Content="自动滚动" IsChecked="{Binding AutoScroll}" VerticalAlignment="Center" />
-                    <Button Command="{Binding ClearCommand}" ToolTip.Tip="只清空界面上的日志，日志文件不受影响">
+                    <Button Command="{Binding ClearCommand}" ToolTip.Tip="只清空界面上的实时日志，日志文件不受影响；查看历史时不可用">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <PathIcon Data="{DynamicResource SemiIconDelete}" Width="12" Height="12" />
                             <TextBlock Text="清空" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Click="OnExport"
+                            IsVisible="{Binding CanBrowseHistory}"
+                            IsEnabled="{Binding CanExport}"
+                            ToolTip.Tip="{Binding ExportTip}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <PathIcon Data="{DynamicResource SemiIconDownload}" Width="12" Height="12" />
+                            <TextBlock Text="导出" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
                     <Button Click="OnOpenLogDirectory"
@@ -105,8 +120,8 @@
                             <TextBlock Text="打开日志目录" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                </StackPanel>
-            </DockPanel>
+                </WrapPanel>
+            </StackPanel>
         </Border>
 
         <!-- 日志列表 -->

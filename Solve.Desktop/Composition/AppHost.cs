@@ -57,6 +57,9 @@ public sealed class AppHost : IAsyncDisposable
 
         _logging = LoggingPipeline.Create(logDirectory.Directory, options.LoggingSettingsPath);
 
+        // 历史日志跟随管线当前正在写的目录：设置页切换目录后，按日期查看与导出读的是新目录
+        LogArchive = new FileLogArchive(() => _logging.LogDirectory);
+
         // 日志器的生命周期归管线所有：工厂释放时不连带释放，由 _logging 统一刷写
         _loggerFactory = new SerilogLoggerFactory(_logging.Logger, dispose: false);
         _logger = _loggerFactory.CreateLogger<AppHost>();
@@ -101,6 +104,11 @@ public sealed class AppHost : IAsyncDisposable
     /// 黑匣子日志管线；供接入框架日志（如 Avalonia）等需要 Serilog 根日志器的场合
     /// </summary>
     public LoggingPipeline Logging => _logging;
+
+    /// <summary>
+    /// 按日期保存的历史日志，供运行日志页查看与导出；始终读取当前日志目录
+    /// </summary>
+    public ILogArchive LogArchive { get; }
 
     /// <summary>
     /// 日志目录的查看与切换，供设置页使用
