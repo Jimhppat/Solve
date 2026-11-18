@@ -6,7 +6,7 @@ using Solve.Core.Application.Logging;
 namespace Solve.UI.ViewModels;
 
 /// <summary>
-/// 系统设置页。目前包含运行日志目录的查看与切换。
+/// 系统设置页。页面上的修改只在点「保存」时统一生效；目前包含运行日志的存储路径。
 /// </summary>
 public sealed class SettingsViewModel : ViewModelBase
 {
@@ -14,12 +14,13 @@ public sealed class SettingsViewModel : ViewModelBase
     private ILogDirectorySettings? _logDirectory;
     private string? _currentLogDirectory;
     private string _logDirectoryInput = string.Empty;
-    private string? _logDirectoryMessage;
-    private bool _isLogDirectoryError;
-    private bool _isChangingLogDirectory;
+    private string? _saveMessage;
+    private bool _isSaveError;
+    private bool _isSaving;
+    private bool _startupFallbackResolved;
 
     /// <summary>
-    /// XAML 设计器使用：未接入日志目录设置，按钮不可用
+    /// XAML 设计器使用：未接入任何设置，保存不可用
     /// </summary>
     public SettingsViewModel() : this(onLogDirectoryChanged: null)
     {
@@ -29,17 +30,38 @@ public sealed class SettingsViewModel : ViewModelBase
     public SettingsViewModel(Action<string>? onLogDirectoryChanged)
     {
         _onLogDirectoryChanged = onLogDirectoryChanged;
-        ApplyLogDirectoryCommand = new AsyncRelayCommand(
-            () => ChangeLogDirectoryAsync(_logDirectoryInput),
-            () => CanChangeLogDirectory && !string.IsNullOrWhiteSpace(_logDirectoryInput));
-        RestoreDefaultLogDirectoryCommand = new AsyncRelayCommand(
-            () => ChangeLogDirectoryAsync(null),
-            () => CanChangeLogDirectory);
+        SaveCommand = new AsyncRelayCommand(SaveAsync, () => _logDirectory is not null && !_isSaving);
     }
 
     public string PageTitle => "系统设置";
 
-    // ==================== 运行日志目录 ====================
+    /// <summary>
+    /// 保存页面上的全部设置
+    /// </summary>
+    public AsyncRelayCommand SaveCommand { get; }
+
+    /// <summary>
+    /// 最近一次保存的结果说明
+    /// </summary>
+    public string? SaveMessage
+    {
+        get => _saveMessage;
+        private set
+        {
+            if (SetProperty(ref _saveMessage, value))
+                OnPropertyChanged(nameof(HasSaveMessage));
+        }
+    }
+
+    public bool HasSaveMessage => _saveMessage is not null;
+
+    public bool IsSaveError
+    {
+        get => _isSaveError;
+        private set => SetProperty(ref _isSaveError, value);
+    }
+
+    // ==================== 运行日志存储路径 ====================
 
     /// <summary>
     /// 已接入日志目录设置（设计器中为 false）
@@ -55,61 +77,21 @@ public sealed class SettingsViewModel : ViewModelBase
         private set => SetProperty(ref _currentLogDirectory, value);
     }
 
-    public string? DefaultLogDirectory => _logDirectory?.DefaultDirectory;
-
     /// <summary>
-    /// 启动时保存的目录不可用、本次运行改用默认目录的原因
-    /// </summary>
-    public string? LogDirectoryStartupFallback => _logDirectory?.StartupFallbackReason;
-
-    public bool HasLogDirectoryStartupFallback => LogDirectoryStartupFallback is not null;
-
-    /// <summary>
-    /// 输入框中的目标目录
+    /// 输入框中的存储路径，点「保存」后生效
     /// </summary>
     public string LogDirectoryInput
     {
         get => _logDirectoryInput;
-        set
-        {
-            if (SetProperty(ref _logDirectoryInput, value ?? string.Empty))
-                ApplyLogDirectoryCommand.RaiseCanExecuteChanged();
-        }
+        set => SetProperty(ref _logDirectoryInput, value ?? string.Empty);
     }
 
     /// <summary>
-    /// 最近一次操作的结果说明
+    /// 启动时保存的目录不可用、本次运行改用默认目录的原因
     /// </summary>
-    public string? LogDirectoryMessage
-    {
-        get => _logDirectoryMessage;
-        private set
-        {
-            if (SetProperty(ref _logDirectoryMessage, value))
-                OnPropertyChanged(nameof(HasLogDirectoryMessage));
-        }
-    }
+    public string? LogDirectoryStartupFallback => _startupFallbackResolved ? null : _logDirectory?.StartupFallbackReason;
 
-    public bool HasLogDirectoryMessage => _logDirectoryMessage is not null;
-
-    public bool IsLogDirectoryError
-    {
-        get => _isLogDirectoryError;
-        private set => SetProperty(ref _isLogDirectoryError, value);
-    }
-
-    /// <summary>
-    /// 切换到输入框中的目录
-    /// </summary>
-    public AsyncRelayCommand ApplyLogDirectoryCommand { get; }
-
-    /// <summary>
-    /// 切换回默认目录
-    /// </summary>
-    public AsyncRelayCommand RestoreDefaultLogDirectoryCommand { get; }
-
-    // 两个命令共用一条切换通道：任一执行中时两个按钮都不可点
-    private bool CanChangeLogDirectory => _logDirectory is not null && !_isChangingLogDirectory;
+    public bool HasLogDirectoryStartupFallback => LogDirectoryStartupFallback is not null;
 
     /// <summary>
     /// 接入日志目录设置。须在 UI 线程上调用，只能调用一次。
@@ -125,57 +107,65 @@ public sealed class SettingsViewModel : ViewModelBase
         LogDirectoryInput = settings.CurrentDirectory;
 
         OnPropertyChanged(nameof(IsLogDirectoryAvailable));
-        OnPropertyChanged(nameof(DefaultLogDirectory));
-        OnPropertyChanged(nameof(LogDirectoryStartupFallback));
-        OnPropertyChanged(nameof(HasLogDirectoryStartupFallback));
-        RaiseLogDirectoryCommandsChanged();
+        RaiseStartupFallbackChanged();
+        SaveCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>
     /// 视图上的操作（打开文件夹、选择文件夹）失败时显示原因
     /// </summary>
-    public void ReportLogDirectoryError(string message)
+    public void ReportError(string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        IsLogDirectoryError = true;
-        LogDirectoryMessage = message;
+        IsSaveError = true;
+        SaveMessage = message;
     }
 
-    private async Task ChangeLogDirectoryAsync(string? directory)
+    private async Task SaveAsync()
     {
-        if (_logDirectory is not { } settings || _isChangingLogDirectory)
+        if (_logDirectory is not { } settings || _isSaving)
             return;
 
-        _isChangingLogDirectory = true;
-        RaiseLogDirectoryCommandsChanged();
-        IsLogDirectoryError = false;
-        LogDirectoryMessage = "正在切换…";
+        // 留空不当作"恢复默认"：误清空输入框后点保存，不应悄悄把日志改写到别处
+        var directory = _logDirectoryInput.Trim();
+        if (directory.Length == 0)
+        {
+            ReportError("存储路径不能为空");
+            return;
+        }
+
+        _isSaving = true;
+        SaveCommand.RaiseCanExecuteChanged();
+        IsSaveError = false;
+        SaveMessage = "正在保存…";
         try
         {
-            // 服务内部在线程池上做磁盘 I/O；这里的续体回到 UI 线程更新界面
+            // 服务内部在线程池上做磁盘 I/O；这里的续体回到 UI 线程更新界面。
+            // 路径未变化时服务只重新保存设置、不切换：启动时退回默认目录的情况下，保存即确认改用当前目录
             var result = await settings.ChangeDirectoryAsync(directory, CancellationToken.None);
             if (result.IsFailure)
             {
-                IsLogDirectoryError = true;
-                LogDirectoryMessage = result.Error.Message;
+                ReportError(result.Error.Message);
                 return;
             }
 
             CurrentLogDirectory = result.Value;
             LogDirectoryInput = result.Value;
-            LogDirectoryMessage = "已应用：之后的日志写入该目录，原目录中的日志保留在原处";
+            _startupFallbackResolved = true;
+            RaiseStartupFallbackChanged();
+            SaveMessage = "设置已保存";
             _onLogDirectoryChanged?.Invoke(result.Value);
         }
         finally
         {
-            _isChangingLogDirectory = false;
-            RaiseLogDirectoryCommandsChanged();
+            _isSaving = false;
+            SaveCommand.RaiseCanExecuteChanged();
         }
     }
 
-    private void RaiseLogDirectoryCommandsChanged()
+    private void RaiseStartupFallbackChanged()
     {
-        ApplyLogDirectoryCommand.RaiseCanExecuteChanged();
-        RestoreDefaultLogDirectoryCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(LogDirectoryStartupFallback));
+        OnPropertyChanged(nameof(HasLogDirectoryStartupFallback));
     }
 }
