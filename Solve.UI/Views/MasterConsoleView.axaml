@@ -1,0 +1,64 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
+             x:Class="Solve.UI.Views.MasterConsoleView"
+             x:DataType="vm:MasterConsoleViewModel">
+
+    <Design.DataContext>
+        <vm:MasterConsoleViewModel />
+    </Design.DataContext>
+
+    <Grid Margin="16,12">
+        <!-- 主控台容器：上位机标准边框与底色 -->
+        <Border Background="{DynamicResource SemiColorBackground1}"
+                BorderBrush="{DynamicResource SemiColorBorder}"
+                BorderThickness="1"
+                CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
+                ClipToBounds="True">
+            <Grid RowDefinitions="Auto,*">
+                <!-- 顶部标题与状态栏预留槽位 -->
+                <Border Grid.Row="0"
+                        Height="46"
+                        Padding="16,0"
+                        Background="{DynamicResource SemiColorFill0}"
+                        BorderBrush="{DynamicResource SemiColorBorder}"
+                        BorderThickness="0,0,0,1">
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Left"
+                                    Orientation="Horizontal"
+                                    Spacing="10"
+                                    VerticalAlignment="Center">
+                            <TextBlock Text="{Binding PageTitle}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SemiColorText0}"
+                                       VerticalAlignment="Center" />
+                            <Border Background="{DynamicResource SemiColorFill1}"
+                                    CornerRadius="{DynamicResource SemiBorderRadiusSmall}"
+                                    Padding="8,2"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SystemStatusText}"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource SemiColorText2}" />
+                            </Border>
+                        </StackPanel>
+
+                        <!-- 右侧操作与工具按钮槽位（供后续控制台指令扩展） -->
+                        <StackPanel DockPanel.Dock="Right"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center" />
+                    </DockPanel>
+                </Border>
+
+                <!-- 主控台核心工作区（空白窗体区，便于后续自由布局仪表、图表与控制面板） -->
+                <Grid Grid.Row="1">
+                    <!-- 空白画布区 -->
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
