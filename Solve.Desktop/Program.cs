@@ -2,6 +2,7 @@
 using Avalonia;
 using Microsoft.Extensions.Logging;
 using Solve.Desktop.Composition;
+using Solve.Desktop.Logging;
 
 namespace Solve.Desktop;
 
@@ -41,11 +42,15 @@ class Program
     public static AppBuilder BuildAvaloniaApp() => BuildAvaloniaApp(null);
 
     private static AppBuilder BuildAvaloniaApp(AppHost? host)
-        => AppBuilder.Configure(() => new App(host))
+    {
+        var builder = AppBuilder.Configure(() => new App(host))
             .UsePlatformDetect()
 #if DEBUG
             .WithDeveloperTools()
 #endif
-            .WithInterFont()
-            .LogToTrace();
+            .WithInterFont();
+
+        // 有组合根时框架日志（绑定错误等）进黑匣子；设计器没有组合根，仍输出到 Trace
+        return host is null ? builder.LogToTrace() : builder.LogToSerilog(host.Logging.Logger);
+    }
 }

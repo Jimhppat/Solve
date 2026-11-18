@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Serilog;
 using Serilog.Extensions.Logging;
 using Solve.Adapters.Hardware.Buses;
 using Solve.Adapters.Hardware.Buses.Simulation;
@@ -15,6 +13,7 @@ using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
+using Solve.Desktop.Logging;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 
 namespace Solve.Desktop.Composition;
@@ -36,7 +35,7 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     private static readonly TimeSpan StartupStopTimeout = TimeSpan.FromSeconds(6);
 
-    private readonly Serilog.Core.Logger _serilog;
+    private readonly LoggingPipeline _logging;
     private readonly SerilogLoggerFactory _loggerFactory;
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _lifetime = new();
@@ -51,24 +50,10 @@ public sealed class AppHost : IAsyncDisposable
     {
         Options = options;
 
-        Directory.CreateDirectory(options.LogDirectory);
-        _serilog = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .Enrich.FromLogContext()
-            // 异步写盘：业务线程只入队；队列满时丢弃而不是阻塞（控制路径优先于日志完整性）
-            .WriteTo.Async(
-                sink => sink.File(
-                    path: Path.Combine(options.LogDirectory, "solve-.log"),
-                    outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}",
-                    rollingInterval: RollingInterval.Day,
-                    retainedFileCountLimit: 30,
-                    fileSizeLimitBytes: 50L * 1024 * 1024,
-                    rollOnFileSizeLimit: true),
-                bufferSize: 10_000,
-                blockWhenFull: false)
-            .CreateLogger();
+        _logging = LoggingPipeline.Create(options.LogDirectory, options.LoggingSettingsPath);
 
-        _loggerFactory = new SerilogLoggerFactory(_serilog, dispose: true);
+        // 日志器的生命周期归管线所有：工厂释放时不连带释放，由 _logging 统一刷写
+        _loggerFactory = new SerilogLoggerFactory(_logging.Logger, dispose: false);
         _logger = _loggerFactory.CreateLogger<AppHost>();
 
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
@@ -76,6 +61,12 @@ public sealed class AppHost : IAsyncDisposable
 
         _logger.LogInformation("程序启动 进程={ProcessId} 实机参数={HardwareRequested} 配置库={Database} 日志={Logs}",
             Environment.ProcessId, options.HardwareRequested, options.DatabasePath, options.LogDirectory);
+
+        if (_logging.SettingsError is { } settingsError)
+        {
+            _logger.LogWarning("日志级别配置 {Path} 无效，本次运行使用默认级别：{Error}",
+                options.LoggingSettingsPath, settingsError);
+        }
     }
 
     /// <summary>
@@ -92,6 +83,11 @@ public sealed class AppHost : IAsyncDisposable
     public ILoggerFactory LoggerFactory => _loggerFactory;
 
     public ILogger Logger => _logger;
+
+    /// <summary>
+    /// 黑匣子日志管线；供接入框架日志（如 Avalonia）等需要 Serilog 根日志器的场合
+    /// </summary>
+    public LoggingPipeline Logging => _logging;
 
     /// <summary>
     /// 总线注册表；启动完成前或配置库不可用时为 null
@@ -199,8 +195,9 @@ public sealed class AppHost : IAsyncDisposable
         AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
         TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
 
-        // 释放 LoggerFactory 会连带释放 Serilog，刷写异步队列中尚未落盘的日志
+        // 刷写异步队列中尚未落盘的日志并关闭文件
         _loggerFactory.Dispose();
+        _logging.Dispose();
         _lifetime.Dispose();
     }
 
@@ -337,7 +334,7 @@ public sealed class AppHost : IAsyncDisposable
         if (e.IsTerminating)
         {
             // 进程即将结束，来不及走正常关停：立即刷写异步日志队列，保住事故现场
-            _serilog.Dispose();
+            _logging.Dispose();
         }
     }
 
