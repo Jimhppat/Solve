@@ -30,6 +30,9 @@
         <DataTemplate DataType="vm:RuntimeLogViewModel">
             <views:RuntimeLogView />
         </DataTemplate>
+        <DataTemplate DataType="vm:SettingsViewModel">
+            <views:SettingsView />
+        </DataTemplate>
     </Window.DataTemplates>
 
     <Window.Resources>
@@ -226,7 +229,7 @@
                                            Foreground="{DynamicResource SemiColorText0}" />
                             </Grid>
 
-                            <ListBox x:Name="NavList" Classes="nav" SelectedIndex="{Binding SelectedNavIndex}" Background="Transparent">
+                            <ListBox Classes="nav" SelectedIndex="{Binding SelectedNavIndex}" Background="Transparent">
                                 <ListBoxItem ToolTip.Tip="主控台">
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconHome}" />
@@ -257,7 +260,6 @@
                                         <TextBlock Grid.Column="1" Text="运行日志" />
                                     </Grid>
                                 </ListBoxItem>
-                                <!-- 系统设置在独立窗口打开，不切换工作台页面，见 MainWindow.OnSettingsWindowRequested -->
                                 <ListBoxItem ToolTip.Tip="系统设置">
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconSetting}" />

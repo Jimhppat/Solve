@@ -28,6 +28,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
         BusConsole = new BusConsoleViewModel();
         RuntimeLog = new RuntimeLogViewModel();
+        Settings = new SettingsViewModel();
         _currentPage = MasterConsole;
 
         // 联动总线控制台的实时统计文本到主窗口底部状态栏
@@ -56,6 +57,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RuntimeLogViewModel RuntimeLog { get; }
 
     /// <summary>
+    /// 系统设置页
+    /// </summary>
+    public SettingsViewModel Settings { get; }
+
+    /// <summary>
     /// 当前活动页面（驱动主窗体 ContentControl 呈现）
     /// </summary>
     public ViewModelBase CurrentPage
@@ -65,24 +71,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 请求打开系统设置窗口，由主窗口视图负责创建与激活
-    /// </summary>
-    public event EventHandler? SettingsWindowRequested;
-
-    /// <summary>
-    /// 侧边栏导航选中索引。选中「系统设置」只请求打开设置窗口，不切换工作台页面，索引保持不变。
+    /// 侧边栏导航选中索引
     /// </summary>
     public int SelectedNavIndex
     {
         get => _selectedNavIndex;
         set
         {
-            if (value == SettingsNavIndex)
-            {
-                SettingsWindowRequested?.Invoke(this, EventArgs.Empty);
-                return;
-            }
-
             if (SetProperty(ref _selectedNavIndex, value))
             {
                 OnNavIndexChanged(value);
@@ -119,7 +114,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             MasterConsoleNavIndex => MasterConsole,
             BusConsoleNavIndex => BusConsole,
             RuntimeLogNavIndex => RuntimeLog,
-            _ => MasterConsole // 后续拓扑（2）、诊断（3）页面在此接入对应子 ViewModel；设置（5）为独立窗口，不经过这里
+            SettingsNavIndex => Settings,
+            _ => MasterConsole // 后续拓扑（2）、诊断（3）页面在此接入对应子 ViewModel
         };
     }
 

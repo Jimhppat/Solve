@@ -1,0 +1,18 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
+             x:Class="Solve.UI.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel"
+             Background="#0D000000">
+    <!-- 页面底色沿用主控台与运行日志页：在主题底色上叠 5% 黑，切页时底色一致 -->
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+
+    <!-- 系统设置页（空白，待开发） -->
+    <Grid />
+</UserControl>

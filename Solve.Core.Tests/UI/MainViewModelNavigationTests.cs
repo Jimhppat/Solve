@@ -3,7 +3,7 @@ using Solve.UI.ViewModels;
 namespace Solve.Core.Tests.UI;
 
 /// <summary>
-/// 主窗口侧栏导航：「系统设置」只请求打开独立窗口，不切换工作台页面
+/// 主窗口侧栏导航：「系统设置」切换到设置页
 /// </summary>
 public sealed class MainViewModelNavigationTests : IDisposable
 {
@@ -12,45 +12,20 @@ public sealed class MainViewModelNavigationTests : IDisposable
     public void Dispose() => _vm.Dispose();
 
     [Fact]
-    public void SelectSettings_RaisesWindowRequest_AndKeepsCurrentPage()
+    public void SelectSettings_NavigatesToSettingsPage()
     {
-        _vm.SelectedNavIndex = MainViewModel.RuntimeLogNavIndex;
-        var requests = 0;
-        var indexNotifications = 0;
-        _vm.SettingsWindowRequested += (_, _) => requests++;
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(MainViewModel.SelectedNavIndex))
-                indexNotifications++;
-        };
-
         _vm.SelectedNavIndex = MainViewModel.SettingsNavIndex;
 
-        Assert.Equal(1, requests);
-        Assert.Equal(0, indexNotifications);
-        Assert.Equal(MainViewModel.RuntimeLogNavIndex, _vm.SelectedNavIndex);
-        Assert.Same(_vm.RuntimeLog, _vm.CurrentPage);
+        Assert.Equal(MainViewModel.SettingsNavIndex, _vm.SelectedNavIndex);
+        Assert.Same(_vm.Settings, _vm.CurrentPage);
     }
 
     [Fact]
-    public void SelectSettingsRepeatedly_RaisesRequestEachTime()
-    {
-        var requests = 0;
-        _vm.SettingsWindowRequested += (_, _) => requests++;
-
-        _vm.SelectedNavIndex = MainViewModel.SettingsNavIndex;
-        _vm.SelectedNavIndex = MainViewModel.SettingsNavIndex;
-
-        // 每次点击都要能把已打开的设置窗口激活到前台
-        Assert.Equal(2, requests);
-        Assert.Equal(MainViewModel.MasterConsoleNavIndex, _vm.SelectedNavIndex);
-        Assert.Same(_vm.MasterConsole, _vm.CurrentPage);
-    }
-
-    [Fact]
-    public void SelectSettings_WithoutSubscriber_DoesNotThrow()
+    public void LeaveSettings_ReturnsToSelectedPage()
     {
         _vm.SelectedNavIndex = MainViewModel.SettingsNavIndex;
+
+        _vm.SelectedNavIndex = MainViewModel.MasterConsoleNavIndex;
 
         Assert.Same(_vm.MasterConsole, _vm.CurrentPage);
     }

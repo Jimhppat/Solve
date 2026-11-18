@@ -44,8 +44,8 @@
         <DependentUpon>LevelFilterPanel.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
-      <Compile Update="Views\SettingsWindow.axaml.cs">
-        <DependentUpon>SettingsWindow.axaml</DependentUpon>
+      <Compile Update="Views\SettingsView.axaml.cs">
+        <DependentUpon>SettingsView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
     </ItemGroup>
