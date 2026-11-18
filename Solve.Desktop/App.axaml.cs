@@ -1,8 +1,10 @@
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Solve.Desktop.Composition;
+using Solve.UI.ViewModels;
 using Solve.UI.Views;
 
 namespace Solve.Desktop;
@@ -32,13 +34,28 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow();
-        }
+            var vm = new MainViewModel();
+            desktop.MainWindow = new MainWindow(vm);
 
-        // 窗口先显示，总线系统在线程池启动；设计模式下绝不打开配置库或创建总线
-        if (_host is not null && !Design.IsDesignMode)
-        {
-            _ = _host.Start();
+            // 窗口先展示就绪，总线系统在线程池启动并异步注入 ViewModel
+            if (_host is not null && !Design.IsDesignMode)
+            {
+                _ = Task.Run(async () =>
+                {
+                    var report = await _host.Start().ConfigureAwait(false);
+                    if (_host.BusService is not null && _host.Buses is not null)
+                    {
+                        var isHardware = report.Mode?.Mode == TransportMode.Hardware;
+                        var modeText = isHardware ? "实机模式 (Hardware)" : "仿真模式 (Dry-Run)";
+                        await vm.InitializeAsync(
+                            _host.BusService,
+                            _host.Buses,
+                            modeText,
+                            isHardware,
+                            reason => _host.EmergencyStop(reason));
+                    }
+                });
+            }
         }
 
         base.OnFrameworkInitializationCompleted();

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Solve.UI.ViewModels;
 
 namespace Solve.UI.Views;
 
@@ -8,6 +9,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+    }
+
+    public MainWindow(MainViewModel viewModel) : this()
+    {
+        DataContext = viewModel;
     }
 
     // 自绘系统按钮：ElementRole 只负责 Win32 命中测试（贴靠布局、悬停语义），
