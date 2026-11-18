@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             x:Class="Solve.UI.Views.Twin.TwinSelectionPanel"
+             x:DataType="tvm:TwinBoardViewModel"
+             x:CompileBindings="True">
+    <!-- 主控台控制区：选中节点的详情。两套身份并列：位置编码给人看，节点 Id 给系统用（可选中复制） -->
+    <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14"
+                      Foreground="{DynamicResource SemiColorPrimary}" />
+            <TextBlock Text="节点详情" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource SemiColorText0}" />
+        </StackPanel>
+
+        <TextBlock IsVisible="{Binding !HasSelection}"
+                   Text="点选显示区中的节点查看详情；点柜体、层位等容器会进入该节点"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource SemiColorText2}" />
+
+        <Grid IsVisible="{Binding HasSelection}"
+              ColumnDefinitions="64,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+              ColumnSpacing="8" RowSpacing="8">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="位置" FontSize="12" Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SelectedTitle}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="名称" FontSize="12" Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedNameText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="状态" FontSize="12" Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SelectedStateText}" FontWeight="SemiBold" Foreground="{DynamicResource SemiColorText0}" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="SN" FontSize="12" Foreground="{DynamicResource SemiColorText2}"
+                       IsVisible="{Binding IsProductSelected}" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SelectedSerialText}" FontFamily="Consolas, monospace"
+                       IsVisible="{Binding IsProductSelected}" Foreground="{DynamicResource SemiColorText0}" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="更新于" FontSize="12" Foreground="{DynamicResource SemiColorText2}"
+                       IsVisible="{Binding IsProductSelected}" />
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SelectedUpdatedText}"
+                       IsVisible="{Binding IsProductSelected}" Foreground="{DynamicResource SemiColorText0}" />
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="统计" FontSize="12" Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SelectedSummaryText}" TextWrapping="Wrap" FontSize="12"
+                       Foreground="{DynamicResource SemiColorText1}" />
+
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="节点 Id" FontSize="12" Foreground="{DynamicResource SemiColorText2}"
+                       VerticalAlignment="Center" />
+            <TextBox Grid.Row="6" Grid.Column="1" IsReadOnly="True" FontFamily="Consolas, monospace" FontSize="11"
+                     AutomationProperties.Name="选中节点 Id"
+                     Text="{Binding SelectedIdText, Mode=OneWay}" />
+        </Grid>
+    </StackPanel>
+</UserControl>

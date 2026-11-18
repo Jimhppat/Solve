@@ -27,6 +27,9 @@
         <DataTemplate DataType="vm:BusConsoleViewModel">
             <views:BusConsoleView />
         </DataTemplate>
+        <DataTemplate DataType="vm:TopologyViewModel">
+            <views:TopologyView />
+        </DataTemplate>
         <DataTemplate DataType="vm:RuntimeLogViewModel">
             <views:RuntimeLogView />
         </DataTemplate>
@@ -243,7 +246,7 @@
                                         <TextBlock Grid.Column="1" Text="总线监控" />
                                     </Grid>
                                 </ListBoxItem>
-                                <ListBoxItem ToolTip.Tip="设备拓扑" IsEnabled="False">
+                                <ListBoxItem ToolTip.Tip="设备拓扑">
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconComponent}" />
                                         <TextBlock Grid.Column="1" Text="设备拓扑" />

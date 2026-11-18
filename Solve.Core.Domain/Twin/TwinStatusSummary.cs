@@ -1,0 +1,93 @@
+using System.Globalization;
+
+namespace Solve.Core.Domain.Twin;
+
+/// <summary>
+/// 一个节点（或一棵子树）下产品位的状态统计（不可变）。停用的产品位不计入各状态，单独计为 <see cref="Disabled"/>。
+/// </summary>
+public sealed class TwinStatusSummary
+{
+    private readonly int[] _counts;
+
+    public TwinStatusSummary(ReadOnlySpan<int> counts, int disabled)
+    {
+        if (counts.Length != ProductStates.Count)
+            throw new ArgumentException($"必须给出全部 {ProductStates.Count} 种状态的计数。", nameof(counts));
+        ArgumentOutOfRangeException.ThrowIfNegative(disabled);
+
+        _counts = counts.ToArray();
+        Disabled = disabled;
+        foreach (var count in _counts)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(count, nameof(counts));
+            Active += count;
+        }
+    }
+
+    public static TwinStatusSummary None { get; } = new(new int[ProductStates.Count], 0);
+
+    /// <summary>
+    /// 某一状态的产品位数（只含启用的）
+    /// </summary>
+    public int this[ProductState state] => _counts[(int)state];
+
+    /// <summary>
+    /// 启用的产品位数
+    /// </summary>
+    public int Active { get; }
+
+    /// <summary>
+    /// 停用（维护屏蔽）的产品位数
+    /// </summary>
+    public int Disabled { get; }
+
+    public int Total => Active + Disabled;
+
+    /// <summary>
+    /// 最严重的状态。没有启用的产品位时为 null（全部停用或没有产品位），界面按"停用 / 空"显示，而不是任何状态色。
+    /// </summary>
+    public ProductState? Worst
+    {
+        get
+        {
+            foreach (var state in ProductStates.BySeverity)
+            {
+                if (_counts[(int)state] > 0)
+                    return state;
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 需要关注的状态计数，如"故障 1 · 报警 2"；没有时为空串
+    /// </summary>
+    public string DescribeAttention() => Describe(attentionOnly: true);
+
+    /// <summary>
+    /// 全部非零计数，按严重度排列，如"故障 1 · 测试中 30 · 合格 5 · 停用 8"
+    /// </summary>
+    public string DescribeAll() => Describe(attentionOnly: false);
+
+    public bool SameAs(TwinStatusSummary other)
+        => ReferenceEquals(this, other) || (Disabled == other.Disabled && _counts.AsSpan().SequenceEqual(other._counts));
+
+    public override string ToString() => DescribeAll();
+
+    private string Describe(bool attentionOnly)
+    {
+        var parts = new List<string>();
+        foreach (var state in ProductStates.BySeverity)
+        {
+            var count = _counts[(int)state];
+            if (count > 0 && (!attentionOnly || state.NeedsAttention()))
+                parts.Add($"{state.DisplayName()} {count.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        if (!attentionOnly && Disabled > 0)
+            parts.Add($"停用 {Disabled.ToString(CultureInfo.InvariantCulture)}");
+
+        return string.Join(" · ", parts);
+    }
+}

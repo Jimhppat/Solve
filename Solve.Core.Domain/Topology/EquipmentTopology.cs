@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 using Solve.Core.Domain.Common;
@@ -9,9 +10,10 @@ namespace Solve.Core.Domain.Topology;
 /// </summary>
 /// <remarks>
 /// <para>只描述"设备有哪些位置、谁属于谁、哪些被停用"，不包含通信、运行状态或测试流程，与总线等模块无依赖。</para>
-/// <para>创建后完全不可变，通信、业务、存储、UI 线程可无锁并发读取；结构变更即重新 <see cref="Create(TopologyDefinition)"/>
-/// 一个新实例整体替换。</para>
-/// <para>查询开销：按地址定位 O(层数 × log 扇出)；按层或按子树取节点为二分定位 + 连续切片，不遍历整棵树。</para>
+/// <para>双身份：每个节点同时有系统身份 <see cref="TopologyNodeId"/>（机器用，终身不变）与
+/// 位置编码 <see cref="TopologyAddress"/>（人用，全树唯一，可随重新编号改变），两者都能 O(1)～O(层数) 定位节点。</para>
+/// <para>创建后完全不可变，通信、业务、存储、UI 线程可无锁并发读取；结构变更即 <see cref="ToDefinition"/> 导出、
+/// 修改后重新 <see cref="Create(TopologyDefinition)"/> 一个新实例整体替换。</para>
 /// </remarks>
 public sealed class EquipmentTopology
 {
@@ -32,12 +34,16 @@ public sealed class EquipmentTopology
     private readonly TopologyNode[][] _nodesByLevel;
     private readonly ReadOnlyCollection<TopologyNode>[] _readOnlyByLevel;
 
+    // 只读冻结字典：构建一次，之后无锁并发查询
+    private readonly FrozenDictionary<TopologyNodeId, TopologyNode> _nodesById;
+
     private EquipmentTopology(TopologyNode root, TopologyNode[][] nodesByLevel)
     {
         Root = root;
         _nodesByLevel = nodesByLevel;
         _readOnlyByLevel = Array.ConvertAll(nodesByLevel, Array.AsReadOnly);
-        NodeCount = nodesByLevel.Sum(nodes => nodes.Length);
+        _nodesById = nodesByLevel.SelectMany(nodes => nodes).ToFrozenDictionary(node => node.Id);
+        NodeCount = _nodesById.Count;
     }
 
     /// <summary>
@@ -75,14 +81,61 @@ public sealed class EquipmentTopology
     public static Result<EquipmentTopology> Create(TopologyDefinition definition) => Create(definition, out _);
 
     /// <summary>
-    /// 指定层级的全部节点，按地址升序
+    /// 导出为结构定义（保留全部 Id、序号、名称与启用状态），用于修改后重建或持久化。
+    /// 导出结果再 <see cref="Create(TopologyDefinition)"/> 得到等价的拓扑。
     /// </summary>
-    public IReadOnlyList<TopologyNode> GetNodes(TopologyLevel level) => _readOnlyByLevel[LevelIndex(level)];
+    public TopologyDefinition ToDefinition() => Export(node => (node.Name, node.IsEnabled));
 
     /// <summary>
-    /// 指定层级的节点数（含停用节点）
+    /// 修改单个节点的显示名与启用状态，得到一份新拓扑（本实例不变）。全部 Id、位置编码与其余节点保持不变。
     /// </summary>
-    public int CountAt(TopologyLevel level) => _nodesByLevel[LevelIndex(level)].Length;
+    /// <param name="id">要修改的节点</param>
+    /// <param name="name">新显示名；空白表示不命名（界面显示位置编码）。系统根的名称即系统名称，不能为空</param>
+    /// <param name="enabled">是否启用；停用会让整棵子树都视为停用。系统根不可停用</param>
+    public Result<EquipmentTopology> WithNodeSettings(TopologyNodeId id, string? name, bool enabled)
+    {
+        if (!TryGetNode(id, out var target))
+            return Result<EquipmentTopology>.Failure(TopologyErrors.NodeNotFound(id));
+
+        // 停用整台设备不属于拓扑配置，应由急停 / 安全停机处理（与 Create 中系统根恒为启用一致）
+        if (target.Level == TopologyLevel.System && !enabled)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidField(
+                TopologyErrors.EnabledField, "系统根不可停用；需要整机停止时请使用紧急停止。"));
+        }
+
+        return Create(Export(node => node.Id == id ? (name, enabled) : (node.Name, node.IsEnabled)));
+    }
+
+    private TopologyDefinition Export(Func<TopologyNode, (string? Name, bool Enabled)> settings)
+    {
+        return new TopologyDefinition(Root.Id, settings(Root).Name ?? "", ExportChildren(Root));
+
+        TopologyNodeDefinition[] ExportChildren(TopologyNode parent)
+            => Array.ConvertAll(parent.Children.ToArray(), node =>
+            {
+                var (name, enabled) = settings(node);
+                return new TopologyNodeDefinition(node.Id, node.Ordinal, ExportChildren(node)) { Name = name, Enabled = enabled };
+            });
+    }
+
+    // ---------- 按系统身份（机器用）查询 ----------
+
+    public bool TryGetNode(TopologyNodeId id, [NotNullWhen(true)] out TopologyNode? node)
+        => _nodesById.TryGetValue(id, out node);
+
+    public Result<TopologyNode> GetNode(TopologyNodeId id)
+        => TryGetNode(id, out var node)
+            ? Result<TopologyNode>.Success(node)
+            : Result<TopologyNode>.Failure(TopologyErrors.NodeNotFound(id));
+
+    /// <inheritdoc cref="CheckEnabled(TopologyAddress)"/>
+    public Result CheckEnabled(TopologyNodeId id)
+        => TryGetNode(id, out var node)
+            ? CheckEnabled(node.Address)
+            : Result.Failure(TopologyErrors.NodeNotFound(id));
+
+    // ---------- 按位置编码（人用）查询 ----------
 
     public bool TryGetNode(TopologyAddress address, [NotNullWhen(true)] out TopologyNode? node)
         => Locate(address, out node, out _);
@@ -91,6 +144,35 @@ public sealed class EquipmentTopology
         => TryGetNode(address, out var node)
             ? Result<TopologyNode>.Success(node)
             : Result<TopologyNode>.Failure(TopologyErrors.NodeNotFound(address));
+
+    /// <summary>
+    /// 联锁前置检查：位置存在，且它自身及全部祖先都已启用。
+    /// </summary>
+    /// <remarks>
+    /// 只回答"结构上是否允许"，不代表设备在线、无故障。向位置下发命令前还必须检查通信链路与运行状态。
+    /// 拒绝时给出自上而下第一个被停用的节点，便于操作员定位是哪一级屏蔽的。
+    /// </remarks>
+    public Result CheckEnabled(TopologyAddress address)
+    {
+        if (!Locate(address, out _, out var firstDisabled))
+            return Result.Failure(TopologyErrors.NodeNotFound(address));
+
+        return firstDisabled is null
+            ? Result.Success()
+            : Result.Failure(TopologyErrors.NodeDisabled(address, firstDisabled.Address));
+    }
+
+    // ---------- 按层 / 按子树 ----------
+
+    /// <summary>
+    /// 指定层级的全部节点，按地址升序
+    /// </summary>
+    public IReadOnlyList<TopologyNode> GetNodes(TopologyLevel level) => _readOnlyByLevel[LevelIndex(level)];
+
+    /// <summary>
+    /// 指定层级的节点数（含停用节点）
+    /// </summary>
+    public int CountAt(TopologyLevel level) => _nodesByLevel[LevelIndex(level)].Length;
 
     /// <summary>
     /// 子树内位于 <paramref name="level"/> 层的全部节点（含停用节点），按地址升序，
@@ -114,23 +196,6 @@ public sealed class EquipmentTopology
         return end == start
             ? ReadOnlyCollection<TopologyNode>.Empty
             : new ReadOnlyCollection<TopologyNode>(new ArraySegment<TopologyNode>(nodes, start, end - start));
-    }
-
-    /// <summary>
-    /// 联锁前置检查：位置存在，且它自身及全部祖先都已启用。
-    /// </summary>
-    /// <remarks>
-    /// 只回答"结构上是否允许"，不代表设备在线、无故障。向位置下发命令前还必须检查通信链路与运行状态。
-    /// 拒绝时给出自上而下第一个被停用的节点，便于操作员定位是哪一级屏蔽的。
-    /// </remarks>
-    public Result CheckEnabled(TopologyAddress address)
-    {
-        if (!Locate(address, out _, out var firstDisabled))
-            return Result.Failure(TopologyErrors.NodeNotFound(address));
-
-        return firstDisabled is null
-            ? Result.Success()
-            : Result.Failure(TopologyErrors.NodeDisabled(address, firstDisabled.Address));
     }
 
     public override string ToString() => $"{Name}（{NodeCount} 个节点）";
@@ -213,6 +278,9 @@ public sealed class EquipmentTopology
     private sealed class Builder
     {
         private readonly List<Error> _errors = [];
+
+        // Id 必须全树唯一（不只是同级唯一）：系统按 Id 找节点，重复即无法区分
+        private readonly Dictionary<TopologyNodeId, TopologyAddress> _ids = [];
         private int _nodeCount = 1; // 系统根
         private bool _aborted;
 
@@ -222,6 +290,8 @@ public sealed class EquipmentTopology
 
         public TopologyNode BuildRoot(TopologyDefinition definition)
         {
+            CheckId(TopologyAddress.System, definition.Id);
+
             string? name = null;
             if (string.IsNullOrWhiteSpace(definition.Name))
                 AddError(TopologyErrors.NameField, "系统名称不能为空。");
@@ -230,7 +300,7 @@ public sealed class EquipmentTopology
 
             // 系统根不可停用：停用整台设备不属于拓扑配置，应由上层的急停 / 安全停机处理
             var cabinets = BuildChildren(TopologyAddress.System, definition.Cabinets, parentEffectivelyEnabled: true);
-            return new TopologyNode(TopologyAddress.System, name, isEnabled: true, isEffectivelyEnabled: true, cabinets);
+            return new TopologyNode(definition.Id, TopologyAddress.System, name, isEnabled: true, isEffectivelyEnabled: true, cabinets);
         }
 
         private TopologyNode[] BuildChildren(
@@ -263,6 +333,7 @@ public sealed class EquipmentTopology
                     continue;
                 }
 
+                // 序号非法或重复时地址不成立，整棵子树无从校验，跳过
                 if (!parent.TryGetChild(definition.Ordinal, out var address))
                 {
                     AddError(TopologyErrors.OrdinalField,
@@ -283,18 +354,33 @@ public sealed class EquipmentTopology
                     break;
                 }
 
+                // Id 有问题时地址仍成立，继续校验下级，一次报全
+                CheckId(address, definition.Id);
+
                 var name = definition.Name is null ? null : CheckName(address, definition.Name);
                 var effectivelyEnabled = parentEffectivelyEnabled && definition.Enabled;
                 var children = BuildChildren(address, definition.Children, effectivelyEnabled);
-                built.Add(new TopologyNode(address, name, definition.Enabled, effectivelyEnabled, children));
+                built.Add(new TopologyNode(definition.Id, address, name, definition.Enabled, effectivelyEnabled, children));
             }
 
             built.Sort(static (a, b) => a.Ordinal.CompareTo(b.Ordinal));
             return built.ToArray();
         }
 
+        private void CheckId(TopologyAddress address, TopologyNodeId id)
+        {
+            if (id.IsEmpty)
+            {
+                AddError(TopologyErrors.IdField, $"{address} 的节点 Id 不能为空。");
+                return;
+            }
+
+            if (!_ids.TryAdd(id, address))
+                AddError(TopologyErrors.DuplicateIdField, $"{address} 的节点 Id {id} 与 {_ids[id]} 重复。");
+        }
+
         /// <summary>
-        /// 去除首尾空白；空白名视为未配置（返回 null，界面回退显示地址）
+        /// 去除首尾空白；空白名视为未配置（返回 null，界面回退显示位置编码）
         /// </summary>
         private string? CheckName(TopologyAddress address, string name)
         {

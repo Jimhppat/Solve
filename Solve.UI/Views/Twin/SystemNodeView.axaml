@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             xmlns:tv="using:Solve.UI.Views.Twin"
+             x:Class="Solve.UI.Views.Twin.SystemNodeView"
+             x:DataType="tvm:SystemNodeViewModel"
+             x:CompileBindings="True"
+             Tapped="OnTapped">
+    <!-- 系统：全局计数与状态条，柜体从左到右排开，放不下时换行 -->
+    <StackPanel Spacing="10">
+        <DockPanel>
+            <TextBlock DockPanel.Dock="Right"
+                       Text="{Binding SummaryText}"
+                       Margin="16,0,0,0"
+                       FontSize="12"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Text="{Binding Title}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource SemiColorText0}" />
+        </DockPanel>
+        <tv:TwinStatusBar Summary="{Binding Summary}" Height="8" />
+        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <WrapPanel ItemSpacing="12" LineSpacing="12" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+        </ItemsControl>
+    </StackPanel>
+</UserControl>

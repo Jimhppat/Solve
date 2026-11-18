@@ -62,6 +62,15 @@ public partial class App : Application
                 _ = Task.Run(async () =>
                 {
                     var report = await _host.Start().ConfigureAwait(false);
+
+                    // 拓扑与总线互不依赖：配置库能打开就接入拓扑页（读取失败时页面显示原因并禁止保存）。须在 UI 线程上接入
+                    if (_host.Topology is { } topology)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachTopology(topology));
+
+                    // 主控台显示区：六层产品状态
+                    if (_host.Twin is { } twin)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachTwin(twin));
+
                     if (_host.BusService is not null)
                     {
                         var isHardware = report.Mode?.Mode == TransportMode.Hardware;

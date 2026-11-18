@@ -2,6 +2,8 @@ using System;
 using System.Threading.Tasks;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Logging;
+using Solve.Core.Application.Topology;
+using Solve.Core.Application.Twin;
 
 namespace Solve.UI.ViewModels;
 
@@ -13,6 +15,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     // 侧栏导航索引，与 MainWindow.axaml 中 ListBoxItem 的顺序一一对应（含暂未启用的项）
     public const int MasterConsoleNavIndex = 0;
     public const int BusConsoleNavIndex = 1;
+    public const int TopologyNavIndex = 2;
     public const int RuntimeLogNavIndex = 4;
     public const int SettingsNavIndex = 5;
 
@@ -27,6 +30,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
         BusConsole = new BusConsoleViewModel();
+        Topology = new TopologyViewModel();
         RuntimeLog = new RuntimeLogViewModel();
         Settings = new SettingsViewModel(onLogDirectoryChanged: OnLogDirectoryChanged);
         _currentPage = MasterConsole;
@@ -50,6 +54,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 总线控制台专属子页面
     /// </summary>
     public BusConsoleViewModel BusConsole { get; }
+
+    /// <summary>
+    /// 设备拓扑页。由组合根在配置库就绪后接入拓扑服务，设计器中不可编辑
+    /// </summary>
+    public TopologyViewModel Topology { get; }
 
     /// <summary>
     /// 运行日志页。由组合根接入日志源，设计器中为空列表
@@ -113,11 +122,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             MasterConsoleNavIndex => MasterConsole,
             BusConsoleNavIndex => BusConsole,
+            TopologyNavIndex => Topology,
             RuntimeLogNavIndex => RuntimeLog,
             SettingsNavIndex => Settings,
-            _ => MasterConsole // 后续拓扑（2）、诊断（3）页面在此接入对应子 ViewModel
+            _ => MasterConsole // 后续诊断（3）页面在此接入对应子 ViewModel
         };
     }
+
+    /// <summary>
+    /// 接入设备拓扑服务（拓扑页：建档、扩缩容、节点浏览）。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachTopology(ITopologyService topology) => Topology.Attach(topology);
+
+    /// <summary>
+    /// 接入孪生状态库（主控台显示区）。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachTwin(TwinStateStore twin) => MasterConsole.Twin.Attach(twin);
 
     /// <summary>
     /// 接入日志源：运行日志页与主控台的最近日志各自订阅。须在 UI 线程上调用，只能调用一次。

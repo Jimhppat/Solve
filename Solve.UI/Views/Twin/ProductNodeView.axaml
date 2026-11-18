@@ -1,0 +1,23 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             xmlns:tv="using:Solve.UI.Views.Twin"
+             x:Class="Solve.UI.Views.Twin.ProductNodeView"
+             x:DataType="tvm:ProductNodeViewModel"
+             x:CompileBindings="True"
+             Cursor="Hand"
+             Tapped="OnTapped">
+    <!-- 产品位（叶子）：一个色块 + 序号。显示区可能同时有上千个，只用最少的元素，不放样式表、不放悬停提示；
+         详情点选后在控制区查看 -->
+    <Border Width="30" Height="22" Margin="1" CornerRadius="3"
+            Background="{Binding State, Converter={x:Static tv:TwinConverters.StateBrush}}"
+            BorderBrush="{DynamicResource SemiColorText0}"
+            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
+            Opacity="{Binding ContentOpacity}">
+        <TextBlock Text="{Binding OrdinalText}"
+                   FontSize="10"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Foreground="{Binding State, Converter={x:Static tv:TwinConverters.StateForeground}}" />
+    </Border>
+</UserControl>

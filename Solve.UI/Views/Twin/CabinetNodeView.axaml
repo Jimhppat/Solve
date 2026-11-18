@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             xmlns:tv="using:Solve.UI.Views.Twin"
+             x:Class="Solve.UI.Views.Twin.CabinetNodeView"
+             x:DataType="tvm:CabinetNodeViewModel"
+             x:CompileBindings="True"
+             Cursor="Hand"
+             Tapped="OnTapped">
+    <!-- 柜体：标题行 + 整柜状态条，层位上下堆叠（层位 1 在最上面，与实物一致）；摘要模式只保留标题与状态条 -->
+    <Border CornerRadius="9"
+            BorderBrush="{DynamicResource SemiColorText0}"
+            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}">
+        <Border CornerRadius="8" Padding="10" BorderThickness="1.5"
+                BorderBrush="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}"
+                Background="{DynamicResource SemiColorBackground1}"
+                Opacity="{Binding ContentOpacity}">
+            <StackPanel Spacing="8">
+                <DockPanel ToolTip.Tip="{Binding SummaryText}">
+                    <TextBlock DockPanel.Dock="Right"
+                               Text="{Binding AttentionText}"
+                               IsVisible="{Binding HasAttention}"
+                               Margin="12,0,0,0"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource SemiColorDanger}" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="{Binding ShortCode}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SemiColorText0}" />
+                        <TextBlock Text="{Binding Name}"
+                                   IsVisible="{Binding HasName}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource SemiColorText2}" />
+                    </StackPanel>
+                </DockPanel>
+                <tv:TwinStatusBar Summary="{Binding Summary}" Height="6" MinWidth="160" />
+                <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="6" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+    </Border>
+</UserControl>

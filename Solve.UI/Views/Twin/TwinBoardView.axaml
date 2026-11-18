@@ -1,0 +1,111 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             xmlns:tv="using:Solve.UI.Views.Twin"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+             x:Class="Solve.UI.Views.Twin.TwinBoardView"
+             x:DataType="tvm:TwinBoardViewModel"
+             x:CompileBindings="True">
+    <!-- 主控台显示区：路径导航 + 图例，下面是当前焦点节点。
+         六层控件按视图模型类型在这里统一登记，各层控件互不引用，可单独修改 -->
+
+    <Design.DataContext>
+        <tvm:TwinBoardViewModel />
+    </Design.DataContext>
+
+    <UserControl.DataTemplates>
+        <DataTemplate DataType="tvm:SystemNodeViewModel">
+            <tv:SystemNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:CabinetNodeViewModel">
+            <tv:CabinetNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:LayerNodeViewModel">
+            <tv:LayerNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:SlotNodeViewModel">
+            <tv:SlotNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:FixtureNodeViewModel">
+            <tv:FixtureNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:ProductNodeViewModel">
+            <tv:ProductNodeView />
+        </DataTemplate>
+    </UserControl.DataTemplates>
+
+    <DockPanel>
+        <!-- 路径导航（左）与图例（右） -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+            <ItemsControl DockPanel.Dock="Right"
+                          ItemsSource="{x:Static tv:TwinLegend.Items}"
+                          VerticalAlignment="Center">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel ItemSpacing="10" LineSpacing="4" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="tv:TwinLegendItem">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <Border Width="10" Height="10" CornerRadius="2" Background="{Binding Brush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding Text}" FontSize="11" Foreground="{DynamicResource SemiColorText2}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                <Button Classes="Tertiary"
+                        Padding="6,0"
+                        Height="28"
+                        Command="{Binding FocusParentCommand}"
+                        ToolTip.Tip="返回上一级">
+                    <PathIcon Data="{DynamicResource SemiIconArrowUp}" Width="12" Height="12" />
+                </Button>
+                <ItemsControl ItemsSource="{Binding Breadcrumb}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="tvm:TwinBreadcrumbItem">
+                            <StackPanel Orientation="Horizontal">
+                                <PathIcon Data="{DynamicResource SemiIconChevronRight}" Width="10" Height="10"
+                                          Foreground="{DynamicResource SemiColorText2}" />
+                                <Button Classes="Tertiary" Padding="6,0" Height="28"
+                                        Content="{Binding Text}"
+                                        Command="{Binding Command}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- 刷新出错：画面已不可信，必须让操作员看到 -->
+        <Border DockPanel.Dock="Top"
+                IsVisible="{Binding HasRefreshError}"
+                Margin="0,0,0,12"
+                Padding="12,8"
+                CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
+                Background="{DynamicResource SemiColorDangerLight}"
+                BorderBrush="{DynamicResource SemiColorDanger}"
+                BorderThickness="1">
+            <TextBlock Text="{Binding RefreshError}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+        </Border>
+
+        <TextBlock DockPanel.Dock="Top"
+                   IsVisible="{Binding ShowEmpty}"
+                   Text="{Binding EmptyText}"
+                   FontSize="13"
+                   Foreground="{DynamicResource SemiColorText2}" />
+
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <ContentControl Content="{Binding Focus}" HorizontalAlignment="Left" VerticalAlignment="Top" />
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

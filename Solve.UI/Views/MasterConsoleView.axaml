@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Solve.UI.ViewModels"
              xmlns:views="using:Solve.UI.Views"
+             xmlns:twin="using:Solve.UI.Views.Twin"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
              x:Class="Solve.UI.Views.MasterConsoleView"
              x:DataType="vm:MasterConsoleViewModel"
@@ -90,11 +91,9 @@
                 <ColumnDefinition Width="*" MinWidth="280" MaxWidth="420" />
             </Grid.ColumnDefinitions>
 
-            <!-- 显示区：仪表、曲线、图表等实时监视内容 -->
+            <!-- 显示区：六层节点（系统 → 柜体 → 层位 → 槽位 → 治具位 → 产品位）的产品状态 -->
             <Border Grid.Column="0" Classes="panel">
-                <Grid Margin="20">
-                    <!-- 显示内容槽位 -->
-                </Grid>
+                <twin:TwinBoardView Margin="20" DataContext="{Binding Twin}" />
             </Border>
 
             <!-- 右栏：控制区在上、最近日志在下，各占一张卡片，间距同为 20px。
@@ -112,7 +111,8 @@
                 <Border Grid.Row="0" Classes="panel">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="20" Spacing="12">
-                            <!-- 控制分组槽位 -->
+                            <!-- 选中节点的详情；之后的控制分组接在下面 -->
+                            <twin:TwinSelectionPanel DataContext="{Binding Twin}" />
                         </StackPanel>
                     </ScrollViewer>
                 </Border>

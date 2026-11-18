@@ -12,12 +12,14 @@ public sealed class TopologyNode
     private readonly TopologyNode[] _children;
 
     internal TopologyNode(
+        TopologyNodeId id,
         TopologyAddress address,
         string? name,
         bool isEnabled,
         bool isEffectivelyEnabled,
         TopologyNode[] children)
     {
+        Id = id;
         Address = address;
         Name = name;
         IsEnabled = isEnabled;
@@ -26,6 +28,14 @@ public sealed class TopologyNode
         Children = children.Length == 0 ? ReadOnlyCollection<TopologyNode>.Empty : Array.AsReadOnly(children);
     }
 
+    /// <summary>
+    /// 系统身份（机器用）：系统内部引用、存储、接口只认它，终身不变
+    /// </summary>
+    public TopologyNodeId Id { get; }
+
+    /// <summary>
+    /// 位置编码（人用）：全树唯一，用于界面、扫码、录入；重新编号后会改变，不要作为外键保存
+    /// </summary>
     public TopologyAddress Address { get; }
 
     public TopologyLevel Level => Address.Level;
@@ -84,6 +94,11 @@ public sealed class TopologyNode
         return false;
     }
 
+    /// <summary>
+    /// 日志格式：人读的层级、位置编码、显示名在前，机器检索用的 Id 在后，两套身份同时留痕
+    /// </summary>
     public override string ToString()
-        => Name is null ? $"{Level.DisplayName()} {Address}" : $"{Level.DisplayName()} {Address}（{Name}）";
+        => Name is null
+            ? $"{Level.DisplayName()} {Address} [{Id}]"
+            : $"{Level.DisplayName()} {Address}（{Name}）[{Id}]";
 }

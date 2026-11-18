@@ -52,6 +52,42 @@
         <DependentUpon>SettingsView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\TopologyView.axaml.cs">
+        <DependentUpon>TopologyView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\TwinBoardView.axaml.cs">
+        <DependentUpon>TwinBoardView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\TwinSelectionPanel.axaml.cs">
+        <DependentUpon>TwinSelectionPanel.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\SystemNodeView.axaml.cs">
+        <DependentUpon>SystemNodeView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\CabinetNodeView.axaml.cs">
+        <DependentUpon>CabinetNodeView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\LayerNodeView.axaml.cs">
+        <DependentUpon>LayerNodeView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\SlotNodeView.axaml.cs">
+        <DependentUpon>SlotNodeView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\FixtureNodeView.axaml.cs">
+        <DependentUpon>FixtureNodeView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Twin\ProductNodeView.axaml.cs">
+        <DependentUpon>ProductNodeView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
     </ItemGroup>
 
 </Project>

@@ -66,4 +66,126 @@ public sealed class TopologyLayoutTests
     [Fact]
     public void MultipleErrors_AreAllReported()
         => Assert.Equal(5, Codes(new TopologyLayout(0, 0, 0, 0, 0)).Count);
+
+    // ---------- 反推布局 ----------
+
+    [Fact]
+    public void TryInfer_UniformTopology_ReturnsItsLayout()
+    {
+        var topology = EquipmentTopology.Create(Standard.ToDefinition("S").Value).Value;
+
+        Assert.True(TopologyLayout.TryInfer(topology, out var layout));
+        Assert.Equal(Standard, layout);
+    }
+
+    [Fact]
+    public void TryInfer_DifferentCabinets_ReturnsMaxCounts()
+    {
+        // 1 号柜 2 层、2 号柜 1 层
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            new TopologyNodeDefinition(TopologyNodeId.New(), 1, [Chain(1, 4), Chain(2, 4)]),
+            Chain(2, 5),
+        ])).Value;
+
+        Assert.False(TopologyLayout.TryInfer(topology, out var layout));
+        Assert.Equal(new TopologyLayout(2, 2, 1, 1, 1), layout);
+    }
+
+    [Fact]
+    public void TryInfer_GapInNumbering_IsNotUniform()
+    {
+        // 只有 1 号与 3 号柜：数量一致但编号不连续，按统一布局保存会变成 1、2 号
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Chain(1, 5), Chain(3, 5)])).Value;
+
+        Assert.False(TopologyLayout.TryInfer(topology, out var layout));
+        Assert.Equal(new TopologyLayout(2, 1, 1, 1, 1), layout);
+    }
+
+    [Fact]
+    public void TryInfer_MissingLevels_IsNotUniform()
+    {
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Chain(1, 2)])).Value;
+
+        Assert.False(TopologyLayout.TryInfer(topology, out var layout));
+        Assert.Equal(new TopologyLayout(1, 1, 0, 0, 0), layout);
+    }
+
+    // ---------- 节点身份 ----------
+
+    private static IEnumerable<TopologyNode> AllNodes(EquipmentTopology topology)
+        => TopologyLevels.All.SelectMany(topology.GetNodes);
+
+    /// <summary>
+    /// 每层只有 1 个下级的一条链，直到产品位
+    /// </summary>
+    private static TopologyNodeDefinition Chain(int ordinal, int depth)
+        => new(TopologyNodeId.New(), ordinal, depth == 1 ? [] : [Chain(1, depth - 1)]);
+
+    [Fact]
+    public void FirstTimeDefinition_GivesEveryNodeAUniqueId()
+    {
+        var topology = EquipmentTopology.Create(Standard.ToDefinition("S").Value).Value;
+
+        var ids = AllNodes(topology).Select(n => n.Id).ToList();
+        Assert.Equal(465, ids.Count);
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+        Assert.DoesNotContain(TopologyNodeId.Empty, ids);
+    }
+
+    [Fact]
+    public void FirstTimeDefinition_IsNotReproducible_IdsMustBePersisted()
+    {
+        // 首次建档每次都生成新 Id：Id 只能来自持久化，不能靠"按布局再生成一遍"复原
+        var first = EquipmentTopology.Create(Standard.ToDefinition("S").Value).Value;
+        var second = EquipmentTopology.Create(Standard.ToDefinition("S").Value).Value;
+
+        Assert.NotEqual(first.Root.Id, second.Root.Id);
+        Assert.False(second.TryGetNode(first.GetNode(TopologyAddress.Of(1, 1, 1, 1, 1)).Value.Id, out _));
+    }
+
+    [Fact]
+    public void ReapplyingLayout_KeepsIdsNamesAndMasks_OfKeptPositions()
+    {
+        // 现有：2 柜 × 1 层 × 1 槽 × 1 治具位 × 1 产品位；1 号柜有名字，2 号柜的层位被维护屏蔽
+        var current = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            Chain(1, 5) with { Name = "A 柜" },
+            new TopologyNodeDefinition(TopologyNodeId.New(), 2, [Chain(1, 4) with { Enabled = false }]),
+        ])).Value;
+
+        // 扩容为 3 柜、每治具 2 产品位
+        var grown = EquipmentTopology.Create(
+            new TopologyLayout(3, 1, 1, 1, 2).ToDefinition("S", current).Value).Value;
+
+        Assert.Equal(current.Root.Id, grown.Root.Id);
+        foreach (var kept in AllNodes(current))
+        {
+            var node = grown.GetNode(kept.Id).Value;
+            Assert.Equal(kept.Address, node.Address);
+            Assert.Equal(kept.Name, node.Name);
+            Assert.Equal(kept.IsEnabled, node.IsEnabled);
+        }
+
+        Assert.Equal("A 柜", grown.GetNode(TopologyAddress.Of(1)).Value.Name);
+        Assert.False(grown.GetNode(TopologyAddress.Of(2, 1, 1, 1, 2)).Value.IsEffectivelyEnabled);
+
+        // 新增位置拿到新 Id
+        var added = grown.GetNode(TopologyAddress.Of(3)).Value;
+        Assert.False(current.TryGetNode(added.Id, out _));
+    }
+
+    [Fact]
+    public void ShrinkingLayout_DropsRemovedPositions()
+    {
+        var current = EquipmentTopology.Create(new TopologyLayout(2, 1, 1, 1, 2).ToDefinition("S").Value).Value;
+        var removedId = current.GetNode(TopologyAddress.Of(2)).Value.Id;
+        var keptId = current.GetNode(TopologyAddress.Of(1, 1, 1, 1, 1)).Value.Id;
+
+        var shrunk = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 1, 1).ToDefinition("S", current).Value).Value;
+
+        Assert.False(shrunk.TryGetNode(removedId, out _));
+        Assert.Equal(TopologyAddress.Of(1, 1, 1, 1, 1), shrunk.GetNode(keptId).Value.Address);
+        Assert.Equal(6, shrunk.NodeCount);
+    }
 }

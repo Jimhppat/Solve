@@ -21,6 +21,14 @@ public sealed class MainViewModelNavigationTests : IDisposable
     }
 
     [Fact]
+    public void SelectTopology_NavigatesToTopologyPage()
+    {
+        _vm.SelectedNavIndex = MainViewModel.TopologyNavIndex;
+
+        Assert.Same(_vm.Topology, _vm.CurrentPage);
+    }
+
+    [Fact]
     public void LeaveSettings_ReturnsToSelectedPage()
     {
         _vm.SelectedNavIndex = MainViewModel.SettingsNavIndex;
