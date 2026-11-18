@@ -96,7 +96,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     public async Task InitializeAsync(
         IBusManagementService busService,
-        BusManager manager,
         string modeText,
         bool isHardware,
         Action<string> onEmergencyStop)
@@ -107,7 +106,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         IsHardwareMode = isHardware;
         ModeBadgeColor = isHardware ? "#EF4444" : "#F59E0B";
 
-        await BusConsole.InitializeAsync(busService, manager);
+        await BusConsole.InitializeAsync(busService);
     }
 
     private void EmergencyStop()

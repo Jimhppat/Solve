@@ -1,8 +1,10 @@
 using System;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
 
 namespace Solve.UI.ViewModels;
@@ -12,7 +14,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
     private readonly BusRuntime? _runtime;
     private readonly Action<BusItemViewModel>? _onEdit;
     private readonly Action<BusItemViewModel>? _onDelete;
-    private readonly CancellationTokenSource _cts = new();
+    private readonly EventSubscription<BusStateChanged>? _stateSubscription;
 
     private BusState _state;
     private string _name = string.Empty;
@@ -44,7 +46,10 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
         _onDelete = onDelete;
 
         RefreshDescriptor(runtime.Descriptor);
-        UpdateStateDisplay(runtime.State);
+
+        // 先订阅再显示：订阅时刻的状态作为初值，之后的迁移全部进入队列，不会漏掉中间变化
+        _stateSubscription = runtime.SubscribeStateChanges(out var current);
+        UpdateStateDisplay(current);
 
         ConnectCommand = new RelayCommand(
             () => _runtime.Connect(),
@@ -61,7 +66,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
         EditCommand = new RelayCommand(() => _onEdit?.Invoke(this));
         DeleteCommand = new RelayCommand(() => _onDelete?.Invoke(this));
 
-        _ = Task.Run(ListenStateChangesAsync);
+        _ = Task.Run(() => ListenStateChangesAsync(_stateSubscription.Reader));
     }
 
     public BusId Id => _runtime?.Id ?? BusId.Empty;
@@ -191,28 +196,20 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task ListenStateChangesAsync()
+    // 退订（Dispose）或运行时释放后队列完成，循环自然退出
+    private async Task ListenStateChangesAsync(ChannelReader<BusStateChanged> reader)
     {
-        if (_runtime is null) return;
-        var reader = _runtime.StateChanges;
-        try
+        while (await reader.WaitToReadAsync().ConfigureAwait(false))
         {
-            while (await reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false))
+            while (reader.TryRead(out var evt))
             {
-                while (reader.TryRead(out var evt))
+                Dispatcher.UIThread.Post(() =>
                 {
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        State = evt.Transition.To;
-                        if (evt.Cause is not null)
-                            Note = evt.Cause.Message;
-                    });
-                }
+                    State = evt.Transition.To;
+                    if (evt.Cause is not null)
+                        Note = evt.Cause.Message;
+                });
             }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal exit on dispose
         }
     }
 
@@ -223,9 +220,5 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
         ResetCommand?.RaiseCanExecuteChanged();
     }
 
-    public void Dispose()
-    {
-        _cts.Cancel();
-        _cts.Dispose();
-    }
+    public void Dispose() => _stateSubscription?.Dispose();
 }

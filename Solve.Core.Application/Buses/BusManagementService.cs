@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 
@@ -29,6 +30,9 @@ public sealed class BusManagementService : IBusManagementService
     }
 
     public IReadOnlyList<BusRuntime> GetAllRuntimes() => _manager.Buses;
+
+    public EventSubscription<BusRegistryEvent> SubscribeRegistry(out IReadOnlyList<BusRuntime> current)
+        => _manager.SubscribeRegistry(out current);
 
     public Result<BusRuntime> GetRuntime(BusId id)
     {
@@ -63,14 +67,8 @@ public sealed class BusManagementService : IBusManagementService
         if (registered.IsFailure)
         {
             _logger.LogError("总线 {BusId} 注册到运行时失败，执行持久化回滚：{Error}", descriptor.Id, registered.Error);
-            try
-            {
-                await _repository.DeleteAsync(descriptor.Id, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "总线 {BusId} 注册失败后回滚持久化异常", descriptor.Id);
-            }
+            await RollbackAsync(descriptor.Id, "删除刚写入的配置",
+                () => _repository.DeleteAsync(descriptor.Id, CancellationToken.None)).ConfigureAwait(false);
 
             return registered;
         }
@@ -113,17 +111,11 @@ public sealed class BusManagementService : IBusManagementService
         if (reconfigured.IsFailure)
         {
             _logger.LogError("总线 {BusId} 运行时重配置失败，尝试回滚数据库至旧配置：{Error}", descriptor.Id, reconfigured.Error);
-            if (oldDescriptor is not null)
-            {
-                try
-                {
-                    await _repository.SaveAsync(oldDescriptor, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogCritical(ex, "总线 {BusId} 回滚数据库至旧配置异常", descriptor.Id);
-                }
-            }
+
+            // 库里原本没有这条记录（运行时有、库里无）时，回滚即删除刚写入的记录
+            await RollbackAsync(descriptor.Id, "恢复旧配置", oldDescriptor is not null
+                ? () => _repository.SaveAsync(oldDescriptor, CancellationToken.None)
+                : () => _repository.DeleteAsync(descriptor.Id, CancellationToken.None)).ConfigureAwait(false);
 
             return reconfigured;
         }
@@ -161,5 +153,23 @@ public sealed class BusManagementService : IBusManagementService
 
         _logger.LogInformation("总线 {BusId} 已彻底删除", id);
         return Result.Success();
+    }
+
+    /// <summary>
+    /// 执行持久化回滚。仓储按约定以失败的 Result 报告存储错误（不抛异常），两种失败都必须告警：
+    /// 回滚失败意味着数据库与运行时已不一致，下次启动会按数据库内容加载。
+    /// </summary>
+    private async Task RollbackAsync(BusId id, string action, Func<Task<Result>> rollback)
+    {
+        try
+        {
+            var result = await rollback().ConfigureAwait(false);
+            if (result.IsFailure)
+                _logger.LogCritical("总线 {BusId} 回滚（{Action}）失败：{Error}，数据库与运行时不一致，需人工核对", id, action, result.Error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "总线 {BusId} 回滚（{Action}）异常，数据库与运行时不一致，需人工核对", id, action);
+        }
     }
 }

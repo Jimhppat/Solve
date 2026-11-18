@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 
@@ -12,7 +13,8 @@ namespace Solve.Core.Application.Buses;
 /// <remarks>
 /// <para>线程模型：</para>
 /// <list type="bullet">
-/// <item>监督任务（每条总线 1 个）是唯一执行 Open/Close/重连的地方。</item>
+/// <item>监督任务（每条总线 1 个）是物理通道生命周期的唯一执行者：打开、关闭、重连、硬参数重配置时的通道替换
+/// 都只在这里发生。其他线程只能投递请求并唤醒它（控制面的“单所有者”）。</item>
 /// <item>协议事务在调用方线程执行，通过 <see cref="ExecuteAsync{T}"/> 由通道锁串行化；
 /// 监督任务的 Open/Close 也持有同一把锁，因此物理通道上任意时刻只有一个操作。</item>
 /// <item>所有状态迁移经 <see cref="Fire"/> 在 _stateGate 内完成，事件按迁移顺序入队。</item>
@@ -30,6 +32,7 @@ public sealed class BusRuntime : IAsyncDisposable
 
     private BusDescriptor _descriptor;
     private IBusTransport _transport;
+    private readonly IBusTransportFactory _transportFactory;
     private readonly IBusSafetyInterlock _interlock;
     private readonly ILogger _logger;
     private readonly BusRuntimeOptions _options;
@@ -45,9 +48,15 @@ public sealed class BusRuntime : IAsyncDisposable
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
 
-    private readonly Channel<BusStateChanged> _events;
+    private readonly EventBroadcaster<BusStateChanged> _events;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly TransactionChannel _channel;
+
+    // 串行化所有重配置请求（软/硬参数），保证描述与物理通道始终成对更新
+    private readonly SemaphoreSlim _reconfigureGate = new(1, 1);
+
+    // 待监督任务执行的硬参数重建请求，受 _stateGate 保护；同一时刻至多一个（由 _reconfigureGate 保证）
+    private PendingRebuild? _pendingRebuild;
 
     // 会话令牌：Connect 时新建，Disconnect / SafetyTrip / Dispose 时取消。打断监督任务的打开与退避等待。
     // 纯 CTS（无定时器、非链接）不持有资源，被替换后无需 Dispose，避免他人持有的 Token 访问已释放对象。
@@ -63,6 +72,7 @@ public sealed class BusRuntime : IAsyncDisposable
     private BusRuntime(
         BusDescriptor descriptor,
         IBusTransport transport,
+        IBusTransportFactory transportFactory,
         IBusSafetyInterlock interlock,
         ILogger logger,
         BusRuntimeOptions options,
@@ -70,16 +80,13 @@ public sealed class BusRuntime : IAsyncDisposable
     {
         _descriptor = descriptor;
         _transport = transport;
+        _transportFactory = transportFactory;
         _interlock = interlock;
         _logger = logger;
         _options = options;
         _time = time;
         _channel = new TransactionChannel(this);
-        _events = Channel.CreateBounded<BusStateChanged>(new BoundedChannelOptions(options.StateEventCapacity)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleWriter = false,
-        });
+        _events = new EventBroadcaster<BusStateChanged>(options.StateEventCapacity);
     }
 
     /// <summary>
@@ -109,7 +116,8 @@ public sealed class BusRuntime : IAsyncDisposable
         if (transport.IsFailure)
             return Result<BusRuntime>.Failure(transport.Error);
 
-        var runtime = new BusRuntime(descriptor, transport.Value, interlock, logger, options, timeProvider ?? TimeProvider.System);
+        var runtime = new BusRuntime(
+            descriptor, transport.Value, transportFactory, interlock, logger, options, timeProvider ?? TimeProvider.System);
         runtime._supervisor = Task.Run(runtime.SuperviseAsync);
         return Result<BusRuntime>.Success(runtime);
     }
@@ -130,10 +138,19 @@ public sealed class BusRuntime : IAsyncDisposable
     public BusState State => _machine.State;
 
     /// <summary>
-    /// 状态变化事件流。单消费者（BusManager 或 UI 适配层），消费方负责切换到 UI 线程。
-    /// 释放后完成。
+    /// 订阅状态变化事件，并原子地取得订阅时刻的状态：<paramref name="current"/> 之后的每一次迁移都会进入返回的队列，
+    /// 不重复、不遗漏。每个订阅者独立排队（UI、协议层、告警可同时订阅），用完 Dispose 退订。
     /// </summary>
-    public ChannelReader<BusStateChanged> StateChanges => _events.Reader;
+    /// <remarks>消费方负责切换到 UI 线程。运行时释放后队列完成；释放后订阅得到已完成的队列。</remarks>
+    public EventSubscription<BusStateChanged> SubscribeStateChanges(out BusState current)
+    {
+        // 与 Fire 共用状态锁：快照与登记之间不会插入迁移
+        lock (_stateGate)
+        {
+            current = _machine.State;
+            return _events.Subscribe();
+        }
+    }
 
     // ==================== 命令 ====================
 
@@ -208,15 +225,19 @@ public sealed class BusRuntime : IAsyncDisposable
     }
 
     /// <summary>
-    /// 重配置总线参数：软参数（Tier 1）在线热更新；硬参数（Tier 2）安全重建物理通道。
+    /// 重配置总线参数。软参数（Tier 1：名称、超时、重连策略）在线热更新；
+    /// 硬参数（Tier 2：链路类型、端口、波特率、主机等）由监督任务在安全点替换物理通道。
     /// </summary>
-    public async Task<Result> ReconfigureAsync(
-        BusDescriptor newDescriptor,
-        IBusTransportFactory transportFactory,
-        CancellationToken cancellationToken)
+    /// <remarks>
+    /// <para>并发：多次调用按到达顺序串行执行，描述与物理通道始终成对更新。</para>
+    /// <para>硬参数流程：先创建新通道（无 I/O），失败则直接返回、旧通道与状态原封不动；
+    /// 成功后把请求交给监督任务，由它中止在途事务、关闭旧通道、换上新通道，原本处于活动状态的总线随后自动重连。</para>
+    /// <para><paramref name="cancellationToken"/> 只作用于排队等待；请求一旦交给监督任务就会执行完，
+    /// 不会中途放弃，避免调用方误判结果（例如据此回滚数据库）。</para>
+    /// </remarks>
+    public async Task<Result> ReconfigureAsync(BusDescriptor newDescriptor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(newDescriptor);
-        ArgumentNullException.ThrowIfNull(transportFactory);
         ThrowIfDisposed();
 
         if (newDescriptor.Id != Id)
@@ -226,91 +247,63 @@ public sealed class BusRuntime : IAsyncDisposable
         if (errors.Count > 0)
             return Result.Failure(BusErrors.InvalidDescriptor(errors));
 
-        BusDescriptor oldDescriptor;
-        lock (_stateGate)
-        {
-            oldDescriptor = _descriptor;
-        }
-
-        var rebuildRequired = oldDescriptor.RequiresTransportRebuild(newDescriptor);
-        if (!rebuildRequired)
-        {
-            // Tier 1 软参数：在线热更新，无需断开物理通道
-            lock (_stateGate)
-            {
-                _descriptor = newDescriptor;
-            }
-
-            _logger.LogInformation("Bus {BusId} 软参数热更新成功", Id);
-            return Result.Success();
-        }
-
-        // Tier 2 硬参数：需要重建物理通道
-        // 1. 获取通道排他锁，保证没有事务正在收发
-        if (!await _channelLock.WaitAsync(_options.ChannelLockTimeout, cancellationToken).ConfigureAwait(false))
-            return Result.Failure(BusErrors.ChannelBusy(_options.ChannelLockTimeout));
-
+        await _reconfigureGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ThrowIfDisposed();
 
-            // 2. 取消在途 I/O 与会话
-            CancelSession();
+            var oldDescriptor = Descriptor;
+            if (!oldDescriptor.RequiresTransportRebuild(newDescriptor))
+            {
+                lock (_stateGate)
+                {
+                    _descriptor = newDescriptor;
+                }
 
-            // 3. 关闭旧物理通道并安全释放
-            try
-            {
-                await _transport.CloseAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Bus {BusId} 重配置关闭旧物理通道异常，继续销毁", Id);
-            }
-
-            try
-            {
-                await _transport.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Bus {BusId} 重配置释放旧物理通道异常", Id);
+                _logger.LogInformation("Bus {BusId} 软参数热更新成功", Id);
+                return Result.Success();
             }
 
-            // 4. 创建新物理通道
-            var created = transportFactory.Create(newDescriptor);
+            // 先建后拆：创建不做 I/O，失败时旧通道仍完好可用
+            var created = _transportFactory.Create(newDescriptor);
             if (created.IsFailure)
             {
-                _logger.LogCritical("Bus {BusId} 重配置创建新物理通道失败：{Error}，执行安全跳闸", Id, created.Error);
-                Fire(BusTrigger.SafetyTrip, created.Error);
+                _logger.LogWarning("Bus {BusId} 重配置创建新物理通道失败，保持原配置：{Error}", Id, created.Error);
                 return Result.Failure(created.Error);
             }
 
-            _transport = created.Value;
+            var request = new PendingRebuild(
+                newDescriptor,
+                created.Value,
+                new TaskCompletionSource<Result>(TaskCreationOptions.RunContinuationsAsynchronously));
 
-            // 5. 更新描述符并判断状态协同
-            BusState state;
+            CancellationTokenSource session;
+            bool accepted;
             lock (_stateGate)
             {
-                _descriptor = newDescriptor;
-                state = _machine.State;
+                // 与 DisposeAsync 收尾互斥：释放已开始时不再投递，否则请求无人处理
+                accepted = Volatile.Read(ref _disposed) == 0;
+                if (accepted)
+                    _pendingRebuild = request;
+
+                session = _session;
             }
 
-            _logger.LogInformation("Bus {BusId} 物理通道重构完成（{OldDesc} -> {NewDesc}）当前状态={State}",
-                Id, oldDescriptor.GetType().Name, newDescriptor.GetType().Name, state);
-
-            // 6. 状态协同：若原处于活动状态（Connected / Connecting / Reconnecting），先优雅关闭再触发重连
-            if (state is BusState.Connected or BusState.Connecting or BusState.Reconnecting)
+            if (!accepted)
             {
-                Fire(BusTrigger.Disconnect, cause: null);
-                Fire(BusTrigger.Closed, cause: null);
-                Fire(BusTrigger.Connect, cause: null, onAccepted: () => _session = new CancellationTokenSource());
+                await created.Value.DisposeAsync().ConfigureAwait(false);
+                throw new ObjectDisposedException(GetType().FullName);
             }
 
-            return Result.Success();
+            // 打断监督任务正在进行的打开 / 退避等待并唤醒它，使其尽快在循环顶部执行替换
+            session.Cancel();
+            _wake.Writer.TryWrite(true);
+
+            return await request.Completion.Task.ConfigureAwait(false);
         }
         finally
         {
-            _channelLock.Release();
+            _reconfigureGate.Release();
         }
     }
 
@@ -414,6 +407,20 @@ public sealed class BusRuntime : IAsyncDisposable
             _logger.LogError("Bus {BusId} 监督任务未在 {Timeout} 内退出，强制关闭物理通道", Id, _options.ShutdownTimeout);
         }
 
+        // 监督任务已退出：尚未执行的重建请求不会再被处理，释放其新通道并通知等待方
+        PendingRebuild? orphan;
+        lock (_stateGate)
+        {
+            orphan = _pendingRebuild;
+            _pendingRebuild = null;
+        }
+
+        if (orphan is not null)
+        {
+            await orphan.Transport.DisposeAsync().ConfigureAwait(false);
+            orphan.Completion.TrySetException(new ObjectDisposedException(GetType().FullName));
+        }
+
         try
         {
             await CloseTransportAsync().ConfigureAwait(false);
@@ -421,7 +428,7 @@ public sealed class BusRuntime : IAsyncDisposable
         finally
         {
             await _transport.DisposeAsync().ConfigureAwait(false);
-            _events.Writer.TryComplete();
+            _events.Complete();
             _lifetime.Dispose();
             _logger.LogInformation("Bus {BusId} 运行时已释放", Id);
         }
@@ -438,10 +445,13 @@ public sealed class BusRuntime : IAsyncDisposable
         {
             BusState state;
             CancellationToken session;
+            PendingRebuild? rebuild;
             lock (_stateGate)
             {
                 state = _machine.State;
                 session = _session.Token;
+                rebuild = _pendingRebuild;
+                _pendingRebuild = null;
             }
 
             if (state != BusState.Reconnecting)
@@ -449,6 +459,13 @@ public sealed class BusRuntime : IAsyncDisposable
 
             try
             {
+                // 重配置请求优先于常规状态处理：在两步操作之间的安全点替换物理通道
+                if (rebuild is not null)
+                {
+                    await ApplyRebuildAsync(rebuild).ConfigureAwait(false);
+                    continue;
+                }
+
                 switch (state)
                 {
                     case BusState.Connecting:
@@ -560,6 +577,87 @@ public sealed class BusRuntime : IAsyncDisposable
     }
 
     /// <summary>
+    /// 在监督任务内执行硬参数重建：离开活动状态（中止在途事务）→ 通道锁内关旧换新 → 锁外释放旧通道 → 原先活动则自动重连。
+    /// </summary>
+    private async Task ApplyRebuildAsync(PendingRebuild rebuild)
+    {
+        var swapped = false;
+        try
+        {
+            // 只有活动状态接受 Disconnect；离开 Connected 时 Fire 会取消 I/O 令牌，在途事务立即以 ChannelLocked 结束
+            var resume = State is BusState.Connecting or BusState.Connected or BusState.Reconnecting
+                && Fire(BusTrigger.Disconnect, cause: null).IsSuccess;
+
+            var old = await SwapTransportAsync(rebuild.Transport, rebuild.Descriptor).ConfigureAwait(false);
+            swapped = true;
+
+            try
+            {
+                await old.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Bus {BusId} 释放旧物理通道异常", Id);
+            }
+
+            // 替换期间若发生安全跳闸，状态已锁存为 SafeStop，下面的迁移会被拒绝，总线保持锁存
+            if (resume && Fire(BusTrigger.Closed, cause: null).IsSuccess)
+                Fire(BusTrigger.Connect, cause: null, onAccepted: () => _session = new CancellationTokenSource());
+
+            _logger.LogInformation("Bus {BusId} 物理通道已替换为 {Type}，{Next}",
+                Id, rebuild.Descriptor.GetType().Name, resume ? "自动重连" : "保持原状态");
+            rebuild.Completion.TrySetResult(Result.Success());
+        }
+        catch (Exception ex)
+        {
+            if (!swapped)
+                await rebuild.Transport.DisposeAsync().ConfigureAwait(false);
+
+            rebuild.Completion.TrySetResult(Result.Failure(BusErrors.UnhandledException(ex)));
+            throw; // 交给监督循环兜底：安全跳闸
+        }
+    }
+
+    /// <summary>
+    /// 在通道锁内关闭旧通道并换上新通道（与事务、打开、关闭互斥），返回旧通道由调用方在锁外释放。
+    /// 锁等待超时同样强制替换：释放硬件优先于等待在途事务（与 <see cref="CloseTransportAsync"/> 一致）。
+    /// </summary>
+    private async Task<IBusTransport> SwapTransportAsync(IBusTransport replacement, BusDescriptor descriptor)
+    {
+        var acquired = await _channelLock.WaitAsync(_options.ChannelLockTimeout).ConfigureAwait(false);
+        if (!acquired)
+            _logger.LogWarning("Bus {BusId} 等待通道锁超过 {Timeout}，强制替换物理通道", Id, _options.ChannelLockTimeout);
+
+        try
+        {
+            var old = _transport;
+            try
+            {
+                using var timeout = new CancellationTokenSource(_descriptor.Timeouts.Connect);
+                await old.CloseAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // 旧通道马上会被释放，关闭失败不阻止替换
+                _logger.LogWarning(ex, "Bus {BusId} 关闭旧物理通道异常，继续替换", Id);
+            }
+
+            lock (_stateGate)
+            {
+                _transport = replacement;
+                _descriptor = descriptor;
+            }
+
+            return old;
+        }
+        finally
+        {
+            if (acquired)
+                _channelLock.Release();
+        }
+    }
+
+    /// <summary>
     /// 在通道锁内关闭物理通道。锁等待超时也会强制关闭：释放硬件优先于等待在途事务。
     /// 不受会话/生命周期令牌影响，确保断开、跳闸、释放时一定执行。
     /// </summary>
@@ -624,7 +722,7 @@ public sealed class BusRuntime : IAsyncDisposable
                     onAccepted?.Invoke();
 
                     changed = new BusStateChanged(Id, transition, _time.GetUtcNow(), cause);
-                    _events.Writer.TryWrite(changed);
+                    _events.Publish(changed);
 
                     pulse = _statePulse;
                     _statePulse = NewPulse();
@@ -743,6 +841,11 @@ public sealed class BusRuntime : IAsyncDisposable
         source.Cancel();
         return source;
     }
+
+    /// <summary>
+    /// 一次待执行的硬参数重建：新描述 + 已创建（未打开）的新通道 + 完成通知
+    /// </summary>
+    private sealed record PendingRebuild(BusDescriptor Descriptor, IBusTransport Transport, TaskCompletionSource<Result> Completion);
 
     // ==================== 事务通道 ====================
 

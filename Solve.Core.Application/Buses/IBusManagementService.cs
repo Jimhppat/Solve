@@ -1,4 +1,5 @@
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 
@@ -13,6 +14,12 @@ public interface IBusManagementService
     /// 获取当前所有已注册的总线运行时快照
     /// </summary>
     IReadOnlyList<BusRuntime> GetAllRuntimes();
+
+    /// <summary>
+    /// 订阅总线集合变动（新增 / 删除 / 重配置），并原子地取得订阅时刻已注册的总线快照。
+    /// 每个订阅者独立排队，用完 Dispose 退订。
+    /// </summary>
+    EventSubscription<BusRegistryEvent> SubscribeRegistry(out IReadOnlyList<BusRuntime> current);
 
     /// <summary>
     /// 按 Id 获取已注册的总线运行时

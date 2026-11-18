@@ -1,11 +1,14 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
 
 namespace Solve.UI.ViewModels;
@@ -16,8 +19,7 @@ namespace Solve.UI.ViewModels;
 public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
 {
     private IBusManagementService? _busService;
-    private BusManager? _manager;
-    private readonly CancellationTokenSource _cts = new();
+    private EventSubscription<BusRegistryEvent>? _registrySubscription;
 
     private bool _isEditModalOpen;
     private BusEditViewModel _editForm = new();
@@ -77,38 +79,44 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 初始化接入总线内核服务与事件通道
     /// </summary>
-    public Task InitializeAsync(IBusManagementService busService, BusManager manager)
+    public Task InitializeAsync(IBusManagementService busService)
     {
         _busService = busService ?? throw new ArgumentNullException(nameof(busService));
-        _manager = manager ?? throw new ArgumentNullException(nameof(manager));
 
-        _ = Task.Run(ListenRegistryEventsAsync);
+        // 快照与订阅原子完成：快照里的总线不会再收到 BusRegistered，之后新增的一定会收到
+        var subscription = busService.SubscribeRegistry(out var current);
+        _registrySubscription = subscription;
+        _ = Task.Run(() => ListenRegistryEventsAsync(subscription.Reader));
 
-        return Dispatcher.UIThread.InvokeAsync(async () =>
-        {
-            await ReloadBusesAsync();
-        });
+        return Dispatcher.UIThread.InvokeAsync(() => ShowBuses(current)).GetTask();
     }
 
     public Task ReloadBusesAsync()
     {
-        if (_busService is null) return Task.CompletedTask;
+        if (_busService is not null)
+            ShowBuses(_busService.GetAllRuntimes());
 
+        return Task.CompletedTask;
+    }
+
+    private void ShowBuses(IReadOnlyList<BusRuntime> runtimes)
+    {
         foreach (var item in Buses)
             item.Dispose();
 
         Buses.Clear();
 
-        var runtimes = _busService.GetAllRuntimes();
         foreach (var runtime in runtimes)
-        {
-            var itemVm = new BusItemViewModel(runtime, OpenEditDialog, DeleteBus);
-            itemVm.PropertyChanged += (_, _) => RefreshCounts();
-            Buses.Add(itemVm);
-        }
+            Buses.Add(CreateItem(runtime));
 
         RefreshCounts();
-        return Task.CompletedTask;
+    }
+
+    private BusItemViewModel CreateItem(BusRuntime runtime)
+    {
+        var item = new BusItemViewModel(runtime, OpenEditDialog, DeleteBus);
+        item.PropertyChanged += (_, _) => RefreshCounts();
+        return item;
     }
 
     private void OpenAddDialog()
@@ -195,59 +203,47 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(StatusSummaryText));
     }
 
-    private async Task ListenRegistryEventsAsync()
+    // 退订（Dispose）或 BusManager 释放后队列完成，循环自然退出
+    private async Task ListenRegistryEventsAsync(ChannelReader<BusRegistryEvent> reader)
     {
-        if (_manager is null) return;
-        var reader = _manager.RegistryEvents;
-        try
+        while (await reader.WaitToReadAsync().ConfigureAwait(false))
         {
-            while (await reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false))
-            {
-                while (reader.TryRead(out var evt))
-                {
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        switch (evt)
-                        {
-                            case BusRegistered registered:
-                                if (!Buses.Any(b => b.Id == registered.BusId) && _manager.TryGet(registered.BusId, out var rt))
-                                {
-                                    var item = new BusItemViewModel(rt, OpenEditDialog, DeleteBus);
-                                    item.PropertyChanged += (_, _) => RefreshCounts();
-                                    Buses.Add(item);
-                                    RefreshCounts();
-                                }
-                                break;
-
-                            case BusReconfigured reconfigured:
-                                var target = Buses.FirstOrDefault(b => b.Id == reconfigured.BusId);
-                                target?.RefreshDescriptor(reconfigured.Descriptor);
-                                break;
-
-                            case BusUnregistered unregistered:
-                                var removed = Buses.FirstOrDefault(b => b.Id == unregistered.BusId);
-                                if (removed is not null)
-                                {
-                                    removed.Dispose();
-                                    Buses.Remove(removed);
-                                    RefreshCounts();
-                                }
-                                break;
-                        }
-                    });
-                }
-            }
+            while (reader.TryRead(out var evt))
+                Dispatcher.UIThread.Post(() => ApplyRegistryEvent(evt));
         }
-        catch (OperationCanceledException)
+    }
+
+    private void ApplyRegistryEvent(BusRegistryEvent evt)
+    {
+        switch (evt)
         {
-            // Normal exit on dispose
+            // 去重：刷新按钮可能已经从 GetAllRuntimes 加载过这条总线
+            case BusRegistered registered
+                when Buses.All(b => b.Id != registered.BusId)
+                     && _busService?.GetRuntime(registered.BusId) is { IsSuccess: true } found:
+                Buses.Add(CreateItem(found.Value));
+                RefreshCounts();
+                break;
+
+            case BusReconfigured reconfigured:
+                Buses.FirstOrDefault(b => b.Id == reconfigured.BusId)?.RefreshDescriptor(reconfigured.Descriptor);
+                break;
+
+            case BusUnregistered unregistered:
+                var removed = Buses.FirstOrDefault(b => b.Id == unregistered.BusId);
+                if (removed is not null)
+                {
+                    removed.Dispose();
+                    Buses.Remove(removed);
+                    RefreshCounts();
+                }
+                break;
         }
     }
 
     public void Dispose()
     {
-        _cts.Cancel();
-        _cts.Dispose();
+        _registrySubscription?.Dispose();
         foreach (var item in Buses)
             item.Dispose();
     }

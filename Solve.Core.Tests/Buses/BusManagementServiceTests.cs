@@ -1,9 +1,11 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.Hardware.Buses.Simulation;
 using Solve.Adapters.Persistence.Buses;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Core.Tests.Buses.TestSupport;
@@ -15,6 +17,7 @@ public sealed class BusManagementServiceTests : IAsyncLifetime
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "solve-tests", Guid.NewGuid().ToString("N"));
     private SqliteDatabase _database = null!;
     private SqliteBusConfigurationRepository _repository = null!;
+    private readonly SwitchableTransportFactory _factory = new();
     private BusManager _manager = null!;
     private BusManagementService _service = null!;
 
@@ -27,7 +30,7 @@ public sealed class BusManagementServiceTests : IAsyncLifetime
         _repository = new SqliteBusConfigurationRepository(_database, NullLogger.Instance);
 
         _manager = new BusManager(
-            new SimulatedTransportFactory(),
+            _factory,
             new TestInterlock(),
             NullLoggerFactory.Instance);
 
@@ -176,27 +179,105 @@ public sealed class BusManagementServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RegistryEvents_EmitsExpectedEventsOnCrud()
+    public async Task RegistryEvents_EmitsExpectedEventsOnCrud_ToEverySubscriber()
     {
+        using var ui = _service.SubscribeRegistry(out var initial);
+        using var protocol = _service.SubscribeRegistry(out _);
+        Assert.Empty(initial);
+
         var bus = new SerialBusDescriptor(BusId.New(), "Tester", "COM8") { BaudRate = 9600 };
 
-        // 1. Create -> BusRegistered
         await _service.CreateBusAsync(bus, CancellationToken.None);
-        Assert.True(_manager.RegistryEvents.TryRead(out var evt1));
-        var registered = Assert.IsType<BusRegistered>(evt1);
-        Assert.Equal(bus.Id, registered.BusId);
-
-        // 2. Update -> BusReconfigured
-        var updated = bus with { BaudRate = 19200 };
-        await _service.UpdateBusAsync(updated, CancellationToken.None);
-        Assert.True(_manager.RegistryEvents.TryRead(out var evt2));
-        var reconfigured = Assert.IsType<BusReconfigured>(evt2);
-        Assert.Equal(bus.Id, reconfigured.BusId);
-
-        // 3. Delete -> BusUnregistered
+        await _service.UpdateBusAsync(bus with { BaudRate = 19200 }, CancellationToken.None);
         await _service.DeleteBusAsync(bus.Id, CancellationToken.None);
-        Assert.True(_manager.RegistryEvents.TryRead(out var evt3));
-        var unregistered = Assert.IsType<BusUnregistered>(evt3);
-        Assert.Equal(bus.Id, unregistered.BusId);
+
+        // 两个订阅者各自完整收到 注册 → 重配置 → 注销，互不抢占
+        foreach (var subscription in new[] { ui, protocol })
+        {
+            Assert.True(subscription.Reader.TryRead(out var evt1));
+            Assert.Equal(bus.Id, Assert.IsType<BusRegistered>(evt1).BusId);
+            Assert.True(subscription.Reader.TryRead(out var evt2));
+            Assert.Equal(bus.Id, Assert.IsType<BusReconfigured>(evt2).BusId);
+            Assert.True(subscription.Reader.TryRead(out var evt3));
+            Assert.Equal(bus.Id, Assert.IsType<BusUnregistered>(evt3).BusId);
+            Assert.False(subscription.Reader.TryRead(out _));
+        }
+    }
+
+    [Fact]
+    public async Task SubscribeRegistry_SnapshotIncludesExistingBuses_WithoutReplayingTheirRegistration()
+    {
+        var bus = new TcpBusDescriptor(BusId.New(), "Existing", "127.0.0.1", 502);
+        Assert.True((await _service.CreateBusAsync(bus, CancellationToken.None)).IsSuccess);
+
+        using var late = _service.SubscribeRegistry(out var current);
+
+        Assert.Equal(bus.Id, Assert.Single(current).Id);
+        Assert.False(late.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public async Task UpdateBusAsync_WhenRuntimeRebuildFails_RestoresStoredDescriptor()
+    {
+        var bus = new SerialBusDescriptor(BusId.New(), "Rollback", "COM11") { BaudRate = 9600 };
+        Assert.True((await _service.CreateBusAsync(bus, CancellationToken.None)).IsSuccess);
+
+        _factory.FailWith = BusErrors.UnsupportedDescriptor(typeof(SerialBusDescriptor));
+        var result = await _service.UpdateBusAsync(bus with { BaudRate = 19200 }, CancellationToken.None);
+
+        Assert.Equal(BusErrors.UnsupportedDescriptorCode, result.Error.Code);
+        var stored = (await _repository.GetByIdAsync(bus.Id, CancellationToken.None)).Value;
+        Assert.Equal(9600, Assert.IsType<SerialBusDescriptor>(stored).BaudRate);
+        Assert.True(_manager.TryGet(bus.Id, out var runtime));
+        Assert.Equal(9600, Assert.IsType<SerialBusDescriptor>(runtime.Descriptor).BaudRate);
+    }
+
+    [Fact]
+    public async Task UpdateBusAsync_WhenRollbackReturnsFailure_LogsCritical()
+    {
+        var logger = new CapturingLogger<BusManagementService>();
+        var repository = new FailingRollbackRepository(_repository);
+        var service = new BusManagementService(_manager, repository, logger);
+
+        var bus = new SerialBusDescriptor(BusId.New(), "Rollback", "COM12") { BaudRate = 9600 };
+        Assert.True((await service.CreateBusAsync(bus, CancellationToken.None)).IsSuccess);
+
+        // 第 1 次保存（新配置）成功、第 2 次保存（回滚旧配置）以 Result 失败：旧实现只捕获异常，这种失败会被静默吞掉
+        repository.SavesBeforeFailure = 1;
+        _factory.FailWith = BusErrors.UnsupportedDescriptor(typeof(SerialBusDescriptor));
+        var result = await service.UpdateBusAsync(bus with { BaudRate = 19200 }, CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("回滚"));
+    }
+
+    /// <summary>
+    /// 包装真实仓储：SavesBeforeFailure 次保存成功后，后续保存以失败的 Result 返回（不抛异常，符合仓储约定）
+    /// </summary>
+    private sealed class FailingRollbackRepository(IBusConfigurationRepository inner) : IBusConfigurationRepository
+    {
+        public int? SavesBeforeFailure { get; set; }
+
+        public Task<Result<BusConfigurationSnapshot>> LoadAllAsync(CancellationToken cancellationToken)
+            => inner.LoadAllAsync(cancellationToken);
+
+        public Task<Result<BusDescriptor?>> GetByIdAsync(BusId id, CancellationToken cancellationToken)
+            => inner.GetByIdAsync(id, cancellationToken);
+
+        public Task<Result> SaveAsync(BusDescriptor descriptor, CancellationToken cancellationToken)
+        {
+            if (SavesBeforeFailure is { } remaining)
+            {
+                if (remaining <= 0)
+                    return Task.FromResult(Result.Failure(new Error("Test.StorageDown", "模拟存储故障")));
+
+                SavesBeforeFailure = remaining - 1;
+            }
+
+            return inner.SaveAsync(descriptor, cancellationToken);
+        }
+
+        public Task<Result> DeleteAsync(BusId id, CancellationToken cancellationToken)
+            => inner.DeleteAsync(id, cancellationToken);
     }
 }

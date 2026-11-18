@@ -1,6 +1,6 @@
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 
@@ -32,7 +32,7 @@ public sealed class BusManager : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly BusRuntimeOptions _options;
     private readonly TimeProvider _time;
-    private readonly Channel<BusRegistryEvent> _registryEvents;
+    private readonly EventBroadcaster<BusRegistryEvent> _registryEvents;
 
     private readonly Lock _gate = new();
     private readonly Dictionary<BusId, BusRuntime> _buses = [];
@@ -55,18 +55,23 @@ public sealed class BusManager : IAsyncDisposable
         _logger = loggerFactory.CreateLogger<BusManager>();
         _options = options ?? BusRuntimeOptions.Default;
         _time = timeProvider ?? TimeProvider.System;
-        _registryEvents = Channel.CreateBounded<BusRegistryEvent>(
-            new BoundedChannelOptions(_options.StateEventCapacity)
-            {
-                FullMode = BoundedChannelFullMode.DropOldest,
-                SingleWriter = false,
-            });
+        _registryEvents = new EventBroadcaster<BusRegistryEvent>(_options.StateEventCapacity);
     }
 
     /// <summary>
-    /// 总线集合变动事件流（新增、删除、重配置）。
+    /// 订阅总线集合变动（新增、删除、重配置），并原子地取得订阅时刻已注册的总线：
+    /// <paramref name="current"/> 中的总线不会再收到对应的 <see cref="BusRegistered"/>，之后注册的一定会收到。
+    /// 每个订阅者独立排队，用完 Dispose 退订。
     /// </summary>
-    public ChannelReader<BusRegistryEvent> RegistryEvents => _registryEvents.Reader;
+    public EventSubscription<BusRegistryEvent> SubscribeRegistry(out IReadOnlyList<BusRuntime> current)
+    {
+        // 与 Register 共用 _gate（登记与发布 BusRegistered 在同一把锁内），快照与订阅之间不会漏掉或重复
+        lock (_gate)
+        {
+            current = [.. _buses.Values];
+            return _registryEvents.Subscribe();
+        }
+    }
 
     /// <summary>
     /// 当前已注册总线的快照
@@ -113,7 +118,7 @@ public sealed class BusManager : IAsyncDisposable
                 return created;
 
             _buses.Add(descriptor.Id, created.Value);
-            _registryEvents.Writer.TryWrite(new BusRegistered(descriptor.Id, descriptor));
+            _registryEvents.Publish(new BusRegistered(descriptor.Id, descriptor));
             _logger.LogInformation("注册总线 {BusId} {Name} ({Type})", descriptor.Id, descriptor.Name, descriptor.GetType().Name);
             return created;
         }
@@ -149,7 +154,7 @@ public sealed class BusManager : IAsyncDisposable
         }
 
         await runtime.DisposeAsync().ConfigureAwait(false);
-        _registryEvents.Writer.TryWrite(new BusUnregistered(id));
+        _registryEvents.Publish(new BusUnregistered(id));
         _logger.LogInformation("注销总线 {BusId}", id);
         return Result.Success();
     }
@@ -177,11 +182,11 @@ public sealed class BusManager : IAsyncDisposable
                 return Result.Failure(conflict);
         }
 
-        var reconfigured = await runtime.ReconfigureAsync(descriptor, _transportFactory, cancellationToken).ConfigureAwait(false);
+        var reconfigured = await runtime.ReconfigureAsync(descriptor, cancellationToken).ConfigureAwait(false);
         if (reconfigured.IsFailure)
             return reconfigured;
 
-        _registryEvents.Writer.TryWrite(new BusReconfigured(descriptor.Id, descriptor));
+        _registryEvents.Publish(new BusReconfigured(descriptor.Id, descriptor));
         _logger.LogInformation("总线 {BusId} {Name} 重配置成功", descriptor.Id, descriptor.Name);
         return Result.Success();
     }
@@ -228,7 +233,7 @@ public sealed class BusManager : IAsyncDisposable
         }
 
         await Task.WhenAll(buses.Select(b => b.DisposeAsync().AsTask())).ConfigureAwait(false);
-        _registryEvents.Writer.TryComplete();
+        _registryEvents.Complete();
         _logger.LogInformation("BusManager 已释放 {Count} 条总线", buses.Length);
     }
 

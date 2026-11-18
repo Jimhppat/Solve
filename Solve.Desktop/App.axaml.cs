@@ -43,13 +43,12 @@ public partial class App : Application
                 _ = Task.Run(async () =>
                 {
                     var report = await _host.Start().ConfigureAwait(false);
-                    if (_host.BusService is not null && _host.Buses is not null)
+                    if (_host.BusService is not null)
                     {
                         var isHardware = report.Mode?.Mode == TransportMode.Hardware;
                         var modeText = isHardware ? "实机模式 (Hardware)" : "仿真模式 (Dry-Run)";
                         await vm.InitializeAsync(
                             _host.BusService,
-                            _host.Buses,
                             modeText,
                             isHardware,
                             reason => _host.EmergencyStop(reason));
