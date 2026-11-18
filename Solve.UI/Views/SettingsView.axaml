@@ -36,6 +36,13 @@
             <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+        <!-- 卡片标题：标明这张卡片属于哪个模块；以后增加其他模块的设置时各占一张卡片 -->
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
         <Style Selector="TextBlock.muted">
             <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
             <Setter Property="FontSize" Value="12" />
@@ -92,6 +99,13 @@
                 <Border Classes="panel" Padding="20,16">
                     <StackPanel Spacing="12">
 
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PathIcon Data="{DynamicResource SemiIconArticle}" Width="14" Height="14"
+                                      Foreground="{DynamicResource SemiColorPrimary}" />
+                            <TextBlock Classes="section" Text="系统日志" />
+                        </StackPanel>
+                        <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+
                         <!-- 启动时保存的设置不可用（目录不可写、数值超出范围），本次运行改用默认值 -->
                         <Border Classes="notice" IsVisible="{Binding HasStartupFallback}">
                             <TextBlock Text="{Binding StartupFallback}"
@@ -121,8 +135,9 @@
                                     Content="浏览…" />
                         </Grid>
 
-                        <!-- 保存天数与单个文件上限：范围由视图模型给出，与 LogRetentionPolicy 一致；手输超出范围时收拢到边界 -->
-                        <Grid ColumnDefinitions="88,Auto,Auto" ColumnSpacing="12">
+                        <!-- 保存天数与单个文件上限放在同一行：两项都是短数字，分两行会在宽屏上留下大片空白。
+                             首列与「存储路径」同宽对齐；范围由视图模型给出，与 LogRetentionPolicy 一致；手输超出范围时收拢到边界 -->
+                        <Grid ColumnDefinitions="88,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12">
                             <TextBlock Grid.Column="0" Classes="label" Text="保存天数" />
                             <NumericUpDown Grid.Column="1"
                                            Classes="retention"
@@ -131,16 +146,14 @@
                                            Maximum="{Binding MaxRetentionDays}"
                                            IsEnabled="{Binding IsLogSettingsAvailable}" />
                             <TextBlock Grid.Column="2" Classes="label" Text="天" />
-                        </Grid>
-                        <Grid ColumnDefinitions="88,Auto,Auto" ColumnSpacing="12">
-                            <TextBlock Grid.Column="0" Classes="label" Text="单个文件上限" />
-                            <NumericUpDown Grid.Column="1"
+                            <TextBlock Grid.Column="3" Classes="label" Text="单个文件上限" Margin="28,0,0,0" />
+                            <NumericUpDown Grid.Column="4"
                                            Classes="retention"
                                            Value="{Binding FileSizeLimitMegabytesInput}"
                                            Minimum="{Binding MinFileSizeLimitMegabytes}"
                                            Maximum="{Binding MaxFileSizeLimitMegabytes}"
                                            IsEnabled="{Binding IsLogSettingsAvailable}" />
-                            <TextBlock Grid.Column="2" Classes="label" Text="MB" />
+                            <TextBlock Grid.Column="5" Classes="label" Text="MB" />
                         </Grid>
 
                         <!-- 新设置会删除日志文件：列出个数、日期与大小，确认后才保存；确认前改动输入会取消这次保存 -->
