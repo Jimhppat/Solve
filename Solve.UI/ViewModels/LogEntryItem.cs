@@ -16,7 +16,8 @@ public sealed class LogEntryItem
         var local = entry.Timestamp.ToLocalTime();
         TimeText = local.ToString("HH:mm:ss.fff");
         ShortTimeText = local.ToString("HH:mm:ss");
-        LevelText = LevelName(entry.Level);
+        Category = LogCategories.FromLevel(entry.Level);
+        LevelText = Category.DisplayName();
         SourceText = ShortSource(entry.Source);
         DetailText = BuildDetail(entry, local, LevelText);
     }
@@ -24,6 +25,11 @@ public sealed class LogEntryItem
     public LogEntry Entry { get; }
 
     public LogLevel Level => Entry.Level;
+
+    /// <summary>
+    /// 界面上的五类级别之一，筛选按它进行
+    /// </summary>
+    public LogCategory Category { get; }
 
     public string Message => Entry.Message;
 
@@ -48,22 +54,30 @@ public sealed class LogEntryItem
 
     public bool HasException => Entry.Exception is not null;
 
-    public bool IsDebug => Entry.Level <= LogLevel.Debug;
+    public bool IsDebug => Category == LogCategory.Debug;
 
-    public bool IsWarning => Entry.Level == LogLevel.Warning;
+    public bool IsWarning => Category == LogCategory.Warning;
 
-    public bool IsError => Entry.Level >= LogLevel.Error;
+    /// <summary>
+    /// 错误或致命：统计「错误」条数与危险色标签都按此判断
+    /// </summary>
+    public bool IsError => Category >= LogCategory.Error;
+
+    /// <summary>
+    /// 致命：在危险色基础上用实心标签，与普通错误区分
+    /// </summary>
+    public bool IsCritical => Category == LogCategory.Critical;
 
     /// <summary>
     /// 完整内容：日期时间、级别、完整来源、消息与异常堆栈。用于悬停提示和复制。
     /// </summary>
     public string DetailText { get; }
 
-    public bool Matches(LogLevel minimum, string search)
+    /// <summary>
+    /// 关键字是否出现在消息或来源中（不区分大小写）；关键字为空时总是匹配
+    /// </summary>
+    public bool MatchesSearch(string search)
     {
-        if (Entry.Level < minimum)
-            return false;
-
         if (string.IsNullOrWhiteSpace(search))
             return true;
 
@@ -71,17 +85,6 @@ public sealed class LogEntryItem
         return Entry.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)
                || Entry.Source.Contains(keyword, StringComparison.OrdinalIgnoreCase);
     }
-
-    public static string LevelName(LogLevel level) => level switch
-    {
-        LogLevel.Trace => "跟踪",
-        LogLevel.Debug => "调试",
-        LogLevel.Information => "信息",
-        LogLevel.Warning => "警告",
-        LogLevel.Error => "错误",
-        LogLevel.Critical => "致命",
-        _ => level.ToString(),
-    };
 
     private static string ShortSource(string source)
     {

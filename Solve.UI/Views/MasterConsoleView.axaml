@@ -37,6 +37,16 @@
             <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
             <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
         </Style>
+
+        <!-- 自动滚动开关：Semi 的选中态是实心主色，而这个开关平时都开着，整块蓝色会一直抢视线。
+             改为开启时浅主色底 + 主色图标，关闭（停在当前位置）时灰色图标 -->
+        <Style Selector="ToggleButton.follow /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+        </Style>
+        <Style Selector="ToggleButton.follow:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SemiColorPrimaryLight}" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" />
+        </Style>
     </UserControl.Styles>
 
     <!-- 外边距与区块间距统一 20px：既拉开卡片，也给阴影留出不被裁切的空间 -->
@@ -107,15 +117,27 @@
                     </ScrollViewer>
                 </Border>
 
-                <!-- 最近日志：信息及以上、保留最近 100 条；筛选、搜索、复制请到运行日志页。
+                <!-- 最近日志：默认显示调试以外的四类、保留最近 100 条；级别多选与自动滚动在标题行，搜索与复制请到运行日志页。
                      列表必须是有界高度的卡片的直接内容，不能放进上面的 ScrollViewer：
                      否则列表拿到无限高度，既不能自己滚动，也失去虚拟化 -->
                 <Border Grid.Row="1" Classes="panel">
                     <DockPanel>
-                        <DockPanel DockPanel.Dock="Top" Margin="20,12,12,4">
+                        <!-- 标题行：右侧控件按 DockPanel 顺序从右往左排（全部 / 自动滚动 / 级别），标题占剩余宽度。
+                             控件统一 32 高（Semi 按钮的默认最小高度，触屏也好点）。
+                             最窄 280 时标题行内宽 244：全部 50 + 开关 32 + 级别 78 + 间距 8 = 168，标题还剩约 76，
+                             足够放下「最近日志」；再窄也只是标题出省略号，控件不会被挤掉。
+                             底部分隔线：列表滚到底时最上面那条会被截断，有线隔开才不像排版错位 -->
+                        <Border DockPanel.Dock="Top"
+                                Margin="16,12,16,0"
+                                Padding="4,0,0,8"
+                                BorderBrush="{DynamicResource SemiColorBorder}"
+                                BorderThickness="0,0,0,1">
+                        <DockPanel>
                             <Button DockPanel.Dock="Right"
                                     Classes="Tertiary"
-                                    Padding="6,2"
+                                    Height="32"
+                                    Padding="6,0"
+                                    VerticalContentAlignment="Center"
                                     Command="{Binding OpenRuntimeLogCommand}"
                                     ToolTip.Tip="打开运行日志页，查看全部日志">
                                 <StackPanel Orientation="Horizontal" Spacing="2">
@@ -123,13 +145,46 @@
                                     <PathIcon Data="{DynamicResource SemiIconChevronRight}" Width="10" Height="10" />
                                 </StackPanel>
                             </Button>
+                            <ToggleButton DockPanel.Dock="Right"
+                                          Classes="follow"
+                                          Width="32"
+                                          Height="32"
+                                          Padding="0"
+                                          Margin="0,0,4,0"
+                                          HorizontalContentAlignment="Center"
+                                          VerticalContentAlignment="Center"
+                                          IsChecked="{Binding RecentLog.AutoScroll}"
+                                          ToolTip.Tip="自动滚动：开启时始终显示最新日志；关闭后停在当前位置，新日志照常追加">
+                                <PathIcon Data="{DynamicResource SemiIconAlignBottom}" Width="12" Height="12" />
+                            </ToggleButton>
+                            <!-- 级别多选：按钮上显示简短说明（全部 / 信息+ / 警告 / 3 级…），悬停看已选全部级别；
+                                 浮层贴卡片右边缘向左展开，不会伸出窗口 -->
+                            <DropDownButton DockPanel.Dock="Right"
+                                            Width="78"
+                                            Height="32"
+                                            Padding="8,0,4,0"
+                                            Margin="0,0,4,0"
+                                            FontSize="12"
+                                            HorizontalContentAlignment="Left"
+                                            VerticalContentAlignment="Center"
+                                            Content="{Binding RecentLog.LevelFilterText}"
+                                            ToolTip.Tip="{Binding RecentLog.LevelFilterDetail}">
+                                <DropDownButton.Flyout>
+                                    <Flyout Placement="BottomEdgeAlignedRight">
+                                        <views:LevelFilterPanel DataContext="{Binding RecentLog}" />
+                                    </Flyout>
+                                </DropDownButton.Flyout>
+                            </DropDownButton>
                             <TextBlock Text="最近日志"
+                                       Margin="0,0,8,0"
                                        FontSize="14"
                                        FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
                                        Foreground="{DynamicResource SemiColorText0}"
                                        VerticalAlignment="Center" />
                         </DockPanel>
-                        <views:RecentLogList DataContext="{Binding RecentLog}" Margin="8,0,8,8" />
+                        </Border>
+                        <views:RecentLogList DataContext="{Binding RecentLog}" Margin="8,4,8,8" />
                     </DockPanel>
                 </Border>
             </Grid>

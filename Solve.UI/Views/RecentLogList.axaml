@@ -7,7 +7,7 @@
              x:Class="Solve.UI.Views.RecentLogList"
              x:DataType="vm:RuntimeLogViewModel">
     <!-- 窄区域用的日志列表（主控台右栏，宽约 280~420px）：每条两行——级别、时间、来源一行，消息最多两行；
-         完整内容悬停查看，筛选、搜索、复制到运行日志页操作 -->
+         完整内容悬停查看，搜索、复制到运行日志页操作。级别筛选与自动滚动开关由宿主放在卡片标题行 -->
 
     <Design.DataContext>
         <vm:RuntimeLogViewModel />
@@ -48,8 +48,10 @@
                                 Classes.debug="{Binding IsDebug}">
                         <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
                             <Border Grid.Column="0" Classes="level"
+                                    Classes.debug="{Binding IsDebug}"
                                     Classes.warning="{Binding IsWarning}"
-                                    Classes.error="{Binding IsError}">
+                                    Classes.error="{Binding IsError}"
+                                    Classes.critical="{Binding IsCritical}">
                                 <TextBlock Text="{Binding LevelText}" />
                             </Border>
                             <TextBlock Grid.Column="1" Classes="mono meta" Text="{Binding ShortTimeText}" Margin="0,1,0,0" />
@@ -66,5 +68,28 @@
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
+
+        <!-- 自动滚动关闭期间来了新日志：浮在列表底部提示，点击回到最新并恢复自动滚动。
+             外层不透明底色垫在按钮下面：主题按钮底色是半透明的，直接叠在列表上会透出下面的文字 -->
+        <Border IsVisible="{Binding HasUnseen}"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,8"
+                CornerRadius="14"
+                Background="{DynamicResource SemiColorBackground2}"
+                BoxShadow="0 2 8 0 #29000000">
+            <Button Classes="Primary"
+                    Height="28"
+                    Padding="12,0"
+                    CornerRadius="14"
+                    VerticalContentAlignment="Center"
+                    Command="{Binding JumpToLatestCommand}"
+                    ToolTip.Tip="回到最新日志并恢复自动滚动">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <PathIcon Data="{DynamicResource SemiIconArrowDown}" Width="10" Height="10" />
+                    <TextBlock Text="{Binding UnseenText}" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Border>
     </Grid>
 </UserControl>

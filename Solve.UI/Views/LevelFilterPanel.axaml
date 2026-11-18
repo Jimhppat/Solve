@@ -1,0 +1,67 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="180" d:DesignHeight="230"
+             x:Class="Solve.UI.Views.LevelFilterPanel"
+             x:DataType="vm:RuntimeLogViewModel">
+    <!-- 级别筛选面板（放在下拉按钮的浮层里），运行日志页与主控台最近日志共用。
+         五类级别各自勾选：只勾一个就是只看这一级；「仅异常」一键勾选警告、错误、致命，等同以前的「警告及以上」。
+         右侧数字是该级别在界面中保留的条数，取消勾选前就能知道会藏掉多少 -->
+
+    <Design.DataContext>
+        <vm:RuntimeLogViewModel />
+    </Design.DataContext>
+
+    <UserControl.Styles>
+        <StyleInclude Source="avares://Solve.UI/Styles/LogStyles.axaml" />
+    </UserControl.Styles>
+
+    <StackPanel Width="168" Spacing="6">
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+            <Button Grid.Column="0"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Content="全部"
+                    Command="{Binding ShowAllLevelsCommand}"
+                    ToolTip.Tip="显示全部五类级别" />
+            <Button Grid.Column="1"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Content="仅异常"
+                    Command="{Binding ShowProblemsOnlyCommand}"
+                    ToolTip.Tip="只看警告、错误、致命" />
+        </Grid>
+
+        <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+
+        <ItemsControl ItemsSource="{Binding LevelFilters}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:LogLevelFilterOption">
+                    <CheckBox Margin="0,2"
+                              HorizontalAlignment="Stretch"
+                              HorizontalContentAlignment="Stretch"
+                              IsChecked="{Binding IsSelected}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Border Grid.Column="0"
+                                    Classes="level"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Classes.debug="{Binding IsDebug}"
+                                    Classes.warning="{Binding IsWarning}"
+                                    Classes.error="{Binding IsError}"
+                                    Classes.critical="{Binding IsCritical}">
+                                <TextBlock Text="{Binding Label}" />
+                            </Border>
+                            <TextBlock Grid.Column="1"
+                                       Classes="mono meta"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding Count}" />
+                        </Grid>
+                    </CheckBox>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </StackPanel>
+</UserControl>

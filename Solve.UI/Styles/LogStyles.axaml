@@ -39,6 +39,17 @@
     <Style Selector="Border.level.error > TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
     </Style>
+    <!-- 致命：实心危险色，和普通错误一眼区分（同时带 error 类，必须定义在其后才能覆盖） -->
+    <Style Selector="Border.level.critical">
+        <Setter Property="Background" Value="{DynamicResource SemiColorDanger}" />
+    </Style>
+    <Style Selector="Border.level.critical > TextBlock">
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+    <!-- 调试：标签文字淡化 -->
+    <Style Selector="Border.level.debug > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+    </Style>
 
     <!-- 来源、时间等辅助信息 -->
     <Style Selector="TextBlock.meta">

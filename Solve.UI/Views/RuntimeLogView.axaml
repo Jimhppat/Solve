@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Solve.UI.ViewModels"
+             xmlns:views="using:Solve.UI.Views"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
              x:Class="Solve.UI.Views.RuntimeLogView"
              x:DataType="vm:RuntimeLogViewModel"
@@ -66,9 +67,20 @@
                             Spacing="8"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center">
-                    <ComboBox Width="120"
-                              ItemsSource="{Binding LevelOptions}"
-                              SelectedItem="{Binding SelectedLevel}" />
+                    <!-- 级别多选：浮层里五类各自勾选，按钮上显示简短说明，悬停看已选全部级别 -->
+                    <DropDownButton Width="120"
+                                    HorizontalContentAlignment="Left"
+                                    ToolTip.Tip="{Binding LevelFilterDetail}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="级别：" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding LevelFilterText}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedLeft">
+                                <views:LevelFilterPanel />
+                            </Flyout>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
                     <TextBox Width="220"
                              Classes="clearButton"
                              PlaceholderText="搜索消息或来源"
@@ -132,8 +144,10 @@
                                 <TextBlock Grid.Column="0" Classes="mono" Text="{Binding TimeText}"
                                            Foreground="{DynamicResource SemiColorText2}" Margin="0,1,0,0" />
                                 <Border Grid.Column="1" Classes="level"
+                                        Classes.debug="{Binding IsDebug}"
                                         Classes.warning="{Binding IsWarning}"
-                                        Classes.error="{Binding IsError}">
+                                        Classes.error="{Binding IsError}"
+                                        Classes.critical="{Binding IsCritical}">
                                     <TextBlock Text="{Binding LevelText}" />
                                 </Border>
                                 <TextBlock Grid.Column="2" Text="{Binding SourceText}"

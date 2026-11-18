@@ -1,5 +1,4 @@
 using System;
-using Microsoft.Extensions.Logging;
 
 namespace Solve.UI.ViewModels;
 
@@ -28,8 +27,8 @@ public sealed class MasterConsoleViewModel : ViewModelBase, IDisposable
     /// <param name="openRuntimeLog">切换到运行日志页；由主窗口宿主提供</param>
     public MasterConsoleViewModel(Action? openRuntimeLog)
     {
-        // 只显示信息及以上：现场把某个来源调到 Debug 排查问题时，调试日志不会刷满主控台
-        RecentLog = new RuntimeLogViewModel(RecentLogCapacity, LogLevel.Information);
+        // 默认不显示调试：现场把某个来源调到 Debug 排查问题时，调试日志不会刷满主控台；需要时可在卡片上勾选
+        RecentLog = new RuntimeLogViewModel(RecentLogCapacity, LogCategories.Operational);
         OpenRuntimeLogCommand = new RelayCommand(() => openRuntimeLog?.Invoke(), () => openRuntimeLog is not null);
     }
 
