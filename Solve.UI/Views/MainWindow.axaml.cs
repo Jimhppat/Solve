@@ -1,5 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using Solve.UI.ViewModels;
 
 namespace Solve.UI.Views;
@@ -28,4 +31,20 @@ public partial class MainWindow : Window
 
     private void OnCloseClick(object? sender, RoutedEventArgs e)
         => Close();
+
+    // 侧栏是 CompactOverlay 浮层，展开时盖住内容区：点选导航项后立即收起，把工作台让出来。
+    // 用 Tapped 而不是 SelectionChanged：再次点选当前页也要收起（选中项不变就不会有 SelectionChanged），
+    // 而键盘方向键逐项浏览时不收起，免得焦点跟着浮层一起消失。
+    // 点在禁用项（暂未启用的页面）或列表空白处不收起，那一下并没有切换到任何页面。
+    private void OnNavItemTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.Source is not Visual source)
+            return;
+
+        var item = source.FindAncestorOfType<ListBoxItem>(includeSelf: true);
+        if (item is not { IsEffectivelyEnabled: true })
+            return;
+
+        Shell.IsPaneOpen = false;
+    }
 }

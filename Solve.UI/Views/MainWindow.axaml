@@ -229,7 +229,8 @@
                                            Foreground="{DynamicResource SemiColorText0}" />
                             </Grid>
 
-                            <ListBox Classes="nav" SelectedIndex="{Binding SelectedNavIndex}" Background="Transparent">
+                            <ListBox Classes="nav" SelectedIndex="{Binding SelectedNavIndex}" Background="Transparent"
+                                     Tapped="OnNavItemTapped">
                                 <ListBoxItem ToolTip.Tip="主控台">
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconHome}" />
