@@ -14,6 +14,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public const int MasterConsoleNavIndex = 0;
     public const int BusConsoleNavIndex = 1;
     public const int RuntimeLogNavIndex = 4;
+    public const int SettingsNavIndex = 5;
 
     private Action<string>? _onEmergencyStop;
     private string _modeText = "仿真模式";
@@ -64,13 +65,24 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 侧边栏导航选中索引
+    /// 请求打开系统设置窗口，由主窗口视图负责创建与激活
+    /// </summary>
+    public event EventHandler? SettingsWindowRequested;
+
+    /// <summary>
+    /// 侧边栏导航选中索引。选中「系统设置」只请求打开设置窗口，不切换工作台页面，索引保持不变。
     /// </summary>
     public int SelectedNavIndex
     {
         get => _selectedNavIndex;
         set
         {
+            if (value == SettingsNavIndex)
+            {
+                SettingsWindowRequested?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
             if (SetProperty(ref _selectedNavIndex, value))
             {
                 OnNavIndexChanged(value);
@@ -107,7 +119,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             MasterConsoleNavIndex => MasterConsole,
             BusConsoleNavIndex => BusConsole,
             RuntimeLogNavIndex => RuntimeLog,
-            _ => MasterConsole // 后续拓扑（2）、诊断（3）、设置（5）页面在此接入对应子 ViewModel
+            _ => MasterConsole // 后续拓扑（2）、诊断（3）页面在此接入对应子 ViewModel；设置（5）为独立窗口，不经过这里
         };
     }
 
