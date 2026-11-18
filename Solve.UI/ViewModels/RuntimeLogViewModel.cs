@@ -371,6 +371,30 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// 日志目录在设置页切换后调用：更新「打开日志目录」的目标；接入了历史日志时，按日期查看随之改读新目录。须在 UI 线程上调用。
+    /// </summary>
+    /// <remarks>
+    /// 正在查看的是旧目录里的某一天：切回「实时」，不能把旧目录的内容留在界面上当成新目录的。
+    /// 旧目录中的日志原地保留，仍可用「打开日志目录」之外的方式查看。
+    /// </remarks>
+    public void UpdateLogDirectory(string logDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
+        if (string.Equals(_logDirectory, logDirectory, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        LogDirectory = logDirectory;
+        if (_archive is null)
+            return;
+
+        if (!IsLive)
+            _ = SelectSourceAsync(LogSourceOption.Live);
+
+        StatusText = "日志目录已切换，按日期查看改为读取新目录";
+        _ = RefreshSourcesAsync();
+    }
+
+    /// <summary>
     /// 追加一批实时日志，超出 <see cref="Capacity"/> 时丢弃最旧的。
     /// </summary>
     public void Append(IReadOnlyList<LogEntry> entries)

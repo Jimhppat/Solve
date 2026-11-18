@@ -51,8 +51,14 @@ public sealed class AppHost : IAsyncDisposable
     {
         Options = options;
 
-        _logging = LoggingPipeline.Create(options.LogDirectory, options.LoggingSettingsPath);
-        LogArchive = new FileLogArchive(options.LogDirectory);
+        // 日志目录要在创建日志管线之前确定，所以设置单独存文件、不放配置库（配置库在启动流程中才打开）
+        var locationStore = options.LogLocationPath is null ? null : new LogLocationStore(options.LogLocationPath);
+        var logDirectory = LogDirectoryService.ResolveStartup(options.LogDirectory, locationStore);
+
+        _logging = LoggingPipeline.Create(logDirectory.Directory, options.LoggingSettingsPath);
+
+        // 历史日志跟随管线当前正在写的目录：设置页切换目录后，按日期查看与导出读的是新目录
+        LogArchive = new FileLogArchive(() => _logging.LogDirectory);
 
         // 日志器的生命周期归管线所有：工厂释放时不连带释放，由 _logging 统一刷写
         _loggerFactory = new SerilogLoggerFactory(_logging.Logger, dispose: false);
@@ -62,13 +68,21 @@ public sealed class AppHost : IAsyncDisposable
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
         _logger.LogInformation("程序启动 进程={ProcessId} 实机参数={HardwareRequested} 配置库={Database} 日志={Logs}",
-            Environment.ProcessId, options.HardwareRequested, options.DatabasePath, options.LogDirectory);
+            Environment.ProcessId, options.HardwareRequested, options.DatabasePath, logDirectory.Directory);
+
+        if (logDirectory.FallbackReason is { } fallbackReason)
+        {
+            _logger.LogWarning("本次运行日志写入默认目录 {Directory}。{Reason}", logDirectory.Directory, fallbackReason);
+        }
 
         if (_logging.SettingsError is { } settingsError)
         {
             _logger.LogWarning("日志级别配置 {Path} 无效，本次运行使用默认级别：{Error}",
                 options.LoggingSettingsPath, settingsError);
         }
+
+        LogDirectorySettings = new LogDirectoryService(
+            _logging, locationStore, options.LogDirectory, logDirectory, _loggerFactory.CreateLogger<LogDirectoryService>());
     }
 
     /// <summary>
@@ -92,9 +106,14 @@ public sealed class AppHost : IAsyncDisposable
     public LoggingPipeline Logging => _logging;
 
     /// <summary>
-    /// 按日期保存的历史日志，供运行日志页查看与导出
+    /// 按日期保存的历史日志，供运行日志页查看与导出；始终读取当前日志目录
     /// </summary>
     public ILogArchive LogArchive { get; }
+
+    /// <summary>
+    /// 日志目录的查看与切换，供设置页使用
+    /// </summary>
+    public ILogDirectorySettings LogDirectorySettings { get; }
 
     /// <summary>
     /// 总线注册表；启动完成前或配置库不可用时为 null

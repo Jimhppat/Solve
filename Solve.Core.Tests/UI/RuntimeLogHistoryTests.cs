@@ -210,6 +210,44 @@ public sealed class RuntimeLogHistoryTests : IDisposable
         Assert.True(_archive.LastReadToken.IsCancellationRequested);
     }
 
+    // ==================== 设置页切换日志目录 ====================
+
+    [Fact]
+    public async Task DirectoryChange_WhileViewingHistory_ReturnsToLive_AndRelistsDates()
+    {
+        await _vm.SelectSourceAsync(Option(Monday));
+
+        // 新目录里只有另一天
+        _archive.Days.Clear();
+        _archive.AddDay(new DateOnly(2026, 11, 18), [Entry("new-dir")]);
+        _vm.UpdateLogDirectory(@"D:\new-logs");
+
+        Assert.True(_vm.IsLive);
+        Assert.Equal(@"D:\new-logs", _vm.LogDirectory);
+        Assert.Equal("日志目录已切换，按日期查看改为读取新目录", _vm.StatusText);
+        Assert.Equal([null, new DateOnly(2026, 11, 18)], _vm.Sources.Select(o => o.Date));
+    }
+
+    [Fact]
+    public void DirectoryChange_ToTheSameDirectory_ChangesNothing()
+    {
+        _vm.UpdateLogDirectory(@"C:\logs");
+
+        Assert.Null(_vm.StatusText);
+    }
+
+    [Fact]
+    public void DirectoryChange_WithoutArchive_OnlyUpdatesOpenFolderTarget()
+    {
+        using var recent = new RuntimeLogViewModel(100, LogCategories.Operational);
+        recent.Attach(new FakeLogFeed([]), @"C:\logs");
+
+        recent.UpdateLogDirectory(@"D:\new-logs");
+
+        Assert.Equal(@"D:\new-logs", recent.LogDirectory);
+        Assert.Null(recent.StatusText);
+    }
+
     // ==================== 导出 ====================
 
     [Fact]

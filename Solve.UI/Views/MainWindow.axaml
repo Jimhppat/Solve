@@ -30,6 +30,9 @@
         <DataTemplate DataType="vm:RuntimeLogViewModel">
             <views:RuntimeLogView />
         </DataTemplate>
+        <DataTemplate DataType="vm:SettingsViewModel">
+            <views:SettingsView />
+        </DataTemplate>
     </Window.DataTemplates>
 
     <Window.Resources>
@@ -257,7 +260,7 @@
                                         <TextBlock Grid.Column="1" Text="运行日志" />
                                     </Grid>
                                 </ListBoxItem>
-                                <ListBoxItem ToolTip.Tip="系统设置" IsEnabled="False">
+                                <ListBoxItem ToolTip.Tip="系统设置">
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconSetting}" />
                                         <TextBlock Grid.Column="1" Text="系统设置" />

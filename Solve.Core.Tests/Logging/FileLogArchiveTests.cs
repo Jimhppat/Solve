@@ -225,4 +225,72 @@ public sealed class FileLogArchiveTests : IDisposable
     {
         Assert.Equal("2026_11_16.log", _archive.SuggestExportFileName(Day));
     }
+
+    // ==================== 与设置页切换日志目录的配合 ====================
+
+    [Fact]
+    public async Task AfterSwitchingDirectory_DateNamedFilesAndArchiveFollowTheNewDirectory()
+    {
+        var first = Path.Combine(_directory, "first");
+        var second = Path.Combine(_directory, "second");
+        Directory.CreateDirectory(second);
+        var pipeline = LoggingPipeline.Create(first, settingsPath: null);
+        var archive = new FileLogArchive(() => pipeline.LogDirectory);
+        try
+        {
+            pipeline.Logger.Information("in-first");
+            Assert.True(await LogFiles.EventuallyAsync(() => LogFiles.ReadAll(first).Contains("in-first")));
+
+            pipeline.SwitchDirectory(second);
+            pipeline.Logger.Information("in-second");
+            Assert.True(await LogFiles.EventuallyAsync(() => LogFiles.ReadAll(second).Contains("in-second")));
+        }
+        finally
+        {
+            pipeline.Dispose();
+        }
+
+        // 新目录同样按日期命名
+        Assert.Equal(DailyLogFiles.FileName(Today), Path.GetFileName(Assert.Single(DailyLogFiles.List(second)).Path));
+
+        // 历史日志读的是当前目录：只有切换后的内容
+        var day = await archive.ReadDayAsync(Today, 100, CancellationToken.None);
+        Assert.True(day.IsSuccess);
+        Assert.Contains(day.Value.Entries, e => e.Message == "in-second");
+        Assert.DoesNotContain(day.Value.Entries, e => e.Message == "in-first");
+    }
+
+    [Fact]
+    public async Task AfterSwitchingDirectory_RetentionCleansOnlyTheNewDirectory()
+    {
+        var first = Path.Combine(_directory, "first");
+        var second = Path.Combine(_directory, "second");
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        var expiredName = DailyLogFiles.FileName(Today.AddDays(-DailyLogFiles.RetentionDays));
+
+        var pipeline = LoggingPipeline.Create(first, settingsPath: null);
+        try
+        {
+            pipeline.Logger.Information("opens-first");
+            Assert.True(await LogFiles.EventuallyAsync(() => LogFiles.ReadAll(first).Contains("opens-first")));
+
+            pipeline.SwitchDirectory(second);
+            // 切换之后才放进旧目录的过期文件：旧目录已不归本管线管理，原地保留
+            var leftInFirst = Path.Combine(first, expiredName);
+            var expiredInSecond = Path.Combine(second, expiredName);
+            File.WriteAllText(leftInFirst, "old");
+            File.WriteAllText(expiredInSecond, "old");
+
+            pipeline.Logger.Information("opens-second");
+            Assert.True(await LogFiles.EventuallyAsync(() => LogFiles.ReadAll(second).Contains("opens-second")));
+
+            Assert.True(File.Exists(leftInFirst));
+            Assert.False(File.Exists(expiredInSecond));
+        }
+        finally
+        {
+            pipeline.Dispose();
+        }
+    }
 }

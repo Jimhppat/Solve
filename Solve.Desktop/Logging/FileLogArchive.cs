@@ -16,20 +16,38 @@ namespace Solve.Desktop.Logging;
 /// <remarks>
 /// <para>读写都在线程池上进行，按读写共享打开：当天的文件正在被日志管线写入，读到的是打开那一刻已写盘的内容。</para>
 /// <para>只读不改：读取与导出都不会修改、移动或删除日志文件。</para>
+/// <para>目录在每次操作开始时取一次：设置页切换日志目录后改读新目录；一次读取或导出中途不会混用两个目录。</para>
 /// </remarks>
-public sealed class FileLogArchive(string directory) : ILogArchive
+public sealed class FileLogArchive : ILogArchive
 {
     private const int ReadBufferSize = 64 * 1024;
 
     // 每读这么多行检查一次取消，既能及时响应切换日期，又不在每行上付出检查开销
     private const int CancellationCheckInterval = 1_000;
 
+    private readonly Func<string> _currentDirectory;
+
+    /// <summary>
+    /// 固定目录
+    /// </summary>
+    public FileLogArchive(string directory)
+        : this(() => directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+    }
+
+    /// <param name="currentDirectory">取当前日志目录，通常是日志管线正在写入的目录</param>
+    public FileLogArchive(Func<string> currentDirectory)
+    {
+        _currentDirectory = currentDirectory ?? throw new ArgumentNullException(nameof(currentDirectory));
+    }
+
     public Task<Result<IReadOnlyList<DateOnly>>> GetAvailableDatesAsync(CancellationToken cancellationToken)
         => Task.Run(() =>
         {
             try
             {
-                IReadOnlyList<DateOnly> dates = DailyLogFiles.List(directory)
+                IReadOnlyList<DateOnly> dates = DailyLogFiles.List(_currentDirectory())
                     .Select(f => f.Date)
                     .Distinct()
                     .OrderByDescending(d => d)
@@ -127,7 +145,7 @@ public sealed class FileLogArchive(string directory) : ILogArchive
     {
         try
         {
-            IReadOnlyList<DailyLogFile> files = DailyLogFiles.List(directory).Where(f => f.Date == date).ToList();
+            IReadOnlyList<DailyLogFile> files = DailyLogFiles.List(_currentDirectory()).Where(f => f.Date == date).ToList();
             return files.Count == 0
                 ? Result<IReadOnlyList<DailyLogFile>>.Failure(new Error("Log.DayNotFound", $"{date:yyyy-MM-dd} 没有日志文件，可能已过保留期被清理。"))
                 : Result<IReadOnlyList<DailyLogFile>>.Success(files);

@@ -1,0 +1,121 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
+             x:Class="Solve.UI.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel"
+             Background="#0D000000">
+    <!-- 页面底色与卡片阴影沿用主控台与运行日志页：在主题底色上叠 5% 黑，让白卡片浮起来 -->
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #14000000, 0 0 1 0 #33000000</BoxShadows>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #66000000, 0 0 0 1 #1AFFFFFF</BoxShadows>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Border.panel">
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
+            <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
+        </Style>
+        <Style Selector="TextBlock.label">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.muted">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <!-- 保存结果：成功为次要文字色，失败为危险色；必须排在 .muted 之后以覆盖其前景色 -->
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Border.notice">
+            <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="12,10" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
+
+        <!-- 页面标题与保存：保存对整页设置统一生效 -->
+        <Border Grid.Row="0" Classes="panel" Padding="20,10">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right"
+                        Classes="Primary" Theme="{DynamicResource SolidButton}"
+                        Content="保存"
+                        MinWidth="72"
+                        Command="{Binding SaveCommand}"
+                        ToolTip.Tip="保存全部设置，立即生效" />
+                <TextBlock Text="{Binding PageTitle}"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource SemiColorText0}"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="20">
+
+                <!-- 运行日志 -->
+                <Border Classes="panel" Padding="20,16">
+                    <StackPanel Spacing="12">
+
+                        <!-- 启动时保存的目录不可用，本次运行写入默认目录 -->
+                        <Border Classes="notice" IsVisible="{Binding HasLogDirectoryStartupFallback}">
+                            <TextBlock Text="{Binding LogDirectoryStartupFallback}"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                        </Border>
+
+                        <Grid ColumnDefinitions="88,*,Auto,Auto" ColumnSpacing="12">
+                            <TextBlock Grid.Column="0" Classes="label" Text="存储路径" />
+                            <TextBox Grid.Column="1"
+                                     PlaceholderText="完整路径，如 D:\SolveLogs"
+                                     Text="{Binding LogDirectoryInput}"
+                                     IsEnabled="{Binding IsLogDirectoryAvailable}"
+                                     ToolTip.Tip="{Binding CurrentLogDirectory, StringFormat='当前写入：{0}'}" />
+                            <Button Grid.Column="2"
+                                    Click="OnOpenDirectory"
+                                    IsEnabled="{Binding IsLogDirectoryAvailable}"
+                                    ToolTip.Tip="在文件资源管理器中打开输入框中的目录">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Data="{DynamicResource SemiIconFolderOpen}" Width="12" Height="12" />
+                                    <TextBlock Text="打开" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Grid.Column="3"
+                                    Click="OnBrowseDirectory"
+                                    IsEnabled="{Binding IsLogDirectoryAvailable}"
+                                    Content="浏览…" />
+                        </Grid>
+
+                        <TextBlock Classes="muted"
+                                   Classes.error="{Binding IsSaveError}"
+                                   IsVisible="{Binding HasSaveMessage}"
+                                   Text="{Binding SaveMessage}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
