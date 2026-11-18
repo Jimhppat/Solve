@@ -124,7 +124,6 @@ public sealed class LogCalendarTests
         Assert.Equal(new CalendarYear(2026), calendar.SelectedYear);
         Assert.Equal(new CalendarMonth(11), calendar.SelectedMonth);
         Assert.Equal(12, calendar.Months.Count);
-        Assert.Equal("11 月没有日志", calendar.MonthSummary);
     }
 
     [Fact]
@@ -136,7 +135,6 @@ public sealed class LogCalendarTests
 
         Assert.Equal([new CalendarYear(2026), new CalendarYear(2027)], calendar.Years);
         Assert.Equal("2026 年", calendar.Years[0].ToString());
-        Assert.Equal("1 月共 1 天有日志", calendar.MonthSummary);
     }
 
     [Fact]
@@ -200,7 +198,6 @@ public sealed class LogCalendarTests
         Assert.Contains(nameof(LogCalendarViewModel.Days), changed);
         Assert.Contains(nameof(LogCalendarViewModel.SelectedYear), changed);
         Assert.Contains(nameof(LogCalendarViewModel.SelectedMonth), changed);
-        Assert.Contains(nameof(LogCalendarViewModel.MonthSummary), changed);
     }
 
     [Fact]

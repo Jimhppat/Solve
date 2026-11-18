@@ -82,18 +82,6 @@ public sealed class LogCalendarViewModel : ViewModelBase
         private set => SetProperty(ref _days, value);
     }
 
-    /// <summary>
-    /// 所显示月份中有日志的天数说明；整月置灰时让人知道不是界面出了问题
-    /// </summary>
-    public string MonthSummary
-    {
-        get
-        {
-            var count = _days.Count(d => d.HasLog);
-            return count == 0 ? $"{_month} 月没有日志" : $"{_month} 月共 {count} 天有日志";
-        }
-    }
-
     public bool TodayHasLog => _available.Contains(_today);
 
     public RelayCommand PreviousMonthCommand { get; }
@@ -179,7 +167,6 @@ public sealed class LogCalendarViewModel : ViewModelBase
     {
         Days = LogCalendar.BuildMonth(_year, _month, _available, _today, _selected);
         NotifyDisplayMonth();
-        OnPropertyChanged(nameof(MonthSummary));
         OnPropertyChanged(nameof(TodayHasLog));
     }
 

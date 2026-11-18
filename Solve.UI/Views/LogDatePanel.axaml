@@ -131,11 +131,6 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
 
-        <TextBlock Text="{Binding Calendar.MonthSummary}"
-                   FontSize="12"
-                   HorizontalAlignment="Center"
-                   Foreground="{DynamicResource SemiColorText2}" />
-
         <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
 
         <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
