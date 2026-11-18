@@ -11,6 +11,52 @@
         <vm:BusConsoleViewModel />
     </Design.DataContext>
 
+    <UserControl.Resources>
+        <!-- 胶囊分段项：去掉单选圆点只留文字；选中态的“白底”由轨道里的滑块提供，自身始终透明 -->
+        <ControlTheme x:Key="PillSegment" TargetType="RadioButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusFull}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="Foreground" Duration="0:0:0.15" />
+                </Transitions>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Name="PART_ContentPresenter"
+                                      Background="{TemplateBinding Background}"
+                                      BorderBrush="{TemplateBinding BorderBrush}"
+                                      BorderThickness="{TemplateBinding BorderThickness}"
+                                      CornerRadius="{TemplateBinding CornerRadius}"
+                                      Padding="{TemplateBinding Padding}"
+                                      Foreground="{TemplateBinding Foreground}"
+                                      Content="{TemplateBinding Content}"
+                                      ContentTemplate="{TemplateBinding ContentTemplate}"
+                                      HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                      VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+            </Style>
+            <Style Selector="^:checked">
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <!-- 仅键盘聚焦时显示描边，鼠标点击不出现 -->
+            <Style Selector="^:focus-visible">
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" />
+            </Style>
+        </ControlTheme>
+    </UserControl.Resources>
+
     <UserControl.Styles>
         <!-- 表格行：紧凑高密度、底部发丝线 -->
         <Style Selector="Border.row">
@@ -48,6 +94,109 @@
             <Setter Property="Width" Value="8" />
             <Setter Property="Height" Value="8" />
             <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- ==================== 弹窗表单 ==================== -->
+        <!-- 字段 = 标签 + 控件，统一 4px 间距 -->
+        <Style Selector="StackPanel.field">
+            <Setter Property="Spacing" Value="4" />
+        </Style>
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+        </Style>
+        <!-- 分组卡片：浅底 + 小标题，让每块灰底都有明确语义 -->
+        <Style Selector="Border.section">
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="14,12,14,14" />
+        </Style>
+        <Style Selector="TextBlock.section-title">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+        </Style>
+        <Style Selector="TextBlock.caption">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!-- 单位内嵌到输入框右侧：标签不再挂 "(ms)"，单位贴着数值更易读 -->
+        <Style Selector="TextBlock.unit">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+        </Style>
+        <Style Selector="TextBox.ms">
+            <Setter Property="InnerRightContent">
+                <Template>
+                    <TextBlock Classes="unit" Text="ms" />
+                </Template>
+            </Setter>
+        </Style>
+        <Style Selector="TextBox.times">
+            <Setter Property="InnerRightContent">
+                <Template>
+                    <TextBlock Classes="unit" Text="次" />
+                </Template>
+            </Setter>
+        </Style>
+        <!--
+            链路参数页叠放：串口页与 TCP 页处于同一单元格且始终参与测量，
+            容器高度恒为 max(串口页, TCP 页)，切换只改透明度，尺寸从结构上不会变化。
+            (IsVisible=False 会把元素移出测量，这是原先切换抖动的根因)
+        -->
+        <Style Selector="Grid.link-page.inactive">
+            <Setter Property="Opacity" Value="0" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="KeyboardNavigation.TabNavigation" Value="None" />
+        </Style>
+        <!-- 只在进入时淡入；离开的一页立即隐藏，避免两套表单交叉重影 -->
+        <Style Selector="Grid.link-page:not(.inactive)">
+            <Style.Animations>
+                <Animation Duration="0:0:0.18" Easing="CubicEaseOut">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Opacity" Value="0" />
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Opacity" Value="1" />
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+        <!-- 只读回显：细边框 + 透明底，与可编辑输入框明确区分 -->
+        <Style Selector="Border.readout">
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+        </Style>
+
+        <!-- ==================== 胶囊分段切换 (轨道 + 滑块) ==================== -->
+        <!-- 轨道高 32，与同一行的输入框等高 -->
+        <Style Selector="Border.pill-track">
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="3" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusFull}" />
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill1}" />
+        </Style>
+        <!-- 滑块只改 RenderTransform：纯合成层位移，不触发测量/排列，动画期间布局零开销 -->
+        <Style Selector="Border.pill-thumb">
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusFull}" />
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground3}" />
+            <Setter Property="BoxShadow" Value="0 1 3 0 #26000000" />
+            <Setter Property="RenderTransform" Value="none" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.22" Easing="CubicEaseOut" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <!-- 平移距离 = 单段宽度，必须与轨道内 ColumnDefinitions="64,64" 保持一致 -->
+        <Style Selector="Border.pill-thumb.end">
+            <Setter Property="RenderTransform" Value="translateX(64px)" />
         </Style>
     </UserControl.Styles>
 
@@ -184,187 +333,206 @@
             <!-- 背景遮罩 -->
             <Border Background="#80000000" />
 
-            <!-- 弹窗卡片 (设定稳定最小高度，消除类型切换时的窗体收缩抖动) -->
-            <Border Width="500" MinHeight="520" MaxHeight="650"
+            <!--
+                弹窗卡片：高度完全由内容决定，不再依赖 MinHeight 兜底。
+                全部表单统一使用三列栅格 (*,*,*)，串口页 / TCP 页 / 超时区的列线上下对齐。
+            -->
+            <Border Width="520" Margin="24"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
-                    Padding="20"
+                    Padding="24,20"
                     CornerRadius="{DynamicResource SemiBorderRadiusLarge}"
                     Background="{DynamicResource SemiColorBackground1}"
                     BorderBrush="{DynamicResource SemiColorBorder}"
                     BorderThickness="1"
-                    BoxShadow="0 8 32 #40000000">
+                    BoxShadow="0 12 40 #33000000">
                 <DockPanel>
 
-                    <!-- 弹窗标题 -->
-                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,14">
-                        <Button DockPanel.Dock="Right" Classes="Tertiary" Padding="4"
+                    <!-- 标题区 -->
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                        <Button DockPanel.Dock="Right" Classes="Tertiary" Padding="6" VerticalAlignment="Top"
+                                ToolTip.Tip="关闭"
                                 Command="{Binding CloseEditModalCommand}">
-                            <PathIcon Data="{DynamicResource SemiIconClose}" Width="14" Height="14" />
+                            <PathIcon Data="{DynamicResource SemiIconClose}" Width="12" Height="12" />
                         </Button>
-                        <TextBlock Text="{Binding EditForm.Title}" FontSize="15" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource SemiColorText0}" VerticalAlignment="Center" />
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding EditForm.Title}" FontSize="16" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                            <TextBlock Classes="caption" Text="配置物理链路参数与超时重连策略" />
+                        </StackPanel>
                     </DockPanel>
 
-                    <!-- 底部按钮 -->
-                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,14,0,0">
-                        <Button Content="取消" Command="{Binding CloseEditModalCommand}" />
-                        <Button Classes="Primary" Content="保存并应用" Command="{Binding SaveEditModalCommand}" />
+                    <!-- 底部按钮：主操作实心，次操作弱化 -->
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right"
+                                Spacing="8" Margin="0,16,0,0">
+                        <Button Classes="Tertiary" Content="取消" Command="{Binding CloseEditModalCommand}" />
+                        <Button Classes="Primary" Theme="{DynamicResource SolidButton}"
+                                Content="保存并应用" Command="{Binding SaveEditModalCommand}" />
                     </StackPanel>
 
                     <!-- 表单输入内容 -->
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel Spacing="12">
+                        <StackPanel Spacing="14">
 
-                            <!-- 总线名称 -->
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="总线名称" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                <TextBox Text="{Binding EditForm.Name}" />
-                            </StackPanel>
-
-                            <!-- 通信链路类型 -->
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="通信链路类型" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                <StackPanel Orientation="Horizontal" Spacing="20">
-                                    <RadioButton Content="串口"
-                                                 IsChecked="{Binding EditForm.IsSerial, Mode=OneWay}"
-                                                 Click="OnSerialTabClick" />
-                                    <RadioButton Content="TCP"
-                                                 IsChecked="{Binding EditForm.IsTcp, Mode=OneWay}"
-                                                 Click="OnTcpTabClick" />
+                            <!-- 基本信息：名称 + 链路类型分段选择器 -->
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <StackPanel Classes="field">
+                                    <TextBlock Classes="field-label" Text="总线名称" />
+                                    <TextBox Text="{Binding EditForm.Name}" PlaceholderText="例如：1 号线 RS-485" />
                                 </StackPanel>
-                            </StackPanel>
-
-                            <!-- 通信链路专属物理参数面板 (固定高度容器，防止类型切换时发生卡片跳动与收缩) -->
-                            <Grid MinHeight="136">
-                                <!-- 串口参数面板 -->
-                                <Border IsVisible="{Binding EditForm.IsSerial}"
-                                        Background="{DynamicResource SemiColorFill0}"
-                                        CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
-                                        Padding="12"
-                                        MinHeight="136">
-                                    <StackPanel Spacing="10" VerticalAlignment="Top">
-                                        <Grid ColumnDefinitions="*,*">
-                                            <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,6,0">
-                                                <TextBlock Text="端口号" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                                <TextBox Text="{Binding EditForm.PortName}" PlaceholderText="COM1" />
-                                            </StackPanel>
-
-                                            <StackPanel Grid.Column="1" Spacing="4" Margin="6,0,0,0">
-                                                <TextBlock Text="波特率" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                                <ComboBox HorizontalAlignment="Stretch" SelectedIndex="4" SelectedValue="{Binding EditForm.BaudRate}">
-                                                    <ComboBoxItem Content="9600" />
-                                                    <ComboBoxItem Content="19200" />
-                                                    <ComboBoxItem Content="38400" />
-                                                    <ComboBoxItem Content="57600" />
-                                                    <ComboBoxItem Content="115200" />
-                                                    <ComboBoxItem Content="230400" />
-                                                    <ComboBoxItem Content="460800" />
-                                                </ComboBox>
-                                            </StackPanel>
+                                <StackPanel Grid.Column="1" Classes="field">
+                                    <TextBlock Classes="field-label" Text="链路类型" />
+                                    <!--
+                                        胶囊分段切换：三层叠放在同一个两列 Grid 中
+                                        底层 = 轨道 (pill-track)，中层 = 白色滑块 (pill-thumb)，顶层 = 两个透明单选项。
+                                        选中 TCP 时滑块加 .end 类，translateX 平移一个段宽；单选项照常承担点击、键盘与无障碍。
+                                    -->
+                                    <Border Classes="pill-track">
+                                        <Grid ColumnDefinitions="64,64">
+                                            <Border Classes="pill-thumb" Classes.end="{Binding EditForm.IsTcp}" />
+                                            <RadioButton Theme="{StaticResource PillSegment}"
+                                                         Content="串口" IsChecked="{Binding EditForm.IsSerial}" />
+                                            <RadioButton Grid.Column="1" Theme="{StaticResource PillSegment}"
+                                                         Content="TCP" IsChecked="{Binding EditForm.IsTcp}" />
                                         </Grid>
-
-                                        <Grid ColumnDefinitions="*,*,*">
-                                            <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,4,0">
-                                                <TextBlock Text="数据位" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                                <ComboBox HorizontalAlignment="Stretch" SelectedIndex="3">
-                                                    <ComboBoxItem Content="5" />
-                                                    <ComboBoxItem Content="6" />
-                                                    <ComboBoxItem Content="7" />
-                                                    <ComboBoxItem Content="8" />
-                                                </ComboBox>
-                                            </StackPanel>
-
-                                            <StackPanel Grid.Column="1" Spacing="4" Margin="4,0,4,0">
-                                                <TextBlock Text="校验位" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                                <ComboBox HorizontalAlignment="Stretch" SelectedIndex="0">
-                                                    <ComboBoxItem Content="None" />
-                                                    <ComboBoxItem Content="Odd" />
-                                                    <ComboBoxItem Content="Even" />
-                                                    <ComboBoxItem Content="Mark" />
-                                                    <ComboBoxItem Content="Space" />
-                                                </ComboBox>
-                                            </StackPanel>
-
-                                            <StackPanel Grid.Column="2" Spacing="4" Margin="4,0,0,0">
-                                                <TextBlock Text="停止位" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                                <ComboBox HorizontalAlignment="Stretch" SelectedIndex="0">
-                                                    <ComboBoxItem Content="1" />
-                                                    <ComboBoxItem Content="2" />
-                                                    <ComboBoxItem Content="1.5" />
-                                                </ComboBox>
-                                            </StackPanel>
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
-
-                                <!-- TCP 参数面板 (高度与串口面板严格等高，内部控件顶部对齐) -->
-                                <Border IsVisible="{Binding EditForm.IsTcp}"
-                                        Background="{DynamicResource SemiColorFill0}"
-                                        CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
-                                        Padding="12"
-                                        MinHeight="136">
-                                    <Grid ColumnDefinitions="2*,*" VerticalAlignment="Top">
-                                        <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,8,0">
-                                            <TextBlock Text="目标主机" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.Host}" PlaceholderText="192.168.1.100" />
-                                        </StackPanel>
-
-                                        <StackPanel Grid.Column="1" Spacing="4">
-                                            <TextBlock Text="端口号" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.Port}" PlaceholderText="502" />
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
+                                    </Border>
+                                </StackPanel>
                             </Grid>
 
-                            <!-- 超时与重试 -->
-                            <Border Background="{DynamicResource SemiColorFill0}"
-                                    CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
-                                    Padding="12">
-                                <StackPanel Spacing="10">
-                                    <Grid ColumnDefinitions="*,*,*">
-                                        <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,4,0">
-                                            <TextBlock Text="连接超时 (ms)" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.ConnectTimeoutMs}" />
-                                        </StackPanel>
+                            <!-- 链路参数 -->
+                            <Border Classes="section">
+                                <StackPanel Spacing="12">
+                                    <DockPanel>
+                                        <Panel DockPanel.Dock="Right">
+                                            <TextBlock Classes="caption" Text="RS-232 / RS-485"
+                                                       IsVisible="{Binding EditForm.IsSerial}" />
+                                            <TextBlock Classes="caption" Text="客户端模式 · 主动连接"
+                                                       IsVisible="{Binding EditForm.IsTcp}" />
+                                        </Panel>
+                                        <TextBlock Classes="section-title" Text="链路参数" />
+                                    </DockPanel>
 
-                                        <StackPanel Grid.Column="1" Spacing="4" Margin="4,0,4,0">
-                                            <TextBlock Text="读取超时 (ms)" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.ReadTimeoutMs}" />
-                                        </StackPanel>
+                                    <!-- 叠放容器：两页同时参与测量，高度 = max(串口页, TCP 页) -->
+                                    <Grid>
+                                        <!-- 串口页：[端口号 ×2][波特率] / [数据位][校验位][停止位] -->
+                                        <Grid Classes="link-page" Classes.inactive="{Binding !EditForm.IsSerial}"
+                                              ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto"
+                                              ColumnSpacing="10" RowSpacing="12">
+                                            <StackPanel Grid.ColumnSpan="2" Classes="field">
+                                                <TextBlock Classes="field-label" Text="端口号" />
+                                                <TextBox Text="{Binding EditForm.PortName}" PlaceholderText="COM1 或 /dev/ttyUSB0" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" Classes="field">
+                                                <TextBlock Classes="field-label" Text="波特率" />
+                                                <!-- 可编辑：领域层允许 250000 等非标波特率，列表只是常用档位 -->
+                                                <ComboBox HorizontalAlignment="Stretch" IsEditable="True"
+                                                          ItemsSource="{x:Static vm:BusEditViewModel.BaudRateOptions}"
+                                                          Text="{Binding EditForm.BaudRate, Mode=TwoWay}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Classes="field">
+                                                <TextBlock Classes="field-label" Text="数据位" />
+                                                <ComboBox HorizontalAlignment="Stretch"
+                                                          ItemsSource="{x:Static vm:BusEditViewModel.DataBitsOptions}"
+                                                          SelectedItem="{Binding EditForm.DataBits}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="1" Classes="field">
+                                                <TextBlock Classes="field-label" Text="校验位" />
+                                                <ComboBox HorizontalAlignment="Stretch"
+                                                          ItemsSource="{x:Static vm:BusEditViewModel.ParityOptions}"
+                                                          SelectedItem="{Binding EditForm.Parity}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2" Classes="field">
+                                                <TextBlock Classes="field-label" Text="停止位" />
+                                                <ComboBox HorizontalAlignment="Stretch"
+                                                          ItemsSource="{x:Static vm:BusEditViewModel.StopBitsOptions}"
+                                                          SelectedValueBinding="{Binding Value}"
+                                                          SelectedValue="{Binding EditForm.StopBits}" />
+                                            </StackPanel>
+                                        </Grid>
 
-                                        <StackPanel Grid.Column="2" Spacing="4" Margin="4,0,0,0">
-                                            <TextBlock Text="写入超时 (ms)" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.WriteTimeoutMs}" />
-                                        </StackPanel>
+                                        <!-- TCP 页：[目标主机 ×2][端口号] / [连接端点 ×3]，与串口页同构两行 -->
+                                        <Grid Classes="link-page" Classes.inactive="{Binding !EditForm.IsTcp}"
+                                              ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto"
+                                              ColumnSpacing="10" RowSpacing="12">
+                                            <StackPanel Grid.ColumnSpan="2" Classes="field">
+                                                <TextBlock Classes="field-label" Text="目标主机" />
+                                                <TextBox Text="{Binding EditForm.Host}" PlaceholderText="IPv4 / IPv6 / 主机名" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" Classes="field">
+                                                <TextBlock Classes="field-label" Text="端口号" />
+                                                <TextBox Text="{Binding EditForm.Port}" PlaceholderText="502" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Classes="field">
+                                                <TextBlock Classes="field-label" Text="连接端点" />
+                                                <Border Classes="readout">
+                                                    <DockPanel VerticalAlignment="Center">
+                                                        <PathIcon DockPanel.Dock="Left" Width="12" Height="12" Margin="0,0,8,0"
+                                                                  Data="{DynamicResource SemiIconLink}"
+                                                                  Foreground="{DynamicResource SemiColorText2}" />
+                                                        <TextBlock Classes="mono" Text="{Binding EditForm.TcpEndpoint}"
+                                                                   Foreground="{DynamicResource SemiColorText1}"
+                                                                   VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </DockPanel>
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
                                     </Grid>
+                                </StackPanel>
+                            </Border>
 
-                                    <Grid ColumnDefinitions="*,*">
-                                        <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,6,0">
-                                            <TextBlock Text="重连起始延迟 (ms)" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.ReconnectInitialDelayMs}" />
+                            <!-- 超时与重连：3×2 栅格，补齐原先未暴露的“重连最大延迟” -->
+                            <Border Classes="section">
+                                <StackPanel Spacing="12">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" Classes="caption" Text="重试上限填 0 表示不限次数" />
+                                        <TextBlock Classes="section-title" Text="超时与重连" />
+                                    </DockPanel>
+                                    <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto"
+                                          ColumnSpacing="10" RowSpacing="12">
+                                        <StackPanel Classes="field">
+                                            <TextBlock Classes="field-label" Text="连接超时" />
+                                            <TextBox Classes="ms" Text="{Binding EditForm.ConnectTimeoutMs}" />
                                         </StackPanel>
-                                        <StackPanel Grid.Column="1" Spacing="4" Margin="6,0,0,0">
-                                            <TextBlock Text="重试上限" FontSize="12" Foreground="{DynamicResource SemiColorText1}" />
-                                            <TextBox Text="{Binding EditForm.ReconnectMaxAttempts}" />
+                                        <StackPanel Grid.Column="1" Classes="field">
+                                            <TextBlock Classes="field-label" Text="读取超时" />
+                                            <TextBox Classes="ms" Text="{Binding EditForm.ReadTimeoutMs}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Classes="field">
+                                            <TextBlock Classes="field-label" Text="写入超时" />
+                                            <TextBox Classes="ms" Text="{Binding EditForm.WriteTimeoutMs}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Classes="field">
+                                            <TextBlock Classes="field-label" Text="重连起始延迟" />
+                                            <TextBox Classes="ms" Text="{Binding EditForm.ReconnectInitialDelayMs}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Classes="field">
+                                            <TextBlock Classes="field-label" Text="重连最大延迟" />
+                                            <TextBox Classes="ms" Text="{Binding EditForm.ReconnectMaxDelayMs}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="2" Classes="field">
+                                            <TextBlock Classes="field-label" Text="重试上限" />
+                                            <TextBox Classes="times" Text="{Binding EditForm.ReconnectMaxAttempts}" />
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>
                             </Border>
 
-                            <!-- 错误提示横条 -->
+                            <!-- 错误提示横条（DockPanel 让多条错误正常换行） -->
                             <Border IsVisible="{Binding EditForm.HasError}"
                                     Background="{DynamicResource SemiColorDangerLight}"
                                     BorderBrush="{DynamicResource SemiColorDanger}"
                                     BorderThickness="1"
-                                    Padding="10,6"
+                                    Padding="12,8"
                                     CornerRadius="{DynamicResource SemiBorderRadiusSmall}">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Ellipse Width="6" Height="6" Fill="{DynamicResource SemiColorDanger}" VerticalAlignment="Center" />
+                                <DockPanel>
+                                    <Ellipse DockPanel.Dock="Left" Width="6" Height="6" Margin="0,6,8,0"
+                                             VerticalAlignment="Top"
+                                             Fill="{DynamicResource SemiColorDanger}" />
                                     <TextBlock Text="{Binding EditForm.ErrorMessage}"
                                                Foreground="{DynamicResource SemiColorDanger}"
                                                FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
+                                </DockPanel>
                             </Border>
 
                         </StackPanel>
