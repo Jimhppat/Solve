@@ -28,6 +28,7 @@ public sealed record LogSourceOption(string Label, DateOnly? Date)
 /// <para>只是一个窗口，完整记录以日志文件为准：实时最多保留最近 <see cref="Capacity"/> 条，清空也只清界面。</para>
 /// <para>新日志在后台按批取出、每 <see cref="BatchInterval"/> 最多向 UI 线程投递一次，日志密集时界面刷新频率不随之上升。</para>
 /// <para>查看历史期间实时日志照常在后台累积，切回「实时」时不缺失。历史读取在后台进行，切换来源会取消上一次读取。</para>
+/// <para>历史日期在 <see cref="Calendar"/> 中按月选择：没有日志的日期置灰不可选，这里选择时再校验一次。</para>
 /// <para>除 <see cref="Attach"/> 中启动的后台读取循环外，所有成员都只能在 UI 线程上使用；
 /// 读取与导出的结果回到 UI 线程后再更新界面。</para>
 /// </remarks>
@@ -92,6 +93,8 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
         LevelFilters = LogCategories.All
             .Select(c => new LogLevelFilterOption(c, _shown[(int)c], OnLevelFilterChangedByUser))
             .ToArray();
+
+        Calendar = new LogCalendarViewModel(Today());
 
         ClearCommand = new RelayCommand(Clear, () => IsLive);
         JumpToLatestCommand = new RelayCommand(() => AutoScroll = true);
@@ -215,22 +218,14 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     public bool CanBrowseHistory => _archive is not null;
 
     /// <summary>
-    /// 可选来源：「实时」在最前，其后为有日志的日期（从新到旧）
+    /// 按月选择历史日期的月历
     /// </summary>
-    public ObservableCollection<LogSourceOption> Sources { get; } = [LogSourceOption.Live];
+    public LogCalendarViewModel Calendar { get; }
 
-    public LogSourceOption SelectedSource
-    {
-        get => _selectedSource;
-        set
-        {
-            // 下拉框更换数据源时可能短暂写入 null；选同一项不重新读取
-            if (value is null || Equals(value, _selectedSource))
-                return;
-
-            _ = SelectSourceAsync(value);
-        }
-    }
+    /// <summary>
+    /// 当前来源：实时，或正在查看的日期。日期面板按钮上显示它的 <see cref="LogSourceOption.Label"/>
+    /// </summary>
+    public LogSourceOption SelectedSource => _selectedSource;
 
     public bool IsLive => _selectedSource.Date is null;
 
@@ -258,7 +253,7 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 导出的日期：查看历史时为所选日期，实时时为今天
     /// </summary>
-    public DateOnly ExportDate => _selectedSource.Date ?? DateOnly.FromDateTime(DateTime.Now);
+    public DateOnly ExportDate => _selectedSource.Date ?? Today();
 
     public string ExportFileName => _archive?.SuggestExportFileName(ExportDate) ?? string.Empty;
 
@@ -366,7 +361,7 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(CanBrowseHistory));
             OnPropertyChanged(nameof(CanExport));
             OnPropertyChanged(nameof(ExportFileName));
-            _ = RefreshSourcesAsync();
+            _ = RefreshAvailableDatesAsync();
         }
     }
 
@@ -391,7 +386,7 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
             _ = SelectSourceAsync(LogSourceOption.Live);
 
         StatusText = "日志目录已切换，按日期查看改为读取新目录";
-        _ = RefreshSourcesAsync();
+        _ = RefreshAvailableDatesAsync();
     }
 
     /// <summary>
@@ -504,9 +499,46 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// 能否在月历中选这一天：接入了历史日志，且该日有日志或正是正在查看的那天
+    /// </summary>
+    public bool CanSelectDate(DateOnly date)
+        => _archive is not null && (Calendar.HasLog(date) || _selectedSource.Date == date);
+
+    /// <summary>
+    /// 在月历中选某一天查看。没有日志的日期不读取（界面上已置灰，这里再拦一次）；选正在查看的那天不重新读取。
+    /// 不抛出，同 <see cref="SelectSourceAsync"/>。
+    /// </summary>
+    public Task SelectDateAsync(DateOnly date)
+    {
+        if (!CanSelectDate(date) || _selectedSource.Date == date)
+            return Task.CompletedTask;
+
+        return SelectSourceAsync(LogSourceOption.ForDate(date, Today()));
+    }
+
+    /// <summary>
+    /// 查看今天日志文件中的全部记录（实时只保留最近 <see cref="Capacity"/> 条）。今天还没有日志文件时不做任何事。
+    /// </summary>
+    public Task ShowTodayAsync() => SelectDateAsync(Today());
+
+    /// <summary>
+    /// 回到实时日志；已在查看实时日志时不做任何事（不清掉状态提示）
+    /// </summary>
+    public Task ShowLiveAsync() => IsLive ? Task.CompletedTask : SelectSourceAsync(LogSourceOption.Live);
+
+    /// <summary>
+    /// 打开日期面板：翻到正在查看的日期所在月份（查看实时时为本月），并重新列出有日志的日期。不抛出。
+    /// </summary>
+    public Task OpenDatePickerAsync()
+    {
+        Calendar.ShowMonthOf(_selectedSource.Date ?? Today());
+        return RefreshAvailableDatesAsync();
+    }
+
+    /// <summary>
     /// 重新列出有日志的日期（日志目录可能已新增当天文件或清理了过期文件）。不抛出，失败以 <see cref="StatusText"/> 提示。
     /// </summary>
-    public async Task RefreshSourcesAsync()
+    public async Task RefreshAvailableDatesAsync()
     {
         if (_archive is null)
             return;
@@ -534,22 +566,16 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // 正在查看的日期即使刚被清理也保留在列表里，否则下拉框会突然变成空选
-        var available = dates.Value.ToList();
-        if (_selectedSource.Date is { } selected && !available.Contains(selected))
-            available.Add(selected);
-
-        var today = DateOnly.FromDateTime(DateTime.Now);
-        var desired = new List<LogSourceOption> { LogSourceOption.Live };
-        desired.AddRange(available.OrderByDescending(d => d).Select(d => LogSourceOption.ForDate(d, today)));
-        SyncSources(desired);
+        // 正在查看的日期即使刚被清理，月历中也保持选中（由月历按选中日期单独标注），界面内容不动
+        var today = Today();
+        Calendar.SetAvailableDates(dates.Value, today);
 
         // 跨午夜后「（今天）」的标注会移走：换成新的选项实例，不重新读取
-        if (_selectedSource.Date is { } current
-            && desired.FirstOrDefault(o => o.Date == current) is { } renamed
-            && !Equals(renamed, _selectedSource))
+        if (_selectedSource.Date is { } current)
         {
-            SetSelectedSource(renamed);
+            var renamed = LogSourceOption.ForDate(current, today);
+            if (!Equals(renamed, _selectedSource))
+                SetSelectedSource(renamed);
         }
     }
 
@@ -601,11 +627,15 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     private IReadOnlyList<LogCategory> SelectedCategories()
         => LogCategories.All.Where(c => _shown[(int)c]).ToList();
 
+    // 「今天」随系统时钟走：跨午夜后月历的标注、导出日期、「（今天）」标签都以调用时刻为准
+    private static DateOnly Today() => DateOnly.FromDateTime(DateTime.Now);
+
     private void SetSelectedSource(LogSourceOption source)
     {
         if (!SetProperty(ref _selectedSource, source, nameof(SelectedSource)))
             return;
 
+        Calendar.SetSelected(source.Date);
         OnPropertyChanged(nameof(IsLive));
         OnPropertyChanged(nameof(ExportDate));
         OnPropertyChanged(nameof(ExportFileName));
@@ -617,23 +647,6 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     {
         _isExporting = value;
         OnPropertyChanged(nameof(CanExport));
-    }
-
-    private void SyncSources(IReadOnlyList<LogSourceOption> desired)
-    {
-        // 就地增删而不是整体替换：下拉框保持当前选中项，不闪烁
-        for (var i = Sources.Count - 1; i >= 0; i--)
-        {
-            if (!desired.Contains(Sources[i]))
-                Sources.RemoveAt(i);
-        }
-
-        // 剩下的与 desired 同序（都是「实时」在前、日期从新到旧），按位置补齐缺的
-        for (var i = 0; i < desired.Count; i++)
-        {
-            if (i >= Sources.Count || !Equals(Sources[i], desired[i]))
-                Sources.Insert(i, desired[i]);
-        }
     }
 
     private void CancelLoad()

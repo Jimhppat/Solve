@@ -1,0 +1,158 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="280" d:DesignHeight="360"
+             x:Class="Solve.UI.Views.LogDatePanel"
+             x:DataType="vm:RuntimeLogViewModel">
+    <!-- 日期面板（放在运行日志页来源按钮的浮层里）：选年、月，按月列出每一天。
+         有日志的日期可点，没有日志的置灰不可点；正在查看的日期实心高亮，今天加描边。
+         月历固定 6 周 42 格，翻月时面板高度不跳；不属于本月的格子只占位不显示 -->
+
+    <Design.DataContext>
+        <vm:RuntimeLogViewModel />
+    </Design.DataContext>
+
+    <UserControl.Resources>
+        <!-- 日期格子用独立的极简主题，不叠在主题按钮的各状态样式上：选中、今天、置灰三种状态都由这里说了算 -->
+        <ControlTheme x:Key="LogCalendarDayButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="1" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Name="PART_ContentPresenter"
+                                      Background="{TemplateBinding Background}"
+                                      BorderBrush="{TemplateBinding BorderBrush}"
+                                      BorderThickness="{TemplateBinding BorderThickness}"
+                                      CornerRadius="{TemplateBinding CornerRadius}"
+                                      Content="{TemplateBinding Content}"
+                                      HorizontalContentAlignment="Center"
+                                      VerticalContentAlignment="Center" />
+                </ControlTemplate>
+            </Setter>
+
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+            </Style>
+            <Style Selector="^:pressed">
+                <Setter Property="Background" Value="{DynamicResource SemiColorFill1}" />
+            </Style>
+            <Style Selector="^.today">
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" />
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" />
+            </Style>
+            <Style Selector="^.selected">
+                <Setter Property="Background" Value="{DynamicResource SemiColorPrimary}" />
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorWhite}" />
+            </Style>
+            <Style Selector="^.selected:pointerover">
+                <Setter Property="Background" Value="{DynamicResource SemiColorPrimaryPointerover}" />
+            </Style>
+            <!-- 没有日志：置灰、不可点。放在最后，覆盖今天的字色 -->
+            <Style Selector="^:disabled">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorDisabledText}" />
+                <Setter Property="Cursor" Value="Arrow" />
+            </Style>
+        </ControlTheme>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.weekday">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+        </Style>
+    </UserControl.Styles>
+
+    <StackPanel Width="266" Spacing="8">
+        <!-- 年、月：下拉直接选，两侧按钮逐月翻（跨年自动进位） -->
+        <Grid ColumnDefinitions="Auto,*,*,Auto" ColumnSpacing="6">
+            <Button Grid.Column="0"
+                    Padding="8,0"
+                    Command="{Binding Calendar.PreviousMonthCommand}"
+                    ToolTip.Tip="上个月">
+                <PathIcon Data="{DynamicResource SemiIconChevronLeft}" Width="10" Height="10" />
+            </Button>
+            <ComboBox Grid.Column="1"
+                      HorizontalAlignment="Stretch"
+                      ItemsSource="{Binding Calendar.Years}"
+                      SelectedItem="{Binding Calendar.SelectedYear}" />
+            <ComboBox Grid.Column="2"
+                      HorizontalAlignment="Stretch"
+                      ItemsSource="{Binding Calendar.Months}"
+                      SelectedItem="{Binding Calendar.SelectedMonth}" />
+            <Button Grid.Column="3"
+                    Padding="8,0"
+                    Command="{Binding Calendar.NextMonthCommand}"
+                    ToolTip.Tip="下个月">
+                <PathIcon Data="{DynamicResource SemiIconChevronRight}" Width="10" Height="10" />
+            </Button>
+        </Grid>
+
+        <UniformGrid Columns="7">
+            <TextBlock Classes="weekday" Text="一" />
+            <TextBlock Classes="weekday" Text="二" />
+            <TextBlock Classes="weekday" Text="三" />
+            <TextBlock Classes="weekday" Text="四" />
+            <TextBlock Classes="weekday" Text="五" />
+            <TextBlock Classes="weekday" Text="六" />
+            <TextBlock Classes="weekday" Text="日" />
+        </UniformGrid>
+
+        <!-- 占位格的按钮不可见，但外层容器仍占住格子：每天都对得上星期几 -->
+        <ItemsControl ItemsSource="{Binding Calendar.Days}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <UniformGrid Columns="7" Rows="6" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:LogCalendarDay">
+                    <Button Theme="{StaticResource LogCalendarDayButton}"
+                            IsVisible="{Binding IsInMonth}"
+                            IsEnabled="{Binding CanSelect}"
+                            Classes.today="{Binding IsToday}"
+                            Classes.selected="{Binding IsSelected}"
+                            Content="{Binding DayText}"
+                            ToolTip.Tip="{Binding ToolTip}"
+                            ToolTip.ShowOnDisabled="True"
+                            Click="OnDayClick" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <TextBlock Text="{Binding Calendar.MonthSummary}"
+                   FontSize="12"
+                   HorizontalAlignment="Center"
+                   Foreground="{DynamicResource SemiColorText2}" />
+
+        <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+            <Button Grid.Column="0"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Content="实时"
+                    Click="OnShowLive"
+                    ToolTip.Tip="回到实时日志（界面只保留最近的若干条）" />
+            <Button Grid.Column="1"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Content="今天"
+                    IsEnabled="{Binding Calendar.TodayHasLog}"
+                    Click="OnShowToday"
+                    ToolTip.Tip="查看今天日志文件中的全部记录，不受实时保留条数限制"
+                    ToolTip.ShowOnDisabled="True" />
+        </Grid>
+    </StackPanel>
+</UserControl>
