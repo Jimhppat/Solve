@@ -8,7 +8,9 @@
     <Project Path="Solve.Core.Application/Solve.Core.Application.csproj" />
     <Project Path="Solve.Core.Domain/Solve.Core.Domain.csproj" />
   </Folder>
-  <Folder Name="/tests/" />
+  <Folder Name="/tests/">
+    <Project Path="Solve.Core.Tests/Solve.Core.Tests.csproj" />
+  </Folder>
   <Folder Name="/ui/">
     <Project Path="Solve.Desktop/Solve.Desktop.csproj" />
     <Project Path="Solve.UI/Solve.UI.csproj" />

@@ -11,4 +11,8 @@
       <ProjectReference Include="..\Solve.Core.Application\Solve.Core.Application.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <PackageReference Include="System.IO.Ports" Version="10.0.0" />
+    </ItemGroup>
+
 </Project>
