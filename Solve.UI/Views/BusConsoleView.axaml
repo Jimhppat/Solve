@@ -90,6 +90,29 @@
         <Style Selector="TextBlock.muted">
             <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
         </Style>
+        <!-- 说明栏的错误信息（故障原因、被拒绝的操作）：必须排在 .muted 之后以覆盖其前景色 -->
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+
+        <!-- 启动问题横幅：默认警告色，.fatal 为危险色 -->
+        <Style Selector="Border.notice">
+            <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="12,10" />
+        </Style>
+        <Style Selector="Border.notice PathIcon.notice-icon">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorWarning}" />
+        </Style>
+        <Style Selector="Border.notice.fatal">
+            <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Border.notice.fatal PathIcon.notice-icon">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
         <Style Selector="Ellipse.dot">
             <Setter Property="Width" Value="8" />
             <Setter Property="Height" Value="8" />
@@ -204,6 +227,34 @@
         <!-- 主工作台区 -->
         <DockPanel Margin="16,12">
 
+            <!-- 启动问题横幅：配置无效 / 注册失败 / 启动失败，原先只写进日志，操作员看不到 -->
+            <Border DockPanel.Dock="Top" Margin="0,0,0,10" Classes="notice"
+                    Classes.fatal="{Binding StartupNotice.IsError, FallbackValue=False}"
+                    IsVisible="{Binding HasStartupNotice}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Classes="Tertiary" Padding="4" VerticalAlignment="Top"
+                            ToolTip.Tip="关闭提示"
+                            Command="{Binding DismissStartupNoticeCommand}">
+                        <PathIcon Data="{DynamicResource SemiIconClose}" Width="10" Height="10" />
+                    </Button>
+                    <PathIcon DockPanel.Dock="Left" Classes="notice-icon" Width="16" Height="16"
+                              Margin="0,1,10,0" VerticalAlignment="Top"
+                              Data="{DynamicResource SemiIconAlertTriangle}" />
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="{Binding StartupNotice.Title, FallbackValue=''}" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SemiColorText0}" TextWrapping="Wrap" />
+                        <ItemsControl ItemsSource="{Binding StartupNotice.Details, FallbackValue={x:Null}}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource SemiColorText1}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
             <!-- 操作工具栏 (Toolbar) -->
             <Border DockPanel.Dock="Top" Margin="0,0,0,10"
                     Padding="10,6" CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
@@ -287,7 +338,8 @@
                                             <TextBlock Grid.Column="3" Classes="mono" Text="{Binding PortParams}" />
 
                                             <!-- 说明 -->
-                                            <TextBlock Grid.Column="4" Classes="muted" Text="{Binding Note}" ToolTip.Tip="{Binding Note}" />
+                                            <TextBlock Grid.Column="4" Classes="muted" Classes.error="{Binding NoteIsError}"
+                                                       Text="{Binding Note}" ToolTip.Tip="{Binding Note}" />
 
                                             <!-- 行内控制操作 -->
                                             <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -538,6 +590,46 @@
                         </StackPanel>
                     </ScrollViewer>
                 </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- ==================== 删除总线 二次确认弹窗 ==================== -->
+        <Grid IsVisible="{Binding IsDeleteConfirmOpen}">
+            <Border Background="#80000000" />
+
+            <Border Width="420" Margin="24"
+                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Padding="24,20"
+                    CornerRadius="{DynamicResource SemiBorderRadiusLarge}"
+                    Background="{DynamicResource SemiColorBackground1}"
+                    BorderBrush="{DynamicResource SemiColorBorder}"
+                    BorderThickness="1"
+                    BoxShadow="0 12 40 #33000000">
+                <StackPanel Spacing="20">
+                    <DockPanel>
+                        <!-- 危险操作图标：浅红圆底 + 红色删除图标 -->
+                        <Border DockPanel.Dock="Left" Width="36" Height="36" Margin="0,0,14,0"
+                                VerticalAlignment="Top"
+                                CornerRadius="{DynamicResource SemiBorderRadiusFull}"
+                                Background="{DynamicResource SemiColorDangerLight}">
+                            <PathIcon Data="{DynamicResource SemiIconDelete}" Width="16" Height="16"
+                                      Foreground="{DynamicResource SemiColorDanger}" />
+                        </Border>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{Binding DeleteConfirmTitle}" FontSize="16" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                            <TextBlock Text="{Binding DeleteConfirmMessage}" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SemiColorText1}" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                        <Button Classes="Tertiary" Content="取消" Command="{Binding CancelDeleteCommand}" />
+                        <Button Classes="Danger" Theme="{DynamicResource SolidButton}"
+                                Content="删除" Command="{Binding ConfirmDeleteCommand}" />
+                    </StackPanel>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

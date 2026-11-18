@@ -109,6 +109,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         await BusConsole.InitializeAsync(busService);
     }
 
+    /// <summary>
+    /// 显示启动阶段的问题。启动失败时总线服务可能为空、<see cref="InitializeAsync"/> 不会被调用，仍需单独展示。
+    /// </summary>
+    public void ShowStartupNotice(StartupNotice notice) => BusConsole.ShowStartupNotice(notice);
+
     private void EmergencyStop()
     {
         _onEmergencyStop?.Invoke("操作员手动触发工作台紧急跳闸");

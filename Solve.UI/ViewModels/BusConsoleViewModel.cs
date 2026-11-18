@@ -23,6 +23,8 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
 
     private bool _isEditModalOpen;
     private BusEditViewModel _editForm = new();
+    private StartupNotice? _startupNotice;
+    private BusItemViewModel? _pendingDelete;
 
     public BusConsoleViewModel()
     {
@@ -43,6 +45,10 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
         ConnectAllCommand = new RelayCommand(ConnectAll);
         DisconnectAllCommand = new AsyncRelayCommand(DisconnectAllAsync);
         RefreshCommand = new AsyncRelayCommand(ReloadBusesAsync);
+
+        DismissStartupNoticeCommand = new RelayCommand(() => StartupNotice = null);
+        CancelDeleteCommand = new RelayCommand(() => PendingDelete = null);
+        ConfirmDeleteCommand = new AsyncRelayCommand(ConfirmDeleteAsync);
     }
 
     public ObservableCollection<BusItemViewModel> Buses { get; } = [];
@@ -68,6 +74,58 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
 
     public string StatusSummaryText =>
         $"共 {TotalCount} 条链路 · 在线 {OnlineCount} · 重连中 {ReconnectingCount} · 异常/停止 {FaultedCount}";
+
+    // ==================== 启动问题横幅 ====================
+
+    public StartupNotice? StartupNotice
+    {
+        get => _startupNotice;
+        private set
+        {
+            if (SetProperty(ref _startupNotice, value))
+                OnPropertyChanged(nameof(HasStartupNotice));
+        }
+    }
+
+    public bool HasStartupNotice => _startupNotice is not null;
+
+    public RelayCommand DismissStartupNoticeCommand { get; }
+
+    /// <summary>
+    /// 显示启动阶段的问题（可在任意线程调用）
+    /// </summary>
+    public void ShowStartupNotice(StartupNotice notice)
+        => Dispatcher.UIThread.Post(() => StartupNotice = notice);
+
+    // ==================== 删除二次确认 ====================
+
+    /// <summary>
+    /// 等待确认删除的总线；非空时显示确认弹窗
+    /// </summary>
+    public BusItemViewModel? PendingDelete
+    {
+        get => _pendingDelete;
+        private set
+        {
+            if (SetProperty(ref _pendingDelete, value))
+            {
+                OnPropertyChanged(nameof(IsDeleteConfirmOpen));
+                OnPropertyChanged(nameof(DeleteConfirmTitle));
+                OnPropertyChanged(nameof(DeleteConfirmMessage));
+            }
+        }
+    }
+
+    public bool IsDeleteConfirmOpen => _pendingDelete is not null;
+
+    public string DeleteConfirmTitle => $"删除总线「{_pendingDelete?.Name}」？";
+
+    public string DeleteConfirmMessage => _pendingDelete?.State is BusState.Connected or BusState.Connecting or BusState.Reconnecting
+        ? $"该总线当前{_pendingDelete.StateText}，删除会先断开连接，然后永久删除它的配置。此操作无法撤销。"
+        : "将永久删除该总线的配置。此操作无法撤销。";
+
+    public RelayCommand CancelDeleteCommand { get; }
+    public AsyncRelayCommand ConfirmDeleteCommand { get; }
 
     public RelayCommand OpenAddDialogCommand { get; }
     public RelayCommand CloseEditModalCommand { get; }
@@ -167,14 +225,23 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
         Dispatcher.UIThread.Post(() => IsEditModalOpen = false);
     }
 
-    private async void DeleteBus(BusItemViewModel item)
+    // 行内删除按钮只打开确认弹窗，真正的删除在 ConfirmDeleteAsync 中执行
+    private void DeleteBus(BusItemViewModel item) => PendingDelete = item;
+
+    private async Task ConfirmDeleteAsync()
     {
-        if (_busService is null) return;
-        var deleted = await _busService.DeleteBusAsync(item.Id, CancellationToken.None).ConfigureAwait(false);
+        var item = PendingDelete;
+        PendingDelete = null;
+        if (item is null || _busService is null)
+            return;
+
+        // 仓储的 Async 方法实际是同步磁盘 I/O，按端口约定不在 UI 线程上执行
+        var service = _busService;
+        var deleted = await Task.Run(() => service.DeleteBusAsync(item.Id, CancellationToken.None));
+
+        // 成功时行会随 BusUnregistered 事件移除；失败时行仍在，把原因显示在说明栏
         if (deleted.IsFailure)
-        {
-            Dispatcher.UIThread.Post(() => item.Note = $"删除失败: {deleted.Error.Message}");
-        }
+            item.ShowError($"删除失败：{deleted.Error.Message}");
     }
 
     private void ConnectAll()

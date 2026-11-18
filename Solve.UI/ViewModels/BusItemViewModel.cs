@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Common;
 using Solve.Core.Domain.Buses;
+using Solve.Core.Domain.Common;
 
 namespace Solve.UI.ViewModels;
 
@@ -21,6 +22,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
     private string _kind = string.Empty;
     private string _portParams = string.Empty;
     private string _note = string.Empty;
+    private bool _noteIsError;
     private string _stateText = string.Empty;
     private string _stateColor = "#94A3B8";
 
@@ -50,17 +52,19 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
         // 先订阅再显示：订阅时刻的状态作为初值，之后的迁移全部进入队列，不会漏掉中间变化
         _stateSubscription = runtime.SubscribeStateChanges(out var current);
         UpdateStateDisplay(current);
+        ShowStateNote(current);
 
+        // 命令被拒绝时不会产生状态事件（如复位被联锁拦截），必须把结果显示出来，否则操作员看不到任何反馈
         ConnectCommand = new RelayCommand(
-            () => _runtime.Connect(),
+            () => ShowIfFailed("连接", _runtime.Connect()),
             () => CanConnect);
 
         DisconnectCommand = new AsyncRelayCommand(
-            async () => await _runtime.DisconnectAsync(CancellationToken.None),
+            async () => ShowIfFailed("断开", await _runtime.DisconnectAsync(CancellationToken.None)),
             () => CanDisconnect);
 
         ResetCommand = new RelayCommand(
-            () => _runtime.Reset(),
+            () => ShowIfFailed("复位", _runtime.Reset()),
             () => CanReset);
 
         EditCommand = new RelayCommand(() => _onEdit?.Invoke(this));
@@ -99,6 +103,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
             if (SetProperty(ref _state, value))
             {
                 UpdateStateDisplay(value);
+                ShowStateNote(value);
                 RaiseCommandCanExecute();
             }
         }
@@ -119,7 +124,25 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
     public string Note
     {
         get => _note;
-        set => SetProperty(ref _note, value);
+        private set => SetProperty(ref _note, value);
+    }
+
+    /// <summary>
+    /// 说明是否为错误信息（故障原因、被拒绝的操作），界面以危险色显示
+    /// </summary>
+    public bool NoteIsError
+    {
+        get => _noteIsError;
+        private set => SetProperty(ref _noteIsError, value);
+    }
+
+    /// <summary>
+    /// 在说明栏显示一条错误，直到下一次状态变化
+    /// </summary>
+    public void ShowError(string message)
+    {
+        Note = message;
+        NoteIsError = true;
     }
 
     public bool CanConnect => _state == BusState.Disconnected;
@@ -179,21 +202,29 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
             BusState.SafeStop => ("安全停止", "#DC2626"),     // Dark Red
             _ => ("未知", "#94A3B8"),
         };
+    }
 
-        if (string.IsNullOrEmpty(_note) || state == BusState.Connected)
+    // 每次状态变化都换成该状态的常规说明并清除错误标记；若这次迁移带有原因，监听方随后会用 ShowError 覆盖
+    private void ShowStateNote(BusState state)
+    {
+        Note = state switch
         {
-            Note = state switch
-            {
-                BusState.Connected => "收发正常",
-                BusState.Disconnected => "通道已关闭，就绪",
-                BusState.Connecting => "正在打开通道...",
-                BusState.Reconnecting => "通讯中断，尝试重连中",
-                BusState.Disconnecting => "正在关闭物理通道...",
-                BusState.Faulted => "重连失败耗尽，已故障锁存",
-                BusState.SafeStop => "安全联锁跳闸，已安全停止",
-                _ => "-",
-            };
-        }
+            BusState.Connected => "收发正常",
+            BusState.Disconnected => "通道已关闭，就绪",
+            BusState.Connecting => "正在打开通道...",
+            BusState.Reconnecting => "通讯中断，尝试重连中",
+            BusState.Disconnecting => "正在关闭物理通道...",
+            BusState.Faulted => "重连失败耗尽，已故障锁存",
+            BusState.SafeStop => "安全联锁跳闸，已安全停止",
+            _ => "-",
+        };
+        NoteIsError = false;
+    }
+
+    private void ShowIfFailed(string operation, Result result)
+    {
+        if (result.IsFailure)
+            ShowError($"{operation}失败：{result.Error.Message}");
     }
 
     // 退订（Dispose）或运行时释放后队列完成，循环自然退出
@@ -207,7 +238,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
                 {
                     State = evt.Transition.To;
                     if (evt.Cause is not null)
-                        Note = evt.Cause.Message;
+                        ShowError(evt.Cause.Message);
                 });
             }
         }

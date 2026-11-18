@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -53,10 +55,36 @@ public partial class App : Application
                             isHardware,
                             reason => _host.EmergencyStop(reason));
                     }
+
+                    // 启动失败时总线服务可能为空、上面不会初始化，问题也必须让操作员看到，而不只是写进日志
+                    if (CreateStartupNotice(report, _host.Options.LogDirectory) is { } notice)
+                        vm.ShowStartupNotice(notice);
                 });
             }
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static StartupNotice? CreateStartupNotice(StartupReport report, string logDirectory)
+    {
+        if (report.Fatal is { } fatal)
+        {
+            return new StartupNotice(
+                "总线系统未能完整启动，部分或全部总线不可用",
+                [fatal.Message, $"详细信息见日志目录：{logDirectory}"],
+                IsError: true);
+        }
+
+        var details = new List<string>();
+        foreach (var issue in report.ConfigurationIssues)
+            details.Add($"配置记录 {issue.RowId} 无效：{string.Join("；", issue.Errors.Select(e => e.Message))}");
+
+        foreach (var failure in report.RegistrationFailures)
+            details.Add($"总线「{failure.Name}」未能加载：{failure.Error.Message}");
+
+        return details.Count == 0
+            ? null
+            : new StartupNotice($"有 {details.Count} 条总线配置未加载，请修正后重新创建", details, IsError: false);
     }
 }
