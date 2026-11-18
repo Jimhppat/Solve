@@ -20,6 +20,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         MasterConsole = new MasterConsoleViewModel();
         BusConsole = new BusConsoleViewModel();
+        RuntimeLog = new RuntimeLogViewModel();
         _currentPage = MasterConsole;
 
         // 联动总线控制台的实时统计文本到主窗口底部状态栏
@@ -41,6 +42,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 总线控制台专属子页面
     /// </summary>
     public BusConsoleViewModel BusConsole { get; }
+
+    /// <summary>
+    /// 运行日志页。由组合根接入日志源，设计器中为空列表
+    /// </summary>
+    public RuntimeLogViewModel RuntimeLog { get; }
 
     /// <summary>
     /// 当前活动页面（驱动主窗体 ContentControl 呈现）
@@ -92,9 +98,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         CurrentPage = index switch
         {
+            // 索引与侧栏 ListBoxItem 的顺序一一对应（含暂未启用的项）
             0 => MasterConsole,
             1 => BusConsole,
-            _ => MasterConsole // 后续拓扑、诊断、设置页面在此接入对应子 ViewModel
+            4 => RuntimeLog,
+            _ => MasterConsole // 后续拓扑（2）、诊断（3）、设置（5）页面在此接入对应子 ViewModel
         };
     }
 
@@ -130,5 +138,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         MasterConsole.Dispose();
         BusConsole.Dispose();
+        RuntimeLog.Dispose();
     }
 }

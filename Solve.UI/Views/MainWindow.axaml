@@ -27,6 +27,9 @@
         <DataTemplate DataType="vm:BusConsoleViewModel">
             <views:BusConsoleView />
         </DataTemplate>
+        <DataTemplate DataType="vm:RuntimeLogViewModel">
+            <views:RuntimeLogView />
+        </DataTemplate>
     </Window.DataTemplates>
 
     <Window.Resources>
@@ -246,6 +249,12 @@
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconActivity}" />
                                         <TextBlock Grid.Column="1" Text="报文诊断" />
+                                    </Grid>
+                                </ListBoxItem>
+                                <ListBoxItem ToolTip.Tip="运行日志">
+                                    <Grid ColumnDefinitions="40,*">
+                                        <PathIcon Data="{DynamicResource SemiIconArticle}" />
+                                        <TextBlock Grid.Column="1" Text="运行日志" />
                                     </Grid>
                                 </ListBoxItem>
                                 <ListBoxItem ToolTip.Tip="系统设置" IsEnabled="False">

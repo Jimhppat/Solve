@@ -8,6 +8,7 @@ using Serilog.Debugging;
 using Serilog.Events;
 using Serilog.Settings.Configuration;
 using Serilog.Sinks.Async;
+using Solve.Core.Application.Logging;
 
 namespace Solve.Desktop.Logging;
 
@@ -44,13 +45,20 @@ public sealed class LoggingPipeline : IDisposable
 
     private readonly IConfigurationRoot? _settings;
     private readonly DroppedEventMonitor _monitor;
+    private readonly LogFeedSink _feed;
     private int _disposed;
 
-    private LoggingPipeline(Logger logger, IConfigurationRoot? settings, DroppedEventMonitor monitor, string? settingsError)
+    private LoggingPipeline(
+        Logger logger,
+        IConfigurationRoot? settings,
+        DroppedEventMonitor monitor,
+        LogFeedSink feed,
+        string? settingsError)
     {
         Logger = logger;
         _settings = settings;
         _monitor = monitor;
+        _feed = feed;
         SettingsError = settingsError;
     }
 
@@ -70,6 +78,11 @@ public sealed class LoggingPipeline : IDisposable
     public long DroppedCount => _monitor.DroppedCount;
 
     /// <summary>
+    /// 推给界面日志面板的实时日志
+    /// </summary>
+    public ILogFeed Feed => _feed;
+
+    /// <summary>
     /// 创建日志管线。<paramref name="settingsPath"/> 为 null 时不读取配置文件，使用默认级别。
     /// </summary>
     public static LoggingPipeline Create(string logDirectory, string? settingsPath)
@@ -79,13 +92,14 @@ public sealed class LoggingPipeline : IDisposable
         Directory.CreateDirectory(logDirectory);
         EnableSelfLog(Path.Combine(logDirectory, SelfLogFileName));
 
+        var feed = new LogFeedSink();
         var settings = LoadSettings(settingsPath, out var settingsError);
         if (settings is not null && settingsError is null)
         {
             var monitor = new DroppedEventMonitor();
             try
             {
-                return new LoggingPipeline(Build(logDirectory, settings, monitor), settings, monitor, null);
+                return new LoggingPipeline(Build(logDirectory, settings, monitor, feed), settings, monitor, feed, null);
             }
             catch (Exception ex)
             {
@@ -97,7 +111,7 @@ public sealed class LoggingPipeline : IDisposable
         // 配置无效时本次运行不再监视文件：修正后重启生效，避免半套配置在运行中被部分热更新
         (settings as IDisposable)?.Dispose();
         var fallbackMonitor = new DroppedEventMonitor();
-        return new LoggingPipeline(Build(logDirectory, null, fallbackMonitor), null, fallbackMonitor, settingsError);
+        return new LoggingPipeline(Build(logDirectory, null, fallbackMonitor, feed), null, fallbackMonitor, feed, settingsError);
     }
 
     /// <summary>
@@ -118,9 +132,12 @@ public sealed class LoggingPipeline : IDisposable
         // 先停止监视配置文件，避免关停过程中触发热更新
         (_settings as IDisposable)?.Dispose();
         Logger.Dispose();
+
+        // 队列已刷完，最后一条也推给了面板，再结束推送
+        _feed.Complete();
     }
 
-    private static Logger Build(string logDirectory, IConfiguration? settings, DroppedEventMonitor monitor)
+    private static Logger Build(string logDirectory, IConfiguration? settings, DroppedEventMonitor monitor, LogFeedSink feed)
     {
         var configuration = new LoggerConfiguration()
             .MinimumLevel.Information()
@@ -154,6 +171,8 @@ public sealed class LoggingPipeline : IDisposable
 #if DEBUG
                     sink.Debug(outputTemplate: OutputTemplate);
 #endif
+                    // 界面日志面板：同样在后台线程上转换与推送
+                    sink.Sink(feed);
                 },
                 bufferSize: QueueCapacity,
                 blockWhenFull: false,
