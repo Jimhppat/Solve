@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Solve.UI.Behaviors;
 using Solve.UI.ViewModels;
 
 namespace Solve.UI.Views;

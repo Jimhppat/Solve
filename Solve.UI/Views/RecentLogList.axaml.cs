@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Solve.UI.Behaviors;
 
 namespace Solve.UI.Views;
 

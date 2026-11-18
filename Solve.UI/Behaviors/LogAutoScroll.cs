@@ -4,12 +4,16 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using Solve.UI.ViewModels;
 
-namespace Solve.UI.Views;
+namespace Solve.UI.Behaviors;
 
 /// <summary>
 /// 日志列表的自动滚动：视图模型追加或重新筛选日志后，若开启了自动滚动，就把列表滚到最新一条。
 /// 运行日志页与主控台的最近日志控件共用。
 /// </summary>
+/// <remarks>
+/// 放在 Behaviors 而不是 ViewModels：它直接操作 Avalonia 控件与 Dispatcher，属于视图层；
+/// 视图模型保持不依赖具体控件，才能在没有 UI 线程的单元测试里运行。
+/// </remarks>
 /// <remarks>
 /// 切换页面时视图会被重新创建，旧视图从可视树移除。对视图模型事件的订阅只在宿主挂在可视树上期间有效，
 /// 否则离开过的旧视图会一直被视图模型引用，无法回收。
