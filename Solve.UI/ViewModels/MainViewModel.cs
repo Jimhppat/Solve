@@ -28,7 +28,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
         BusConsole = new BusConsoleViewModel();
         RuntimeLog = new RuntimeLogViewModel();
-        Settings = new SettingsViewModel();
+        Settings = new SettingsViewModel(onLogDirectoryChanged: OnLogDirectoryChanged);
         _currentPage = MasterConsole;
 
         // 联动总线控制台的实时统计文本到主窗口底部状态栏
@@ -126,6 +126,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         RuntimeLog.Attach(feed, logDirectory);
         MasterConsole.RecentLog.Attach(feed, logDirectory);
+    }
+
+    /// <summary>
+    /// 接入日志目录设置（设置页）。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachLogDirectorySettings(ILogDirectorySettings settings) => Settings.AttachLogDirectory(settings);
+
+    // 设置页切换目录后，日志页与主控台的「打开日志目录」随之指向新目录
+    private void OnLogDirectoryChanged(string logDirectory)
+    {
+        RuntimeLog.UpdateLogDirectory(logDirectory);
+        MasterConsole.RecentLog.UpdateLogDirectory(logDirectory);
     }
 
     /// <summary>

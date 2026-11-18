@@ -7,12 +7,135 @@
              x:Class="Solve.UI.Views.SettingsView"
              x:DataType="vm:SettingsViewModel"
              Background="#0D000000">
-    <!-- 页面底色沿用主控台与运行日志页：在主题底色上叠 5% 黑，切页时底色一致 -->
+    <!-- 页面底色与卡片阴影沿用主控台与运行日志页：在主题底色上叠 5% 黑，让白卡片浮起来 -->
 
     <Design.DataContext>
         <vm:SettingsViewModel />
     </Design.DataContext>
 
-    <!-- 系统设置页（空白，待开发） -->
-    <Grid />
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #14000000, 0 0 1 0 #33000000</BoxShadows>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #66000000, 0 0 0 1 #1AFFFFFF</BoxShadows>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Border.panel">
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
+            <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
+        </Style>
+        <Style Selector="TextBlock.label">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.muted, SelectableTextBlock.muted">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <!-- 结果说明：成功为次要文字色，失败为危险色；必须排在 .muted 之后以覆盖其前景色 -->
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Border.notice">
+            <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="12,10" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
+
+        <!-- 页面标题 -->
+        <Border Grid.Row="0" Classes="panel" Padding="20,10">
+            <TextBlock Text="{Binding PageTitle}"
+                       Height="32"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource SemiColorText0}"
+                       VerticalAlignment="Center" />
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="20">
+
+                <!-- 运行日志 -->
+                <Border Classes="panel" Padding="20,16">
+                    <StackPanel Spacing="14">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="运行日志"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                            <TextBlock Classes="muted"
+                                       Text="日志目录保存后立即切换：之后的日志写入新目录，原目录中的日志保留在原处，不再按 30 天自动清理。只能选择本机磁盘上的目录，不支持网络路径。" />
+                        </StackPanel>
+
+                        <!-- 启动时保存的目录不可用，本次运行写入默认目录 -->
+                        <Border Classes="notice" IsVisible="{Binding HasLogDirectoryStartupFallback}">
+                            <TextBlock Text="{Binding LogDirectoryStartupFallback}"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                        </Border>
+
+                        <Grid ColumnDefinitions="88,*,Auto" RowDefinitions="Auto,Auto,Auto"
+                              ColumnSpacing="12" RowSpacing="12">
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="当前目录" />
+                            <SelectableTextBlock Grid.Row="0" Grid.Column="1"
+                                                 Text="{Binding CurrentLogDirectory, TargetNullValue=未接入}"
+                                                 TextWrapping="Wrap"
+                                                 VerticalAlignment="Center"
+                                                 Foreground="{DynamicResource SemiColorText0}" />
+                            <Button Grid.Row="0" Grid.Column="2"
+                                    Click="OnOpenCurrentDirectory"
+                                    IsEnabled="{Binding IsLogDirectoryAvailable}"
+                                    ToolTip.Tip="在文件资源管理器中打开当前日志目录">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Data="{DynamicResource SemiIconFolderOpen}" Width="12" Height="12" />
+                                    <TextBlock Text="打开" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="新目录" />
+                            <TextBox Grid.Row="1" Grid.Column="1"
+                                     PlaceholderText="完整路径，如 D:\SolveLogs"
+                                     Text="{Binding LogDirectoryInput}"
+                                     IsEnabled="{Binding IsLogDirectoryAvailable}" />
+                            <Button Grid.Row="1" Grid.Column="2"
+                                    Click="OnBrowseDirectory"
+                                    IsEnabled="{Binding IsLogDirectoryAvailable}"
+                                    Content="浏览…" />
+
+                            <StackPanel Grid.Row="2" Grid.Column="1"
+                                        Orientation="Horizontal" Spacing="8">
+                                <Button Classes="Primary" Theme="{DynamicResource SolidButton}"
+                                        Content="应用"
+                                        Command="{Binding ApplyLogDirectoryCommand}"
+                                        ToolTip.Tip="校验目录可写后立即切换，并作为之后启动使用的目录" />
+                                <Button Content="恢复默认"
+                                        Command="{Binding RestoreDefaultLogDirectoryCommand}"
+                                        ToolTip.Tip="{Binding DefaultLogDirectory, StringFormat='切换回默认目录：{0}'}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Classes="muted"
+                                   Classes.error="{Binding IsLogDirectoryError}"
+                                   IsVisible="{Binding HasLogDirectoryMessage}"
+                                   Text="{Binding LogDirectoryMessage}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
 </UserControl>
