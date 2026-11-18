@@ -16,8 +16,8 @@ namespace Solve.Desktop.Logging;
 /// 黑匣子日志管线：Serilog 根日志器、级别配置文件监视与 Serilog 自诊断输出，统一创建、统一释放。
 /// </summary>
 /// <remarks>
-/// <para>写到哪里、怎么写（异步队列、队列满即丢弃、滚动与保留）固定在代码中，配置文件只能调整级别：
-/// 避免现场改配置让日志反过来阻塞控制路径。</para>
+/// <para>怎么写（异步队列、队列满即丢弃、滚动与保留）固定在代码中，级别配置文件只能调整级别：
+/// 避免现场改配置让日志反过来阻塞控制路径。目录可在设置页切换（<see cref="SwitchDirectory"/>），切换前先校验可写。</para>
 /// <para>日志必须能启动：配置文件缺失、JSON 损坏或级别值非法时退回代码默认级别，原因见 <see cref="SettingsError"/>。</para>
 /// </remarks>
 public sealed class LoggingPipeline : IDisposable
@@ -46,6 +46,10 @@ public sealed class LoggingPipeline : IDisposable
     private readonly IConfigurationRoot? _settings;
     private readonly DroppedEventMonitor _monitor;
     private readonly LogFeedSink _feed;
+    private readonly SwitchableFileSink _file;
+    private readonly SelfLogFile _selfLog;
+    private readonly Lock _switchGate = new();
+    private string _logDirectory;
     private int _disposed;
 
     private LoggingPipeline(
@@ -53,12 +57,18 @@ public sealed class LoggingPipeline : IDisposable
         IConfigurationRoot? settings,
         DroppedEventMonitor monitor,
         LogFeedSink feed,
+        SwitchableFileSink file,
+        SelfLogFile selfLog,
+        string logDirectory,
         string? settingsError)
     {
         Logger = logger;
         _settings = settings;
         _monitor = monitor;
         _feed = feed;
+        _file = file;
+        _selfLog = selfLog;
+        _logDirectory = logDirectory;
         SettingsError = settingsError;
     }
 
@@ -83,6 +93,11 @@ public sealed class LoggingPipeline : IDisposable
     public ILogFeed Feed => _feed;
 
     /// <summary>
+    /// 日志文件与自诊断文件当前所在的目录
+    /// </summary>
+    public string LogDirectory => Volatile.Read(ref _logDirectory);
+
+    /// <summary>
     /// 创建日志管线。<paramref name="settingsPath"/> 为 null 时不读取配置文件，使用默认级别。
     /// </summary>
     public static LoggingPipeline Create(string logDirectory, string? settingsPath)
@@ -90,20 +105,23 @@ public sealed class LoggingPipeline : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
 
         Directory.CreateDirectory(logDirectory);
-        EnableSelfLog(Path.Combine(logDirectory, SelfLogFileName));
+        var selfLog = SelfLogFile.Enable(Path.Combine(logDirectory, SelfLogFileName));
 
         var feed = new LogFeedSink();
+        // 文件输出在构建根日志器之前创建：下面按配置构建失败、退回默认级别重建时沿用同一个
+        var file = new SwitchableFileSink(logDirectory, CreateFileLogger);
         var settings = LoadSettings(settingsPath, out var settingsError);
         if (settings is not null && settingsError is null)
         {
             var monitor = new DroppedEventMonitor();
             try
             {
-                return new LoggingPipeline(Build(logDirectory, settings, monitor, feed), settings, monitor, feed, null);
+                return new LoggingPipeline(
+                    Build(settings, monitor, feed, file), settings, monitor, feed, file, selfLog, logDirectory, null);
             }
             catch (Exception ex)
             {
-                // 级别值非法等：Serilog 在应用配置时抛出，此时尚未创建任何文件输出，丢弃配置后按默认级别重建
+                // 级别值非法等：Serilog 在应用配置时抛出，此时文件输出尚未挂上、也未打开文件，丢弃配置后按默认级别重建
                 settingsError = ex.GetBaseException().Message;
             }
         }
@@ -111,7 +129,26 @@ public sealed class LoggingPipeline : IDisposable
         // 配置无效时本次运行不再监视文件：修正后重启生效，避免半套配置在运行中被部分热更新
         (settings as IDisposable)?.Dispose();
         var fallbackMonitor = new DroppedEventMonitor();
-        return new LoggingPipeline(Build(logDirectory, null, fallbackMonitor, feed), null, fallbackMonitor, feed, settingsError);
+        return new LoggingPipeline(
+            Build(null, fallbackMonitor, feed, file), null, fallbackMonitor, feed, file, selfLog, logDirectory, settingsError);
+    }
+
+    /// <summary>
+    /// 把之后的日志文件与自诊断输出切换到 <paramref name="directory"/>，旧目录中的文件原地保留。
+    /// 调用方须先确认目录存在且可写（见 <see cref="LogDirectoryValidator.Prepare"/>）。任何线程可调用。
+    /// </summary>
+    public void SwitchDirectory(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+        // 串行化切换：保证 LogDirectory 与实际写入的目录一致
+        lock (_switchGate)
+        {
+            _file.SwitchTo(directory);
+            _selfLog.MoveTo(Path.Combine(directory, SelfLogFileName));
+            Volatile.Write(ref _logDirectory, directory);
+        }
     }
 
     /// <summary>
@@ -133,11 +170,29 @@ public sealed class LoggingPipeline : IDisposable
         (_settings as IDisposable)?.Dispose();
         Logger.Dispose();
 
+        // 根日志器释放时通常已连带关闭文件输出；这里再显式关闭一次（可重复调用），不依赖 Serilog 的连带释放行为
+        _file.Dispose();
+
         // 队列已刷完，最后一条也推给了面板，再结束推送
         _feed.Complete();
     }
 
-    private static Logger Build(string logDirectory, IConfiguration? settings, DroppedEventMonitor monitor, LogFeedSink feed)
+    /// <summary>
+    /// 只含文件输出的日志器，作为 <see cref="SwitchableFileSink"/> 的当前输出。级别由根日志器过滤，这里全部放行。
+    /// </summary>
+    private static Logger CreateFileLogger(string logDirectory)
+        => new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.File(
+                path: Path.Combine(logDirectory, FilePrefix + ".log"),
+                outputTemplate: OutputTemplate,
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 30,
+                fileSizeLimitBytes: 50L * 1024 * 1024,
+                rollOnFileSizeLimit: true)
+            .CreateLogger();
+
+    private static Logger Build(IConfiguration? settings, DroppedEventMonitor monitor, LogFeedSink feed, SwitchableFileSink file)
     {
         var configuration = new LoggerConfiguration()
             .MinimumLevel.Information()
@@ -161,13 +216,8 @@ public sealed class LoggingPipeline : IDisposable
             .WriteTo.Async(
                 sink =>
                 {
-                    sink.File(
-                        path: Path.Combine(logDirectory, FilePrefix + ".log"),
-                        outputTemplate: OutputTemplate,
-                        rollingInterval: RollingInterval.Day,
-                        retainedFileCountLimit: 30,
-                        fileSizeLimitBytes: 50L * 1024 * 1024,
-                        rollOnFileSizeLimit: true);
+                    // 文件输出可在运行中切换目录（设置页），见 SwitchableFileSink
+                    sink.Sink(file);
 #if DEBUG
                     sink.Debug(outputTemplate: OutputTemplate);
 #endif
@@ -216,32 +266,51 @@ public sealed class LoggingPipeline : IDisposable
 
     /// <summary>
     /// Serilog 自身出错时默认静默。写到日志目录下的单独文件，并限制行数，防止磁盘满等持续故障时无限增长。
+    /// 切换日志目录时随之移到新目录，行数上限按整次运行计算。
     /// </summary>
-    private static void EnableSelfLog(string path)
+    private sealed class SelfLogFile
     {
-        var gate = new Lock();
-        var remaining = SelfLogLineLimit;
+        private readonly Lock _gate = new();
+        private string _path;
+        private int _remaining = SelfLogLineLimit;
 
-        SelfLog.Enable(message =>
+        private SelfLogFile(string path) => _path = path;
+
+        public static SelfLogFile Enable(string path)
+        {
+            var file = new SelfLogFile(path);
+            SelfLog.Enable(file.Write);
+            return file;
+        }
+
+        public void MoveTo(string path)
+        {
+            lock (_gate)
+            {
+                _path = path;
+            }
+        }
+
+        private void Write(string message)
         {
             System.Diagnostics.Debug.WriteLine(message);
-            lock (gate)
+            lock (_gate)
             {
-                if (remaining <= 0)
+                if (_remaining <= 0)
                     return;
 
-                remaining--;
-                var line = remaining == 0 ? message + Environment.NewLine + "（自诊断记录已达上限，本次运行不再记录）" : message;
+                _remaining--;
+                var line = _remaining == 0 ? message + Environment.NewLine + "（自诊断记录已达上限，本次运行不再记录）" : message;
                 try
                 {
-                    File.AppendAllText(path, line + Environment.NewLine);
+                    File.AppendAllText(_path, line + Environment.NewLine);
                 }
                 catch (Exception)
                 {
                     // 自诊断输出本身也写不进去时已无处可报，放弃
                 }
             }
-        });
+        }
     }
 
     /// <summary>

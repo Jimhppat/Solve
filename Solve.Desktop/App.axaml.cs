@@ -55,7 +55,8 @@ public partial class App : Application
                 Dispatcher.UIThread.UnhandledException += (_, e) => OnUiThreadException(desktop, host, e);
 
                 // 日志管线在 UI 之前就已创建：先接入日志页与主控台最近日志，启动过程中的日志也能看到
-                vm.AttachLogFeed(host.Logging.Feed, host.Options.LogDirectory);
+                vm.AttachLogFeed(host.Logging.Feed, host.Logging.LogDirectory);
+                vm.AttachLogDirectorySettings(host.LogDirectorySettings);
 
                 _ = Task.Run(async () =>
                 {
@@ -72,7 +73,7 @@ public partial class App : Application
                     }
 
                     // 启动失败时总线服务可能为空、上面不会初始化，问题也必须让操作员看到，而不只是写进日志
-                    if (CreateStartupNotice(report, _host.Options.LogDirectory) is { } notice)
+                    if (CreateStartupNotice(report, _host.Logging.LogDirectory) is { } notice)
                         vm.ShowStartupNotice(notice);
                 });
             }

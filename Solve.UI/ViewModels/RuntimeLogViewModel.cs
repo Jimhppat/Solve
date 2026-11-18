@@ -261,6 +261,15 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// 日志目录在设置页切换后更新「打开日志目录」的目标。须在 UI 线程上调用。
+    /// </summary>
+    public void UpdateLogDirectory(string logDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
+        LogDirectory = logDirectory;
+    }
+
+    /// <summary>
     /// 追加一批日志，超出 <see cref="Capacity"/> 时丢弃最旧的。
     /// </summary>
     public void Append(IReadOnlyList<LogEntry> entries)

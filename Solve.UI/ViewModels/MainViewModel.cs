@@ -14,6 +14,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public const int MasterConsoleNavIndex = 0;
     public const int BusConsoleNavIndex = 1;
     public const int RuntimeLogNavIndex = 4;
+    public const int SettingsNavIndex = 5;
 
     private Action<string>? _onEmergencyStop;
     private string _modeText = "仿真模式";
@@ -27,6 +28,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
         BusConsole = new BusConsoleViewModel();
         RuntimeLog = new RuntimeLogViewModel();
+        Settings = new SettingsViewModel(onLogDirectoryChanged: OnLogDirectoryChanged);
         _currentPage = MasterConsole;
 
         // 联动总线控制台的实时统计文本到主窗口底部状态栏
@@ -53,6 +55,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 运行日志页。由组合根接入日志源，设计器中为空列表
     /// </summary>
     public RuntimeLogViewModel RuntimeLog { get; }
+
+    /// <summary>
+    /// 系统设置页
+    /// </summary>
+    public SettingsViewModel Settings { get; }
 
     /// <summary>
     /// 当前活动页面（驱动主窗体 ContentControl 呈现）
@@ -107,7 +114,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             MasterConsoleNavIndex => MasterConsole,
             BusConsoleNavIndex => BusConsole,
             RuntimeLogNavIndex => RuntimeLog,
-            _ => MasterConsole // 后续拓扑（2）、诊断（3）、设置（5）页面在此接入对应子 ViewModel
+            SettingsNavIndex => Settings,
+            _ => MasterConsole // 后续拓扑（2）、诊断（3）页面在此接入对应子 ViewModel
         };
     }
 
@@ -118,6 +126,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         RuntimeLog.Attach(feed, logDirectory);
         MasterConsole.RecentLog.Attach(feed, logDirectory);
+    }
+
+    /// <summary>
+    /// 接入日志目录设置（设置页）。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachLogDirectorySettings(ILogDirectorySettings settings) => Settings.AttachLogDirectory(settings);
+
+    // 设置页切换目录后，日志页与主控台的「打开日志目录」随之指向新目录
+    private void OnLogDirectoryChanged(string logDirectory)
+    {
+        RuntimeLog.UpdateLogDirectory(logDirectory);
+        MasterConsole.RecentLog.UpdateLogDirectory(logDirectory);
     }
 
     /// <summary>
