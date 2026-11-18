@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Solve.UI.ViewModels"
+             xmlns:views="using:Solve.UI.Views"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
              x:Class="Solve.UI.Views.MasterConsoleView"
              x:DataType="vm:MasterConsoleViewModel"
@@ -86,14 +87,52 @@
                 </Grid>
             </Border>
 
-            <!-- 控制区：控制分组自上而下排列，超出高度时纵向滚动 -->
-            <Border Grid.Column="1" Classes="panel">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="20" Spacing="12">
-                        <!-- 控制分组槽位 -->
-                    </StackPanel>
-                </ScrollViewer>
-            </Border>
+            <!-- 右栏：控制区在上、最近日志在下，各占一张卡片，间距同为 20px。
+                 右栏高度 = 窗口高度 - 180（标题栏 40、状态栏 28、页边距 40、标题卡片 52、行距 20）：
+                 最小窗口 600 → 420，默认 800 → 620。
+                 两行按 1:1 分配；日志至少 200（约 2~3 条）以免缩成一条缝，最多 400，更高的屏幕把多出的空间留给控制区。
+                 最小窗口时 160 + 20 + 200 = 380 ≤ 420，两张卡片都不会被挤到下限以下 -->
+            <Grid Grid.Column="1" RowSpacing="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" MinHeight="160" />
+                    <RowDefinition Height="*" MinHeight="200" MaxHeight="400" />
+                </Grid.RowDefinitions>
+
+                <!-- 控制区：控制分组自上而下排列，超出高度时纵向滚动 -->
+                <Border Grid.Row="0" Classes="panel">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="20" Spacing="12">
+                            <!-- 控制分组槽位 -->
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- 最近日志：信息及以上、保留最近 100 条；筛选、搜索、复制请到运行日志页。
+                     列表必须是有界高度的卡片的直接内容，不能放进上面的 ScrollViewer：
+                     否则列表拿到无限高度，既不能自己滚动，也失去虚拟化 -->
+                <Border Grid.Row="1" Classes="panel">
+                    <DockPanel>
+                        <DockPanel DockPanel.Dock="Top" Margin="20,12,12,4">
+                            <Button DockPanel.Dock="Right"
+                                    Classes="Tertiary"
+                                    Padding="6,2"
+                                    Command="{Binding OpenRuntimeLogCommand}"
+                                    ToolTip.Tip="打开运行日志页，查看全部日志">
+                                <StackPanel Orientation="Horizontal" Spacing="2">
+                                    <TextBlock Text="全部" FontSize="12" VerticalAlignment="Center" />
+                                    <PathIcon Data="{DynamicResource SemiIconChevronRight}" Width="10" Height="10" />
+                                </StackPanel>
+                            </Button>
+                            <TextBlock Text="最近日志"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SemiColorText0}"
+                                       VerticalAlignment="Center" />
+                        </DockPanel>
+                        <views:RecentLogList DataContext="{Binding RecentLog}" Margin="8,0,8,8" />
+                    </DockPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </UserControl>

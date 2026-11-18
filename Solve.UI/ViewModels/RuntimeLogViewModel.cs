@@ -16,7 +16,7 @@ public sealed record LogLevelOption(string Label, LogLevel Minimum)
 }
 
 /// <summary>
-/// 运行日志页：订阅实时日志，按级别与关键字筛选。
+/// 运行日志列表：订阅实时日志，按级别与关键字筛选。运行日志页与主控台的最近日志控件各用一个实例，各自订阅、互不影响。
 /// </summary>
 /// <remarks>
 /// <para>只是一个窗口，完整记录以日志文件为准：界面最多保留最近 <see cref="Capacity"/> 条，清空也只清界面。</para>
@@ -26,13 +26,13 @@ public sealed record LogLevelOption(string Label, LogLevel Minimum)
 public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
 {
     /// <summary>
-    /// 界面保留的最多条数，超出时丢弃最旧的
+    /// 运行日志页默认保留的条数
     /// </summary>
-    public const int Capacity = 2_000;
+    public const int DefaultCapacity = 2_000;
 
     public static readonly TimeSpan BatchInterval = TimeSpan.FromMilliseconds(100);
 
-    private readonly List<LogEntryItem> _all = new(Capacity);
+    private readonly List<LogEntryItem> _all;
     private ObservableCollection<LogEntryItem> _entries = [];
     private EventSubscription<LogEntry>? _subscription;
     private LogLevelOption _selectedLevel;
@@ -42,8 +42,21 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
     private int _warningCount;
     private int _errorCount;
 
-    public RuntimeLogViewModel()
+    /// <summary>
+    /// 运行日志页（也供 XAML 设计器使用）：保留 <see cref="DefaultCapacity"/> 条，显示全部级别
+    /// </summary>
+    public RuntimeLogViewModel() : this(DefaultCapacity, LogLevel.Trace)
     {
+    }
+
+    /// <param name="capacity">界面保留的最多条数，超出时丢弃最旧的</param>
+    /// <param name="minimumLevel">初始级别筛选，必须是 <see cref="LevelOptions"/> 中某一项的下限</param>
+    public RuntimeLogViewModel(int capacity, LogLevel minimumLevel)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+        Capacity = capacity;
+        _all = new List<LogEntryItem>(capacity);
+
         LevelOptions =
         [
             new LogLevelOption("全部级别", LogLevel.Trace),
@@ -51,9 +64,15 @@ public sealed class RuntimeLogViewModel : ViewModelBase, IDisposable
             new LogLevelOption("警告及以上", LogLevel.Warning),
             new LogLevelOption("仅错误", LogLevel.Error),
         ];
-        _selectedLevel = LevelOptions[0];
+        _selectedLevel = LevelOptions.FirstOrDefault(o => o.Minimum == minimumLevel)
+                         ?? throw new ArgumentOutOfRangeException(nameof(minimumLevel), minimumLevel, "没有对应的级别筛选项");
         ClearCommand = new RelayCommand(Clear);
     }
+
+    /// <summary>
+    /// 界面保留的最多条数，超出时丢弃最旧的
+    /// </summary>
+    public int Capacity { get; }
 
     public string PageTitle => "运行日志";
 

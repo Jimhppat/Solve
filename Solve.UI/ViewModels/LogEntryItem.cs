@@ -15,6 +15,7 @@ public sealed class LogEntryItem
 
         var local = entry.Timestamp.ToLocalTime();
         TimeText = local.ToString("HH:mm:ss.fff");
+        ShortTimeText = local.ToString("HH:mm:ss");
         LevelText = LevelName(entry.Level);
         SourceText = ShortSource(entry.Source);
         DetailText = BuildDetail(entry, local, LevelText);
@@ -32,6 +33,11 @@ public sealed class LogEntryItem
     public string Source => Entry.Source;
 
     public string TimeText { get; }
+
+    /// <summary>
+    /// 精确到秒，用于主控台右栏等窄区域
+    /// </summary>
+    public string ShortTimeText { get; }
 
     public string LevelText { get; }
 

@@ -1,0 +1,57 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 日志列表共用样式：运行日志页与主控台的最近日志控件都引用这里，保证两处观感一致 -->
+
+    <Style Selector="TextBlock.mono">
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, Courier New" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <!-- 日志行：紧凑行距；选中态沿用主题 -->
+    <Style Selector="ListBox.log > ListBoxItem">
+        <Setter Property="Padding" Value="12,5" />
+        <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="ListBox.log TextBlock">
+        <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+
+    <!-- 级别标签：默认（信息）为中性色，警告 / 错误用主题的警告色与危险色 -->
+    <Style Selector="Border.level">
+        <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+        <Setter Property="Padding" Value="6,0" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+    </Style>
+    <Style Selector="Border.level > TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+    </Style>
+    <Style Selector="Border.level.warning">
+        <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+    </Style>
+    <Style Selector="Border.level.warning > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorWarning}" />
+    </Style>
+    <Style Selector="Border.level.error">
+        <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
+    </Style>
+    <Style Selector="Border.level.error > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+    </Style>
+
+    <!-- 来源、时间等辅助信息 -->
+    <Style Selector="TextBlock.meta">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+    </Style>
+
+    <!-- 消息正文；调试 / 跟踪级别淡化，突出业务日志（后定义的样式优先）。
+         行模板的根元素带 debug 类即可，不限定元素类型 -->
+    <Style Selector="TextBlock.message">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+    </Style>
+    <Style Selector=".debug TextBlock.message">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+    </Style>
+</Styles>

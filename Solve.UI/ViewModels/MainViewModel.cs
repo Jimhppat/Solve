@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.Logging;
 
 namespace Solve.UI.ViewModels;
 
@@ -9,6 +10,11 @@ namespace Solve.UI.ViewModels;
 /// </summary>
 public sealed class MainViewModel : ViewModelBase, IDisposable
 {
+    // 侧栏导航索引，与 MainWindow.axaml 中 ListBoxItem 的顺序一一对应（含暂未启用的项）
+    public const int MasterConsoleNavIndex = 0;
+    public const int BusConsoleNavIndex = 1;
+    public const int RuntimeLogNavIndex = 4;
+
     private Action<string>? _onEmergencyStop;
     private string _modeText = "仿真模式";
     private string _modeBadgeColor = "#F59E0B";
@@ -18,7 +24,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public MainViewModel()
     {
-        MasterConsole = new MasterConsoleViewModel();
+        MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
         BusConsole = new BusConsoleViewModel();
         RuntimeLog = new RuntimeLogViewModel();
         _currentPage = MasterConsole;
@@ -98,12 +104,20 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         CurrentPage = index switch
         {
-            // 索引与侧栏 ListBoxItem 的顺序一一对应（含暂未启用的项）
-            0 => MasterConsole,
-            1 => BusConsole,
-            4 => RuntimeLog,
+            MasterConsoleNavIndex => MasterConsole,
+            BusConsoleNavIndex => BusConsole,
+            RuntimeLogNavIndex => RuntimeLog,
             _ => MasterConsole // 后续拓扑（2）、诊断（3）、设置（5）页面在此接入对应子 ViewModel
         };
+    }
+
+    /// <summary>
+    /// 接入日志源：运行日志页与主控台的最近日志各自订阅。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachLogFeed(ILogFeed feed, string logDirectory)
+    {
+        RuntimeLog.Attach(feed, logDirectory);
+        MasterConsole.RecentLog.Attach(feed, logDirectory);
     }
 
     /// <summary>

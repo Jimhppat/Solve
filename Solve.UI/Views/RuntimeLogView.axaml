@@ -27,56 +27,13 @@
     </UserControl.Resources>
 
     <UserControl.Styles>
+        <!-- 级别标签、日志行等与主控台最近日志控件共用 -->
+        <StyleInclude Source="avares://Solve.UI/Styles/LogStyles.axaml" />
+
         <Style Selector="Border.panel">
             <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
             <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
             <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
-        </Style>
-
-        <Style Selector="TextBlock.mono">
-            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, Courier New" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-
-        <!-- 日志行：紧凑行距；选中态沿用主题 -->
-        <Style Selector="ListBox.log > ListBoxItem">
-            <Setter Property="Padding" Value="12,5" />
-            <Setter Property="MinHeight" Value="0" />
-        </Style>
-        <Style Selector="ListBox.log TextBlock">
-            <Setter Property="VerticalAlignment" Value="Top" />
-        </Style>
-
-        <!-- 级别标签：默认（信息）为中性色，警告 / 错误用主题的警告色与危险色 -->
-        <Style Selector="Border.level">
-            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
-            <Setter Property="Padding" Value="6,0" />
-            <Setter Property="VerticalAlignment" Value="Top" />
-            <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
-        </Style>
-        <Style Selector="Border.level > TextBlock">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
-        </Style>
-        <Style Selector="Border.level.warning">
-            <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
-        </Style>
-        <Style Selector="Border.level.warning > TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource SemiColorWarning}" />
-        </Style>
-        <Style Selector="Border.level.error">
-            <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
-        </Style>
-        <Style Selector="Border.level.error > TextBlock">
-            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
-        </Style>
-
-        <!-- 消息正文；调试 / 跟踪级别淡化，突出业务日志（后定义的样式优先） -->
-        <Style Selector="TextBlock.message">
-            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
-        </Style>
-        <Style Selector="Grid.debug TextBlock.message">
-            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
         </Style>
     </UserControl.Styles>
 

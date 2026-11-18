@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
-using Solve.Core.Application.Common;
 using Solve.Core.Application.Logging;
+using Solve.Core.Tests.UI.TestSupport;
 using Solve.UI.ViewModels;
 
 namespace Solve.Core.Tests.UI;
@@ -74,10 +74,10 @@ public sealed class RuntimeLogViewModelTests : IDisposable
     [Fact]
     public void Capacity_DropsOldest()
     {
-        _vm.Append(Enumerable.Range(0, RuntimeLogViewModel.Capacity + 10).Select(_ => Entry()).ToList());
+        _vm.Append(Enumerable.Range(0, _vm.Capacity + 10).Select(_ => Entry()).ToList());
 
-        Assert.Equal(RuntimeLogViewModel.Capacity, _vm.TotalCount);
-        Assert.Equal(RuntimeLogViewModel.Capacity, _vm.Entries.Count);
+        Assert.Equal(_vm.Capacity, _vm.TotalCount);
+        Assert.Equal(_vm.Capacity, _vm.Entries.Count);
         Assert.Equal("m11", _vm.Entries[0].Message);
     }
 
@@ -89,7 +89,7 @@ public sealed class RuntimeLogViewModelTests : IDisposable
         // 分多批到达：第一批全部是告警，之后用普通日志把它们挤出容量
         _vm.Append(Enumerable.Range(0, 5).Select(_ => Entry(LogLevel.Warning)).ToList());
         for (var i = 0; i < 4; i++)
-            _vm.Append(Enumerable.Range(0, RuntimeLogViewModel.Capacity / 4).Select(_ => Entry()).ToList());
+            _vm.Append(Enumerable.Range(0, _vm.Capacity / 4).Select(_ => Entry()).ToList());
         _vm.Append([Entry(LogLevel.Warning, "latest-warning")]);
 
         Assert.Equal(["latest-warning"], Shown());
@@ -137,7 +137,7 @@ public sealed class RuntimeLogViewModelTests : IDisposable
     [Fact]
     public void Attach_ShowsRecentSnapshot_AndRejectsSecondAttach()
     {
-        var feed = new FakeFeed([Entry(message: "startup-1"), Entry(message: "startup-2")]);
+        var feed = new FakeLogFeed([Entry(message: "startup-1"), Entry(message: "startup-2")]);
 
         _vm.Attach(feed, @"C:\logs");
 
@@ -149,7 +149,7 @@ public sealed class RuntimeLogViewModelTests : IDisposable
     [Fact]
     public void Dispose_Unsubscribes()
     {
-        var feed = new FakeFeed([]);
+        var feed = new FakeLogFeed([]);
         _vm.Attach(feed, @"C:\logs");
 
         _vm.Dispose();
@@ -169,16 +169,33 @@ public sealed class RuntimeLogViewModelTests : IDisposable
         Assert.EndsWith($"msg{Environment.NewLine}stack", item.DetailText);
     }
 
-    private sealed class FakeFeed(IReadOnlyList<LogEntry> recent) : ILogFeed
+    // ==================== 主控台最近日志所用的配置 ====================
+
+    [Fact]
+    public void CustomCapacityAndLevel_AreApplied()
     {
-        private readonly EventBroadcaster<LogEntry> _broadcaster = new(16);
+        using var recent = new RuntimeLogViewModel(capacity: 3, LogLevel.Information);
 
-        public int SubscriberCount => _broadcaster.SubscriberCount;
+        recent.Append([Entry(LogLevel.Debug, "debug"), Entry(message: "a"), Entry(message: "b"), Entry(message: "c"), Entry(message: "d")]);
 
-        public EventSubscription<LogEntry> Subscribe(out IReadOnlyList<LogEntry> snapshot)
-        {
-            snapshot = recent;
-            return _broadcaster.Subscribe();
-        }
+        Assert.Equal(3, recent.Capacity);
+        Assert.Equal(LogLevel.Information, recent.SelectedLevel.Minimum);
+        Assert.Equal(["b", "c", "d"], recent.Entries.Select(e => e.Message));
+    }
+
+    [Fact]
+    public void Constructor_RejectsLevelWithoutOption()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RuntimeLogViewModel(10, LogLevel.Critical));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RuntimeLogViewModel(0, LogLevel.Information));
+    }
+
+    [Fact]
+    public void Item_ShortTime_DropsMilliseconds()
+    {
+        var item = new LogEntryItem(new LogEntry(new DateTimeOffset(2026, 11, 18, 9, 5, 7, 123, TimeSpan.Zero), LogLevel.Information, "", "m", null));
+
+        Assert.Equal(item.Entry.Timestamp.ToLocalTime().ToString("HH:mm:ss"), item.ShortTimeText);
+        Assert.EndsWith(".123", item.TimeText);
     }
 }
