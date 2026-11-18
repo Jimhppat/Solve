@@ -21,6 +21,9 @@
 
     <Window.DataTemplates>
         <!-- 页面路由 DataTemplate 注册：根据 CurrentPage 自动呈现对应独立视图 -->
+        <DataTemplate DataType="vm:MasterConsoleViewModel">
+            <views:MasterConsoleView />
+        </DataTemplate>
         <DataTemplate DataType="vm:BusConsoleViewModel">
             <views:BusConsoleView />
         </DataTemplate>
@@ -221,6 +224,12 @@
                             </Grid>
 
                             <ListBox Classes="nav" SelectedIndex="{Binding SelectedNavIndex}" Background="Transparent">
+                                <ListBoxItem ToolTip.Tip="主控台">
+                                    <Grid ColumnDefinitions="40,*">
+                                        <PathIcon Data="{DynamicResource SemiIconHome}" />
+                                        <TextBlock Grid.Column="1" Text="主控台" />
+                                    </Grid>
+                                </ListBoxItem>
                                 <ListBoxItem ToolTip.Tip="总线监控">
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconLink}" />

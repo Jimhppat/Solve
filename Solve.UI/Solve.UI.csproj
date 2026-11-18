@@ -28,6 +28,10 @@
         <DependentUpon>BusConsoleView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\MasterConsoleView.axaml.cs">
+        <DependentUpon>MasterConsoleView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
     </ItemGroup>
 
 </Project>

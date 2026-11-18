@@ -18,8 +18,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public MainViewModel()
     {
+        MasterConsole = new MasterConsoleViewModel();
         BusConsole = new BusConsoleViewModel();
-        _currentPage = BusConsole;
+        _currentPage = MasterConsole;
 
         // 联动总线控制台的实时统计文本到主窗口底部状态栏
         BusConsole.PropertyChanged += (_, e) =>
@@ -30,6 +31,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         EmergencyStopCommand = new RelayCommand(EmergencyStop);
     }
+
+    /// <summary>
+    /// 主控台专属子页面
+    /// </summary>
+    public MasterConsoleViewModel MasterConsole { get; }
 
     /// <summary>
     /// 总线控制台专属子页面
@@ -86,8 +92,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         CurrentPage = index switch
         {
-            0 => BusConsole,
-            _ => BusConsole // 后续拓扑、诊断、设置页面在此接入对应子 ViewModel
+            0 => MasterConsole,
+            1 => BusConsole,
+            _ => MasterConsole // 后续拓扑、诊断、设置页面在此接入对应子 ViewModel
         };
     }
 
@@ -121,6 +128,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        MasterConsole.Dispose();
         BusConsole.Dispose();
     }
 }
