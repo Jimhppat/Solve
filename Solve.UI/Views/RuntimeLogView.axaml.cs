@@ -10,7 +10,7 @@ namespace Solve.UI.Views;
 
 /// <summary>
 /// 运行日志页。代码后置只做纯视图行为：自动滚动（见 <see cref="LogAutoScroll"/>）、复制到剪贴板、打开日志目录、
-/// 导出时的保存对话框（写入由视图模型经历史日志完成）。
+/// 日期面板的打开与关闭、导出时的保存对话框（写入由视图模型经历史日志完成）。
 /// </summary>
 public partial class RuntimeLogView : UserControl
 {
@@ -40,12 +40,14 @@ public partial class RuntimeLogView : UserControl
         }
     }
 
-    // 展开来源下拉时重新列出日期：日志目录可能新增了当天文件，也可能清理了过期文件
-    private void OnSourcesDropDownOpened(object? sender, EventArgs e)
+    // 打开日期面板：翻到正在查看的月份，并重新列出有日志的日期（日志目录可能新增了当天文件，也可能清理了过期文件）
+    private void OnDateFlyoutOpened(object? sender, EventArgs e)
     {
         if (DataContext is RuntimeLogViewModel vm)
-            _ = vm.RefreshSourcesAsync();
+            _ = vm.OpenDatePickerAsync();
     }
+
+    private void OnDatePicked(object? sender, EventArgs e) => DateButton.Flyout?.Hide();
 
     private async void OnExport(object? sender, RoutedEventArgs e)
     {

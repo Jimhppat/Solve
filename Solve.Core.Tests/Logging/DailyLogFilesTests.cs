@@ -1,3 +1,4 @@
+using Solve.Core.Application.Logging;
 using Solve.Desktop.Logging;
 
 namespace Solve.Core.Tests.Logging;
@@ -96,37 +97,36 @@ public sealed class DailyLogFilesTests : IDisposable
             File_("2026_11_18.log", Today),
         };
 
-        var deleted = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 30, maxTotalBytes: long.MaxValue, protectedPath: null);
+        var deleted = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 30, protectedPath: null);
 
         Assert.Equal(["2026_10_19.log"], deleted.Select(f => Path.GetFileName(f.Path)));
     }
 
     [Fact]
-    public void SelectForDeletion_OverSizeCap_DeletesOldestFirst()
+    public void SelectForDeletion_IgnoresFileSize_OnlyDaysCount()
     {
+        // 保存期内的日志再大也不删：删除只有保存天数这一个条件
+        const long huge = 50L * 1024 * 1024 * 1024;
         var files = new[]
         {
-            File_("2026_11_16.log", new DateOnly(2026, 11, 16)),
-            File_("2026_11_17.log", new DateOnly(2026, 11, 17)),
-            File_("2026_11_18.log", Today),
+            File_("2026_11_16.log", new DateOnly(2026, 11, 16), length: huge),
+            File_("2026_11_17.log", new DateOnly(2026, 11, 17), length: huge),
+            File_("2026_11_18.log", Today, length: huge),
         };
 
-        var deleted = DailyLogFiles.SelectForDeletion(files, Today, 30, maxTotalBytes: 250, protectedPath: null);
-
-        Assert.Equal(["2026_11_16.log"], deleted.Select(f => Path.GetFileName(f.Path)));
+        Assert.Empty(DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 3, protectedPath: null));
     }
 
     [Fact]
     public void SelectForDeletion_NeverDeletesTheFileBeingWritten()
     {
-        var active = File_("2026_11_16.log", new DateOnly(2026, 11, 16));
-        var files = new[] { active, File_("2026_11_17.log", new DateOnly(2026, 11, 17)), File_("2026_11_18.log", Today) };
+        // 跨午夜时前一天的文件可能仍在写入（午夜前产生、午夜后出队的日志）
+        var active = File_("2026_11_17.log", new DateOnly(2026, 11, 17));
+        var files = new[] { File_("2026_11_16.log", new DateOnly(2026, 11, 16)), active, File_("2026_11_18.log", Today) };
 
-        var bySize = DailyLogFiles.SelectForDeletion(files, Today, 30, maxTotalBytes: 250, protectedPath: active.Path);
-        var byAge = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 1, long.MaxValue, protectedPath: active.Path);
+        var deleted = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 1, protectedPath: active.Path);
 
-        Assert.Equal(["2026_11_17.log"], bySize.Select(f => Path.GetFileName(f.Path)));
-        Assert.DoesNotContain(byAge, f => f.Path == active.Path);
+        Assert.Equal(["2026_11_16.log"], deleted.Select(f => Path.GetFileName(f.Path)));
     }
 
     [Fact]
@@ -138,12 +138,80 @@ public sealed class DailyLogFilesTests : IDisposable
         var kept = Touch(DailyLogFiles.FileName(today.AddDays(-29)));
         var unrelated = Touch("notes.log");
 
-        var deleted = DailyLogFiles.Prune(_directory, today, protectedPath: null);
+        var deleted = DailyLogFiles.Prune(_directory, today, retentionDays: 30, protectedPath: null);
 
-        Assert.Equal(2, deleted);
+        // 按日期从旧到新：40 天前的在 35 天前的旧命名文件之前
+        Assert.Equal([expired, expiredLegacy], deleted.Select(f => f.Path));
         Assert.False(File.Exists(expired));
         Assert.False(File.Exists(expiredLegacy));
         Assert.True(File.Exists(kept));
         Assert.True(File.Exists(unrelated));
+    }
+
+    [Fact]
+    public void Prune_UsesTheGivenRetentionDays()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var eightDaysAgo = Touch(DailyLogFiles.FileName(today.AddDays(-8)));
+        var sixDaysAgo = Touch(DailyLogFiles.FileName(today.AddDays(-6)));
+
+        var deleted = DailyLogFiles.Prune(_directory, today, retentionDays: 7, protectedPath: null);
+
+        Assert.Equal([eightDaysAgo], deleted.Select(f => f.Path));
+        Assert.True(File.Exists(sixDaysAgo));
+    }
+
+    [Fact]
+    public void Prune_MissingDirectory_DeletesNothing()
+    {
+        Assert.Empty(DailyLogFiles.Prune(Path.Combine(_directory, "absent"), Today, retentionDays: 1, protectedPath: null));
+    }
+
+    // ==================== 分卷序号与汇总 ====================
+
+    [Theory]
+    [InlineData("2026_11_18_999.log", 999)]
+    [InlineData("2026_11_18_1000.log", 1000)]
+    [InlineData("2026_11_18_123456789.log", 123456789)]
+    [InlineData("solve-20261118_1000.log", 1000)]
+    public void TryParse_RecognizesFourDigitAndLongerSequences(string name, int sequence)
+    {
+        // 一天超过 999 卷时 Serilog 写出 4 位序号：不识别就既不能查看、也不会被清理
+        Assert.True(DailyLogFiles.TryParse(name, 10, out var file));
+        Assert.Equal(sequence, file.Sequence);
+    }
+
+    [Theory]
+    [InlineData("2026_11_18_01.log")]
+    [InlineData("2026_11_18_1234567890.log")]
+    public void TryParse_RejectsTooShortOrTooLongSequences(string name)
+    {
+        Assert.False(DailyLogFiles.TryParse(name, 10, out _));
+    }
+
+    [Fact]
+    public void List_OrdersFourDigitSequencesAfterThreeDigitOnes()
+    {
+        Touch("2026_11_18_1000.log");
+        Touch("2026_11_18_999.log");
+        Touch("2026_11_18.log");
+
+        var names = DailyLogFiles.List(_directory).Select(f => Path.GetFileName(f.Path));
+
+        Assert.Equal(["2026_11_18.log", "2026_11_18_999.log", "2026_11_18_1000.log"], names);
+    }
+
+    [Fact]
+    public void Summarize_CountsBytesAndDateRange()
+    {
+        var files = new[]
+        {
+            File_("2026_11_16.log", new DateOnly(2026, 11, 16), length: 100),
+            File_("2026_11_16_001.log", new DateOnly(2026, 11, 16), length: 50, sequence: 1),
+            File_("2026_11_14.log", new DateOnly(2026, 11, 14), length: 10),
+        };
+
+        Assert.Equal(new LogPrunePreview(3, 160, new DateOnly(2026, 11, 14), new DateOnly(2026, 11, 16)), DailyLogFiles.Summarize(files));
+        Assert.Equal(LogPrunePreview.None, DailyLogFiles.Summarize([]));
     }
 }

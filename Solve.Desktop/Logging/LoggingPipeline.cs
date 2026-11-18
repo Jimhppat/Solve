@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -18,8 +19,9 @@ namespace Solve.Desktop.Logging;
 /// 黑匣子日志管线：Serilog 根日志器、级别配置文件监视与 Serilog 自诊断输出，统一创建、统一释放。
 /// </summary>
 /// <remarks>
-/// <para>怎么写（异步队列、队列满即丢弃、滚动与保留）固定在代码中，级别配置文件只能调整级别：
-/// 避免现场改配置让日志反过来阻塞控制路径。目录可在设置页切换（<see cref="SwitchDirectory"/>），切换前先校验可写。</para>
+/// <para>怎么写（异步队列、队列满即丢弃、按天分文件）固定在代码中，级别配置文件只能调整级别：
+/// 避免现场改配置让日志反过来阻塞控制路径。目录、保存天数与单个文件上限可在设置页修改
+/// （<see cref="SwitchDirectory"/>、<see cref="ApplyRetention"/>），取值由 <see cref="LogRetentionPolicy"/> 限定在安全范围内。</para>
 /// <para>日志必须能启动：配置文件缺失、JSON 损坏或级别值非法时退回代码默认级别，原因见 <see cref="SettingsError"/>。</para>
 /// </remarks>
 public sealed class LoggingPipeline : IDisposable
@@ -40,11 +42,6 @@ public sealed class LoggingPipeline : IDisposable
     internal const string OutputTemplate =
         "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {SourceContext}: {Message:l}{NewLine}{Exception}";
 
-    /// <summary>
-    /// 单个日志文件的大小上限，超出后同一天续写到 _001、_002…
-    /// </summary>
-    public const long FileSizeLimitBytes = 50L * 1024 * 1024;
-
     private const int QueueCapacity = 10_000;
     private const int SelfLogLineLimit = 1_000;
 
@@ -53,6 +50,7 @@ public sealed class LoggingPipeline : IDisposable
     private readonly LogFeedSink _feed;
     private readonly SwitchableFileSink _file;
     private readonly SelfLogFile _selfLog;
+    private readonly RetentionState _retention;
     private readonly Lock _switchGate = new();
     private string _logDirectory;
     private int _disposed;
@@ -64,6 +62,7 @@ public sealed class LoggingPipeline : IDisposable
         LogFeedSink feed,
         SwitchableFileSink file,
         SelfLogFile selfLog,
+        RetentionState retention,
         string logDirectory,
         string? settingsError)
     {
@@ -73,6 +72,7 @@ public sealed class LoggingPipeline : IDisposable
         _feed = feed;
         _file = file;
         _selfLog = selfLog;
+        _retention = retention;
         _logDirectory = logDirectory;
         SettingsError = settingsError;
     }
@@ -103,9 +103,15 @@ public sealed class LoggingPipeline : IDisposable
     public string LogDirectory => Volatile.Read(ref _logDirectory);
 
     /// <summary>
+    /// 当前生效的保存天数与单个文件上限
+    /// </summary>
+    public LogRetentionPolicy Retention => _retention.Policy;
+
+    /// <summary>
     /// 创建日志管线。<paramref name="settingsPath"/> 为 null 时不读取配置文件，使用默认级别。
     /// </summary>
-    public static LoggingPipeline Create(string logDirectory, string? settingsPath)
+    /// <param name="retention">保存天数与单个文件上限；为 null 时使用默认值</param>
+    public static LoggingPipeline Create(string logDirectory, string? settingsPath, LogRetentionPolicy? retention = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
 
@@ -113,8 +119,9 @@ public sealed class LoggingPipeline : IDisposable
         var selfLog = SelfLogFile.Enable(Path.Combine(logDirectory, SelfLogFileName));
 
         var feed = new LogFeedSink();
+        var state = new RetentionState(retention ?? LogRetentionPolicy.Default);
         // 文件输出在构建根日志器之前创建：下面按配置构建失败、退回默认级别重建时沿用同一个
-        var file = new SwitchableFileSink(logDirectory, CreateFileLogger);
+        var file = new SwitchableFileSink(logDirectory, directory => CreateFileLogger(directory, state));
         var settings = LoadSettings(settingsPath, out var settingsError);
         if (settings is not null && settingsError is null)
         {
@@ -122,7 +129,7 @@ public sealed class LoggingPipeline : IDisposable
             try
             {
                 return new LoggingPipeline(
-                    Build(settings, monitor, feed, file), settings, monitor, feed, file, selfLog, logDirectory, null);
+                    Build(settings, monitor, feed, file), settings, monitor, feed, file, selfLog, state, logDirectory, null);
             }
             catch (Exception ex)
             {
@@ -135,7 +142,7 @@ public sealed class LoggingPipeline : IDisposable
         (settings as IDisposable)?.Dispose();
         var fallbackMonitor = new DroppedEventMonitor();
         return new LoggingPipeline(
-            Build(null, fallbackMonitor, feed, file), null, fallbackMonitor, feed, file, selfLog, logDirectory, settingsError);
+            Build(null, fallbackMonitor, feed, file), null, fallbackMonitor, feed, file, selfLog, state, logDirectory, settingsError);
     }
 
     /// <summary>
@@ -155,6 +162,52 @@ public sealed class LoggingPipeline : IDisposable
             Volatile.Write(ref _logDirectory, directory);
         }
     }
+
+    /// <summary>
+    /// 之后按 <paramref name="policy"/> 分卷与清理。单个文件上限变化时重新打开文件输出，新上限从下一条日志开始生效，
+    /// 已有文件不动（当前文件已超过新上限时，下一条写进新的分卷）。不立即清理，见 <see cref="PruneNow"/>。任何线程可调用。
+    /// </summary>
+    public void ApplyRetention(LogRetentionPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+        lock (_switchGate)
+        {
+            var previous = _retention.Policy;
+            _retention.Policy = policy;
+            if (previous.FileSizeLimitBytes != policy.FileSizeLimitBytes)
+                _file.Reopen();
+        }
+    }
+
+    /// <summary>
+    /// 按 <paramref name="policy"/> 列出 <paramref name="directory"/> 中会被删除的日志文件，不做任何修改。
+    /// 正在写入的文件不会列入。目录不存在时为空。在调用线程上做磁盘 I/O，不要在 UI 线程上调用。
+    /// </summary>
+    /// <exception cref="IOException">列举目录失败</exception>
+    /// <exception cref="UnauthorizedAccessException">无权读取目录</exception>
+    public IReadOnlyList<DailyLogFile> PreviewPrune(string directory, LogRetentionPolicy policy)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ArgumentNullException.ThrowIfNull(policy);
+
+        return DailyLogFiles.SelectForDeletion(
+            DailyLogFiles.List(directory), Today(), policy.RetentionDays, _retention.ActiveFilePath);
+    }
+
+    /// <summary>
+    /// 立即按当前的保存天数清理当前目录中过期的日志，正在写入的文件不删。不抛出：删除失败只记自诊断。
+    /// 在调用线程上做磁盘 I/O，不要在 UI 线程上调用。
+    /// </summary>
+    /// <returns>实际删除的文件</returns>
+    public IReadOnlyList<DailyLogFile> PruneNow()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        return DailyLogFiles.Prune(LogDirectory, Today(), _retention.Policy.RetentionDays, _retention.ActiveFilePath);
+    }
+
+    private static DateOnly Today() => DateOnly.FromDateTime(DateTime.Now);
 
     /// <summary>
     /// 刷写异步队列并关闭日志文件。可重复调用，任何线程可调用。
@@ -188,12 +241,14 @@ public sealed class LoggingPipeline : IDisposable
     /// <remarks>
     /// <para>按每条日志自身的本地日期分文件（2026_11_18.log）：午夜前产生、午夜后才出队的日志仍写进前一天。
     /// 同时最多保持两天的文件打开，跨午夜时新旧日期交替出现不会反复开关文件，更早的立即关闭。</para>
-    /// <para>保留期由 <see cref="RetentionHooks"/> 按天数与总大小清理，不用 Serilog 自带的按文件数保留（它只认同一天的分卷）。
+    /// <para>保留期由 <see cref="RetentionHooks"/> 只按保存天数清理，不用 Serilog 自带的按文件数保留（它只认同一天的分卷）。
     /// 清理只管这个目录：切换目录后旧目录中的日志原地保留、不再清理（与设置页的说明一致）。</para>
+    /// <para>单个文件上限在创建时取定；运行中修改上限时由 <see cref="ApplyRetention"/> 重新创建。</para>
     /// </remarks>
-    private static Logger CreateFileLogger(string logDirectory)
+    private static Logger CreateFileLogger(string logDirectory, RetentionState state)
     {
-        var retention = new RetentionHooks(logDirectory);
+        var hooks = new RetentionHooks(logDirectory, state);
+        var fileSizeLimitBytes = state.Policy.FileSizeLimitBytes;
         return new LoggerConfiguration()
             .MinimumLevel.Verbose()
             .WriteTo.Map(
@@ -201,10 +256,10 @@ public sealed class LoggingPipeline : IDisposable
                 (date, dated) => dated.File(
                     path: DailyLogFiles.PathFor(logDirectory, date),
                     outputTemplate: OutputTemplate,
-                    fileSizeLimitBytes: FileSizeLimitBytes,
+                    fileSizeLimitBytes: fileSizeLimitBytes,
                     rollOnFileSizeLimit: true,
                     retainedFileCountLimit: null,
-                    hooks: retention),
+                    hooks: hooks),
                 2)
             .CreateLogger();
     }
@@ -331,14 +386,39 @@ public sealed class LoggingPipeline : IDisposable
     }
 
     /// <summary>
-    /// 每次打开日志文件（启动、跨天、单文件超限续写）时清理过期与超限的日志。
+    /// 保留设置与正在写入的文件，在写盘线程（打开文件时清理）与设置页（预览、立即清理）之间共享
+    /// </summary>
+    private sealed class RetentionState(LogRetentionPolicy policy)
+    {
+        private LogRetentionPolicy _policy = policy;
+        private string? _activeFilePath;
+
+        public LogRetentionPolicy Policy
+        {
+            get => Volatile.Read(ref _policy);
+            set => Volatile.Write(ref _policy, value);
+        }
+
+        /// <summary>
+        /// 最近打开的日志文件；清理时永不删除它。尚未写过日志时为 null
+        /// </summary>
+        public string? ActiveFilePath
+        {
+            get => Volatile.Read(ref _activeFilePath);
+            set => Volatile.Write(ref _activeFilePath, value);
+        }
+    }
+
+    /// <summary>
+    /// 每次打开日志文件（启动、跨天、单文件超限续写）时按当前的保存天数清理过期的日志。
     /// 在异步队列的后台线程上执行，不占用业务线程；清理失败只记自诊断，不影响写入。
     /// </summary>
-    private sealed class RetentionHooks(string directory) : FileLifecycleHooks
+    private sealed class RetentionHooks(string directory, RetentionState state) : FileLifecycleHooks
     {
         public override Stream OnFileOpened(string path, Stream underlyingStream, Encoding encoding)
         {
-            DailyLogFiles.Prune(directory, DateOnly.FromDateTime(DateTime.Now), protectedPath: path);
+            state.ActiveFilePath = path;
+            DailyLogFiles.Prune(directory, Today(), state.Policy.RetentionDays, protectedPath: path);
             return underlyingStream;
         }
     }

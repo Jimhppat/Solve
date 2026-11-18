@@ -1,22 +1,58 @@
 using System;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Solve.Core.Application.Logging;
+using Solve.Core.Domain.Common;
 
 namespace Solve.UI.ViewModels;
 
 /// <summary>
-/// 系统设置页。页面上的修改只在点「保存」时统一生效；目前包含运行日志的存储路径。
+/// 设置页保存流程的状态
 /// </summary>
+public enum SettingsSaveState
+{
+    /// <summary>
+    /// 可以保存
+    /// </summary>
+    Idle,
+
+    /// <summary>
+    /// 正在检查按新设置会删除哪些日志文件
+    /// </summary>
+    Checking,
+
+    /// <summary>
+    /// 新设置会删除日志文件，等待确认；确认前什么都没有改
+    /// </summary>
+    AwaitingConfirmation,
+
+    /// <summary>
+    /// 正在保存并生效
+    /// </summary>
+    Saving,
+}
+
+/// <summary>
+/// 系统设置页。页面上的修改只在点「保存」时统一生效；目前包含运行日志的存储路径、保存天数与单个文件上限。
+/// </summary>
+/// <remarks>
+/// <para>保存前先检查新设置会删除哪些日志文件：有要删的就停在 <see cref="SettingsSaveState.AwaitingConfirmation"/>，
+/// 页面上列出个数、日期范围与大小，确认后才保存；取消或改动输入则什么都不改。黑匣子日志删除后无法恢复。</para>
+/// <para>只能在 UI 线程上使用；磁盘 I/O 由设置服务在线程池上完成。</para>
+/// </remarks>
 public sealed class SettingsViewModel : ViewModelBase
 {
     private readonly Action<string>? _onLogDirectoryChanged;
-    private ILogDirectorySettings? _logDirectory;
+    private ILogSettings? _settings;
     private string? _currentLogDirectory;
     private string _logDirectoryInput = string.Empty;
+    private decimal? _retentionDaysInput = LogRetentionPolicy.DefaultRetentionDays;
+    private decimal? _fileSizeLimitInput = LogRetentionPolicy.DefaultFileSizeLimitMegabytes;
     private string? _saveMessage;
     private bool _isSaveError;
-    private bool _isSaving;
+    private SettingsSaveState _state = SettingsSaveState.Idle;
+    private PendingSave? _pending;
     private bool _startupFallbackResolved;
 
     /// <summary>
@@ -26,11 +62,13 @@ public sealed class SettingsViewModel : ViewModelBase
     {
     }
 
-    /// <param name="onLogDirectoryChanged">日志目录切换成功后在 UI 线程上调用，由主窗口宿主同步到日志页的「打开日志目录」</param>
+    /// <param name="onLogDirectoryChanged">保存成功后在 UI 线程上调用，由主窗口宿主同步到日志页的「打开日志目录」</param>
     public SettingsViewModel(Action<string>? onLogDirectoryChanged)
     {
         _onLogDirectoryChanged = onLogDirectoryChanged;
-        SaveCommand = new AsyncRelayCommand(SaveAsync, () => _logDirectory is not null && !_isSaving);
+        SaveCommand = new AsyncRelayCommand(SaveAsync, () => _settings is not null && _state == SettingsSaveState.Idle);
+        ConfirmDeletionCommand = new AsyncRelayCommand(ConfirmDeletionAsync, () => _state == SettingsSaveState.AwaitingConfirmation);
+        CancelDeletionCommand = new RelayCommand(CancelDeletion, () => _state == SettingsSaveState.AwaitingConfirmation);
     }
 
     public string PageTitle => "系统设置";
@@ -39,6 +77,25 @@ public sealed class SettingsViewModel : ViewModelBase
     /// 保存页面上的全部设置
     /// </summary>
     public AsyncRelayCommand SaveCommand { get; }
+
+    /// <summary>
+    /// 确认删除列出的日志文件并保存
+    /// </summary>
+    public AsyncRelayCommand ConfirmDeletionCommand { get; }
+
+    /// <summary>
+    /// 放弃这次保存，什么都不改
+    /// </summary>
+    public RelayCommand CancelDeletionCommand { get; }
+
+    public SettingsSaveState State => _state;
+
+    public bool IsAwaitingConfirmation => _state == SettingsSaveState.AwaitingConfirmation;
+
+    /// <summary>
+    /// 等待确认时的说明：会删除多少个文件、哪些日期、多大
+    /// </summary>
+    public string? PendingDeletionText => _pending is { } pending ? DescribeDeletion(pending.Preview) : null;
 
     /// <summary>
     /// 最近一次保存的结果说明
@@ -61,12 +118,12 @@ public sealed class SettingsViewModel : ViewModelBase
         private set => SetProperty(ref _isSaveError, value);
     }
 
-    // ==================== 运行日志存储路径 ====================
+    // ==================== 运行日志 ====================
 
     /// <summary>
-    /// 已接入日志目录设置（设计器中为 false）
+    /// 已接入日志设置（设计器中为 false）
     /// </summary>
-    public bool IsLogDirectoryAvailable => _logDirectory is not null;
+    public bool IsLogSettingsAvailable => _settings is not null;
 
     /// <summary>
     /// 当前正在写入的日志目录
@@ -83,32 +140,70 @@ public sealed class SettingsViewModel : ViewModelBase
     public string LogDirectoryInput
     {
         get => _logDirectoryInput;
-        set => SetProperty(ref _logDirectoryInput, value ?? string.Empty);
+        set
+        {
+            if (SetProperty(ref _logDirectoryInput, value ?? string.Empty))
+                OnInputChanged();
+        }
     }
 
     /// <summary>
-    /// 启动时保存的目录不可用、本次运行改用默认目录的原因
+    /// 输入框中的保存天数（数字输入框的值为 decimal，可能为空），点「保存」后生效
     /// </summary>
-    public string? LogDirectoryStartupFallback => _startupFallbackResolved ? null : _logDirectory?.StartupFallbackReason;
-
-    public bool HasLogDirectoryStartupFallback => LogDirectoryStartupFallback is not null;
+    public decimal? RetentionDaysInput
+    {
+        get => _retentionDaysInput;
+        set
+        {
+            if (SetProperty(ref _retentionDaysInput, value))
+                OnInputChanged();
+        }
+    }
 
     /// <summary>
-    /// 接入日志目录设置。须在 UI 线程上调用，只能调用一次。
+    /// 输入框中的单个文件上限（MB），点「保存」后生效
     /// </summary>
-    public void AttachLogDirectory(ILogDirectorySettings settings)
+    public decimal? FileSizeLimitMegabytesInput
+    {
+        get => _fileSizeLimitInput;
+        set
+        {
+            if (SetProperty(ref _fileSizeLimitInput, value))
+                OnInputChanged();
+        }
+    }
+
+    // 数字输入框的范围，与 LogRetentionPolicy 一致
+    public decimal MinRetentionDays => LogRetentionPolicy.MinRetentionDays;
+
+    public decimal MaxRetentionDays => LogRetentionPolicy.MaxRetentionDays;
+
+    public decimal MinFileSizeLimitMegabytes => LogRetentionPolicy.MinFileSizeLimitMegabytes;
+
+    public decimal MaxFileSizeLimitMegabytes => LogRetentionPolicy.MaxFileSizeLimitMegabytes;
+
+    /// <summary>
+    /// 启动时保存的设置不可用、本次运行改用默认值的原因
+    /// </summary>
+    public string? StartupFallback => _startupFallbackResolved ? null : _settings?.StartupFallbackReason;
+
+    public bool HasStartupFallback => StartupFallback is not null;
+
+    /// <summary>
+    /// 接入日志设置。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachLogSettings(ILogSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        if (_logDirectory is not null)
-            throw new InvalidOperationException("设置页已接入日志目录设置");
+        if (_settings is not null)
+            throw new InvalidOperationException("设置页已接入日志设置");
 
-        _logDirectory = settings;
-        CurrentLogDirectory = settings.CurrentDirectory;
-        LogDirectoryInput = settings.CurrentDirectory;
+        _settings = settings;
+        ShowApplied(settings.CurrentDirectory, settings.Retention);
 
-        OnPropertyChanged(nameof(IsLogDirectoryAvailable));
+        OnPropertyChanged(nameof(IsLogSettingsAvailable));
         RaiseStartupFallbackChanged();
-        SaveCommand.RaiseCanExecuteChanged();
+        RaiseCommandsChanged();
     }
 
     /// <summary>
@@ -123,7 +218,7 @@ public sealed class SettingsViewModel : ViewModelBase
 
     private async Task SaveAsync()
     {
-        if (_logDirectory is not { } settings || _isSaving)
+        if (_settings is not { } settings || _state != SettingsSaveState.Idle)
             return;
 
         // 留空不当作"恢复默认"：误清空输入框后点保存，不应悄悄把日志改写到别处
@@ -134,38 +229,180 @@ public sealed class SettingsViewModel : ViewModelBase
             return;
         }
 
-        _isSaving = true;
-        SaveCommand.RaiseCanExecuteChanged();
+        var retention = ReadRetention();
+        if (retention.IsFailure)
+        {
+            ReportError(retention.Error.Message);
+            return;
+        }
+
+        SetState(SettingsSaveState.Checking);
+        IsSaveError = false;
+        SaveMessage = "正在检查日志文件…";
+
+        Result<LogPrunePreview> preview;
+        try
+        {
+            preview = await settings.PreviewAsync(directory, retention.Value, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 命令在 UI 线程上执行：异常不能逃逸，否则会触发全站安全跳闸
+            preview = Result<LogPrunePreview>.Failure(new Error("LogRetention.PreviewFailed", ex.Message));
+        }
+
+        if (preview.IsFailure)
+        {
+            SetState(SettingsSaveState.Idle);
+            ReportError(preview.Error.Message);
+            return;
+        }
+
+        if (!preview.Value.IsEmpty)
+        {
+            // 什么都还没改：等确认。确认前改动任何输入都会取消这次保存
+            _pending = new PendingSave(directory, retention.Value, preview.Value);
+            SaveMessage = null;
+            SetState(SettingsSaveState.AwaitingConfirmation);
+            return;
+        }
+
+        await CommitAsync(settings, directory, retention.Value);
+    }
+
+    private async Task ConfirmDeletionAsync()
+    {
+        if (_settings is not { } settings || _state != SettingsSaveState.AwaitingConfirmation || _pending is not { } pending)
+            return;
+
+        await CommitAsync(settings, pending.Directory, pending.Retention);
+    }
+
+    private void CancelDeletion()
+    {
+        if (_state != SettingsSaveState.AwaitingConfirmation)
+            return;
+
+        SetState(SettingsSaveState.Idle);
+        IsSaveError = false;
+        SaveMessage = "已取消，设置未保存";
+    }
+
+    private async Task CommitAsync(ILogSettings settings, string directory, LogRetentionPolicy retention)
+    {
+        SetState(SettingsSaveState.Saving);
         IsSaveError = false;
         SaveMessage = "正在保存…";
         try
         {
-            // 服务内部在线程池上做磁盘 I/O；这里的续体回到 UI 线程更新界面。
-            // 路径未变化时服务只重新保存设置、不切换：启动时退回默认目录的情况下，保存即确认改用当前目录
-            var result = await settings.ChangeDirectoryAsync(directory, CancellationToken.None);
+            // 服务内部在线程池上做磁盘 I/O 且不抛出；这里的续体回到 UI 线程更新界面。
+            // 设置未变化时服务只重新保存：启动时退回默认值的情况下，保存即确认改用当前设置
+            var result = await settings.SaveAsync(directory, retention, CancellationToken.None);
             if (result.IsFailure)
             {
                 ReportError(result.Error.Message);
                 return;
             }
 
-            CurrentLogDirectory = result.Value;
-            LogDirectoryInput = result.Value;
+            var saved = result.Value;
+            ShowApplied(saved.Directory, saved.Retention);
             _startupFallbackResolved = true;
             RaiseStartupFallbackChanged();
-            SaveMessage = "设置已保存";
-            _onLogDirectoryChanged?.Invoke(result.Value);
+            SaveMessage = saved.Deleted.IsEmpty
+                ? "设置已保存"
+                : $"设置已保存，已删除 {saved.Deleted.FileCount} 个日志文件";
+            _onLogDirectoryChanged?.Invoke(saved.Directory);
         }
         finally
         {
-            _isSaving = false;
-            SaveCommand.RaiseCanExecuteChanged();
+            SetState(SettingsSaveState.Idle);
         }
+    }
+
+    private Result<LogRetentionPolicy> ReadRetention()
+    {
+        if (_retentionDaysInput is not { } days)
+            return Result<LogRetentionPolicy>.Failure(new Error(LogRetentionErrors.RetentionDaysOutOfRangeCode, "请填写保存天数"));
+        if (_fileSizeLimitInput is not { } megabytes)
+            return Result<LogRetentionPolicy>.Failure(new Error(LogRetentionErrors.FileSizeLimitOutOfRangeCode, "请填写单个文件上限"));
+
+        // 先在 decimal 上判断范围与是否为整数，再转 int：手输的超大数直接转换会溢出
+        if (days != decimal.Truncate(days) || days < MinRetentionDays || days > MaxRetentionDays)
+            return Result<LogRetentionPolicy>.Failure(LogRetentionErrors.RetentionDaysOutOfRange((int)Math.Clamp(days, int.MinValue, int.MaxValue)));
+        if (megabytes != decimal.Truncate(megabytes) || megabytes < MinFileSizeLimitMegabytes || megabytes > MaxFileSizeLimitMegabytes)
+            return Result<LogRetentionPolicy>.Failure(LogRetentionErrors.FileSizeLimitOutOfRange((int)Math.Clamp(megabytes, int.MinValue, int.MaxValue)));
+
+        return LogRetentionPolicy.Create((int)days, (int)megabytes);
+    }
+
+    // 显示已生效的设置。直接写字段：这是程序回填，不算用户改动，不能触发取消确认
+    private void ShowApplied(string directory, LogRetentionPolicy retention)
+    {
+        CurrentLogDirectory = directory;
+        _logDirectoryInput = directory;
+        _retentionDaysInput = retention.RetentionDays;
+        _fileSizeLimitInput = retention.FileSizeLimitMegabytes;
+        OnPropertyChanged(nameof(LogDirectoryInput));
+        OnPropertyChanged(nameof(RetentionDaysInput));
+        OnPropertyChanged(nameof(FileSizeLimitMegabytesInput));
+    }
+
+    // 等待确认时改了输入：确认的内容已不是现在的输入，取消这次保存
+    private void OnInputChanged()
+    {
+        if (_state != SettingsSaveState.AwaitingConfirmation)
+            return;
+
+        SetState(SettingsSaveState.Idle);
+        IsSaveError = false;
+        SaveMessage = "设置有改动，请重新保存";
+    }
+
+    private void SetState(SettingsSaveState state)
+    {
+        if (state != SettingsSaveState.AwaitingConfirmation)
+            _pending = null;
+
+        if (_state == state)
+            return;
+
+        _state = state;
+        OnPropertyChanged(nameof(State));
+        OnPropertyChanged(nameof(IsAwaitingConfirmation));
+        OnPropertyChanged(nameof(PendingDeletionText));
+        RaiseCommandsChanged();
+    }
+
+    private void RaiseCommandsChanged()
+    {
+        SaveCommand.RaiseCanExecuteChanged();
+        ConfirmDeletionCommand.RaiseCanExecuteChanged();
+        CancelDeletionCommand.RaiseCanExecuteChanged();
     }
 
     private void RaiseStartupFallbackChanged()
     {
-        OnPropertyChanged(nameof(LogDirectoryStartupFallback));
-        OnPropertyChanged(nameof(HasLogDirectoryStartupFallback));
+        OnPropertyChanged(nameof(StartupFallback));
+        OnPropertyChanged(nameof(HasStartupFallback));
     }
+
+    private static string DescribeDeletion(LogPrunePreview preview)
+    {
+        var range = preview.OldestDate == preview.NewestDate
+            ? $"{preview.OldestDate:yyyy-MM-dd}"
+            : $"{preview.OldestDate:yyyy-MM-dd} ～ {preview.NewestDate:yyyy-MM-dd}";
+        return $"按新的设置，保存后将立即删除 {preview.FileCount} 个日志文件（{range}，共 {FormatSize(preview.TotalBytes)}），删除后无法恢复。";
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        const double kb = 1024, mb = kb * 1024, gb = mb * 1024;
+        if (bytes >= gb)
+            return (bytes / gb).ToString("0.##", CultureInfo.InvariantCulture) + " GB";
+        if (bytes >= mb)
+            return (bytes / mb).ToString("0.#", CultureInfo.InvariantCulture) + " MB";
+        return Math.Max(1, (long)Math.Ceiling(bytes / kb)).ToString(CultureInfo.InvariantCulture) + " KB";
+    }
+
+    private sealed record PendingSave(string Directory, LogRetentionPolicy Retention, LogPrunePreview Preview);
 }

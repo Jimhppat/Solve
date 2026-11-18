@@ -32,45 +32,162 @@ public sealed class RuntimeLogHistoryTests : IDisposable
 
     private IReadOnlyList<string> Shown() => _vm.Entries.Select(e => e.Message).ToList();
 
-    private LogSourceOption Option(DateOnly date) => _vm.Sources.Single(o => o.Date == date);
+    private static DateOnly Today() => DateOnly.FromDateTime(DateTime.Now);
 
-    // ==================== 来源列表 ====================
+    private static LogSourceOption Option(DateOnly date) => LogSourceOption.ForDate(date, Today());
+
+    private LogCalendarDay CalendarDay(DateOnly date)
+    {
+        _vm.Calendar.ShowMonthOf(date);
+        return _vm.Calendar.Days.Single(d => d.IsInMonth && d.Date == date);
+    }
+
+    // ==================== 月历中的可选日期 ====================
 
     [Fact]
-    public async Task Sources_LiveFirst_ThenDatesNewestFirst()
+    public void Attach_ListsAvailableDates_DaysWithoutLogsAreGray()
     {
-        await _vm.RefreshSourcesAsync();
-
         Assert.True(_vm.CanBrowseHistory);
-        Assert.Equal([null, Tuesday, Monday], _vm.Sources.Select(o => o.Date));
-        Assert.Equal("实时", _vm.Sources[0].Label);
-        Assert.Equal("2026-11-17", _vm.Sources[1].Label);
+        Assert.Equal("实时", _vm.SelectedSource.Label);
+
+        Assert.True(CalendarDay(Monday).HasLog);
+        Assert.True(CalendarDay(Tuesday).CanSelect);
+
+        var sunday = CalendarDay(new DateOnly(2026, 11, 15));
+        Assert.False(sunday.HasLog);
+        Assert.False(sunday.CanSelect);
     }
 
     [Fact]
-    public async Task Sources_MarkToday()
+    public async Task SelectingToday_LabelsItAsToday()
     {
-        var today = DateOnly.FromDateTime(DateTime.Now);
+        var today = Today();
         _archive.AddDay(today, [Entry("today")]);
+        await _vm.RefreshAvailableDatesAsync();
 
-        await _vm.RefreshSourcesAsync();
+        await _vm.SelectDateAsync(today);
 
-        Assert.Equal($"{today:yyyy-MM-dd}（今天）", Option(today).Label);
+        Assert.Equal($"{today:yyyy-MM-dd}（今天）", _vm.SelectedSource.Label);
+        Assert.True(CalendarDay(today).IsToday);
+        Assert.True(CalendarDay(today).IsSelected);
+    }
+
+    [Fact]
+    public async Task SelectDate_WithLog_ShowsThatDay_AndMarksItInTheCalendar()
+    {
+        await _vm.SelectDateAsync(Monday);
+
+        Assert.Equal(Monday, _vm.SelectedSource.Date);
+        Assert.Equal("2026-11-16", _vm.SelectedSource.Label);
+        Assert.Equal(["mon-info", "mon-warn"], Shown());
+        Assert.True(CalendarDay(Monday).IsSelected);
+        Assert.False(CalendarDay(Tuesday).IsSelected);
+    }
+
+    [Fact]
+    public async Task SelectDate_WithoutLog_IsRejected_AndNothingIsRead()
+    {
+        _vm.Append([Entry("live-1")]);
+
+        await _vm.SelectDateAsync(new DateOnly(2026, 11, 15));
+
+        Assert.False(_vm.CanSelectDate(new DateOnly(2026, 11, 15)));
+        Assert.True(_vm.IsLive);
+        Assert.Null(_vm.StatusText);
+        Assert.Equal(CancellationToken.None, _archive.LastReadToken);
+        Assert.Equal(["live-1"], Shown());
+    }
+
+    [Fact]
+    public async Task SelectDate_SameDayAgain_DoesNotReload()
+    {
+        await _vm.SelectDateAsync(Monday);
+        var firstRead = _archive.LastReadToken;
+
+        await _vm.SelectDateAsync(Monday);
+
+        // 重新读取会换一个新的取消令牌
+        Assert.Equal(firstRead, _archive.LastReadToken);
+        Assert.False(_vm.IsLoading);
+        Assert.Equal(["mon-info", "mon-warn"], Shown());
     }
 
     [Fact]
     public async Task Refresh_KeepsViewedDate_EvenIfItWasJustDeleted()
     {
-        await _vm.SelectSourceAsync(Option(Monday));
+        await _vm.SelectDateAsync(Monday);
         _archive.Days.Remove(Monday);
         _archive.AddDay(new DateOnly(2026, 11, 18), [Entry("new-day")]);
 
-        await _vm.RefreshSourcesAsync();
+        await _vm.RefreshAvailableDatesAsync();
 
         Assert.Equal(Monday, _vm.SelectedSource.Date);
-        Assert.Contains(_vm.Sources, o => o.Date == Monday);
-        Assert.Contains(_vm.Sources, o => o.Date == new DateOnly(2026, 11, 18));
         Assert.Equal(["mon-info", "mon-warn"], Shown());
+
+        // 已被清理但仍是正在查看的那天：保持选中、可点（不会重新读取），提示文件已不存在
+        var monday = CalendarDay(Monday);
+        Assert.False(monday.HasLog);
+        Assert.True(monday.IsSelected);
+        Assert.True(monday.CanSelect);
+        Assert.Contains("已被清理", monday.ToolTip);
+        Assert.True(CalendarDay(new DateOnly(2026, 11, 18)).HasLog);
+    }
+
+    [Fact]
+    public async Task OpenDatePicker_ShowsMonthOfViewedDate_OrThisMonthWhenLive()
+    {
+        _archive.AddDay(new DateOnly(2026, 10, 20), [Entry("october")]);
+        await _vm.RefreshAvailableDatesAsync();
+
+        await _vm.SelectDateAsync(new DateOnly(2026, 10, 20));
+        _vm.Calendar.ShowMonth(2026, 11);
+        await _vm.OpenDatePickerAsync();
+        Assert.Equal((2026, 10), (_vm.Calendar.DisplayYear, _vm.Calendar.DisplayMonth));
+
+        await _vm.ShowLiveAsync();
+        await _vm.OpenDatePickerAsync();
+        Assert.Equal((Today().Year, Today().Month), (_vm.Calendar.DisplayYear, _vm.Calendar.DisplayMonth));
+    }
+
+    [Fact]
+    public async Task OpenDatePicker_RelistsDates()
+    {
+        var added = new DateOnly(2026, 11, 10);
+        Assert.False(_vm.CanSelectDate(added));
+
+        _archive.AddDay(added, [Entry("added")]);
+        await _vm.OpenDatePickerAsync();
+
+        Assert.True(_vm.CanSelectDate(added));
+    }
+
+    [Fact]
+    public async Task ShowToday_OnlyWhenTodayHasALogFile()
+    {
+        await _vm.ShowTodayAsync();
+        Assert.False(_vm.Calendar.TodayHasLog);
+        Assert.True(_vm.IsLive);
+
+        _archive.AddDay(Today(), [Entry("today-file")]);
+        await _vm.RefreshAvailableDatesAsync();
+        await _vm.ShowTodayAsync();
+
+        Assert.True(_vm.Calendar.TodayHasLog);
+        Assert.Equal(Today(), _vm.SelectedSource.Date);
+        Assert.Equal(["today-file"], Shown());
+    }
+
+    [Fact]
+    public async Task ShowLive_WhenAlreadyLive_KeepsStatus()
+    {
+        using var destination = new MemoryStream();
+        await _vm.ExportAsync(destination, "x.log");
+        var status = _vm.StatusText;
+
+        await _vm.ShowLiveAsync();
+
+        Assert.NotNull(status);
+        Assert.Equal(status, _vm.StatusText);
     }
 
     [Fact]
@@ -81,7 +198,8 @@ public sealed class RuntimeLogHistoryTests : IDisposable
 
         Assert.False(recent.CanBrowseHistory);
         Assert.False(recent.CanExport);
-        Assert.Equal([LogSourceOption.Live], recent.Sources);
+        Assert.False(recent.CanSelectDate(Monday));
+        Assert.True(recent.IsLive);
     }
 
     // ==================== 查看历史 ====================
@@ -225,7 +343,9 @@ public sealed class RuntimeLogHistoryTests : IDisposable
         Assert.True(_vm.IsLive);
         Assert.Equal(@"D:\new-logs", _vm.LogDirectory);
         Assert.Equal("日志目录已切换，按日期查看改为读取新目录", _vm.StatusText);
-        Assert.Equal([null, new DateOnly(2026, 11, 18)], _vm.Sources.Select(o => o.Date));
+        Assert.False(_vm.CanSelectDate(Monday));
+        Assert.True(_vm.CanSelectDate(new DateOnly(2026, 11, 18)));
+        Assert.False(CalendarDay(Monday).IsSelected);
     }
 
     [Fact]

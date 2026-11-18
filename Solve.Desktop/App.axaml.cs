@@ -57,7 +57,7 @@ public partial class App : Application
                 // 日志管线在 UI 之前就已创建：先接入日志页与主控台最近日志，启动过程中的日志也能看到
                 // 目录取管线当前的实际目录（启动时设置的目录不可用会退回默认目录）；历史日志只接给运行日志页
                 vm.AttachLogFeed(host.Logging.Feed, host.Logging.LogDirectory, host.LogArchive);
-                vm.AttachLogDirectorySettings(host.LogDirectorySettings);
+                vm.AttachLogSettings(host.LogSettings);
 
                 _ = Task.Run(async () =>
                 {

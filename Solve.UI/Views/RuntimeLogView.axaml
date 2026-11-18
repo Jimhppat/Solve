@@ -66,13 +66,23 @@
                 </WrapPanel>
 
                 <WrapPanel ItemSpacing="8" LineSpacing="8">
-                    <!-- 来源：实时，或有日志的日期（展开时重新列出）。查看历史期间实时日志照常在后台累积 -->
-                    <ComboBox Width="170"
-                              IsVisible="{Binding CanBrowseHistory}"
-                              ItemsSource="{Binding Sources}"
-                              SelectedItem="{Binding SelectedSource}"
-                              DropDownOpened="OnSourcesDropDownOpened"
-                              ToolTip.Tip="查看实时日志，或某一天的历史日志" />
+                    <!-- 来源：实时，或在月历中按年、月选某一天（打开时重新列出有日志的日期，没有日志的置灰）。
+                         查看历史期间实时日志照常在后台累积 -->
+                    <DropDownButton x:Name="DateButton"
+                                    Width="190"
+                                    HorizontalContentAlignment="Left"
+                                    IsVisible="{Binding CanBrowseHistory}"
+                                    ToolTip.Tip="查看实时日志，或按日期查看历史日志（灰色日期没有日志）">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <PathIcon Data="{DynamicResource SemiIconCalendar}" Width="12" Height="12" />
+                            <TextBlock Text="{Binding SelectedSource.Label}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedLeft" Opened="OnDateFlyoutOpened">
+                                <views:LogDatePanel Picked="OnDatePicked" />
+                            </Flyout>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
                     <!-- 级别多选：浮层里五类各自勾选，按钮上显示简短说明，悬停看已选全部级别 -->
                     <DropDownButton Width="120"
                                     HorizontalContentAlignment="Left"

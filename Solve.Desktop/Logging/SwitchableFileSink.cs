@@ -17,6 +17,7 @@ internal sealed class SwitchableFileSink : ILogEventSink, IDisposable
     private readonly Func<string, Logger> _createFileLogger;
     private readonly Lock _gate = new();
     private Logger _current;
+    private string _directory;
     private bool _disposed;
 
     /// <param name="directory">初始目录</param>
@@ -24,6 +25,7 @@ internal sealed class SwitchableFileSink : ILogEventSink, IDisposable
     public SwitchableFileSink(string directory, Func<string, Logger> createFileLogger)
     {
         _createFileLogger = createFileLogger ?? throw new ArgumentNullException(nameof(createFileLogger));
+        _directory = directory;
         _current = createFileLogger(directory);
     }
 
@@ -54,10 +56,31 @@ internal sealed class SwitchableFileSink : ILogEventSink, IDisposable
 
             previous = _current;
             _current = next;
+            _directory = directory;
         }
 
         // 锁外关闭旧文件：交换之后 Emit 不会再用到它，刷写也不阻塞后台写盘线程
         previous.Dispose();
+    }
+
+    /// <summary>
+    /// 在同一目录重新创建文件输出（单个文件上限等创建时取定的参数变化后）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="SwitchTo"/> 不同，旧文件必须在锁内先关闭：新旧输出写的是同一个文件，旧句柄未释放时新输出打不开它，
+    /// Serilog 会改写到下一个分卷，平白多出一个文件。关闭期间后台写盘线程短暂等待，业务线程不受影响（只入队）。
+    /// </remarks>
+    public void Reopen()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            // 先建后关：创建失败时继续用旧输出，不会留下一个已关闭的输出（创建本身不打开文件，不会与旧句柄冲突）
+            var next = _createFileLogger(_directory);
+            _current.Dispose();
+            _current = next;
+        }
     }
 
     /// <summary>
