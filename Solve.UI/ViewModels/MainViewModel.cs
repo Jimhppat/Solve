@@ -130,9 +130,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 接入日志目录设置（设置页）。须在 UI 线程上调用，只能调用一次。
+    /// 接入日志设置（设置页：存储路径、保存天数、单个文件上限）。须在 UI 线程上调用，只能调用一次。
     /// </summary>
-    public void AttachLogDirectorySettings(ILogDirectorySettings settings) => Settings.AttachLogDirectory(settings);
+    public void AttachLogSettings(ILogSettings settings) => Settings.AttachLogSettings(settings);
 
     // 设置页切换目录后，日志页与主控台的「打开日志目录」随之指向新目录；日志页的按日期查看改读新目录
     private void OnLogDirectoryChanged(string logDirectory)

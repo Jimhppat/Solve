@@ -267,7 +267,7 @@ public sealed class FileLogArchiveTests : IDisposable
         var second = Path.Combine(_directory, "second");
         Directory.CreateDirectory(first);
         Directory.CreateDirectory(second);
-        var expiredName = DailyLogFiles.FileName(Today.AddDays(-DailyLogFiles.RetentionDays));
+        var expiredName = DailyLogFiles.FileName(Today.AddDays(-LogRetentionPolicy.DefaultRetentionDays));
 
         var pipeline = LoggingPipeline.Create(first, settingsPath: null);
         try

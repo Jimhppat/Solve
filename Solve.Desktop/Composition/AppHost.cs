@@ -51,11 +51,11 @@ public sealed class AppHost : IAsyncDisposable
     {
         Options = options;
 
-        // 日志目录要在创建日志管线之前确定，所以设置单独存文件、不放配置库（配置库在启动流程中才打开）
-        var locationStore = options.LogLocationPath is null ? null : new LogLocationStore(options.LogLocationPath);
-        var logDirectory = LogDirectoryService.ResolveStartup(options.LogDirectory, locationStore);
+        // 日志目录与保留设置要在创建日志管线之前确定，所以设置单独存文件、不放配置库（配置库在启动流程中才打开）
+        var settingsStore = options.LogLocationPath is null ? null : new LogSettingsStore(options.LogLocationPath);
+        var logSettings = LogSettingsService.ResolveStartup(options.LogDirectory, settingsStore);
 
-        _logging = LoggingPipeline.Create(logDirectory.Directory, options.LoggingSettingsPath);
+        _logging = LoggingPipeline.Create(logSettings.Directory, options.LoggingSettingsPath, logSettings.Retention);
 
         // 历史日志跟随管线当前正在写的目录：设置页切换目录后，按日期查看与导出读的是新目录
         LogArchive = new FileLogArchive(() => _logging.LogDirectory);
@@ -67,12 +67,13 @@ public sealed class AppHost : IAsyncDisposable
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
-        _logger.LogInformation("程序启动 进程={ProcessId} 实机参数={HardwareRequested} 配置库={Database} 日志={Logs}",
-            Environment.ProcessId, options.HardwareRequested, options.DatabasePath, logDirectory.Directory);
+        _logger.LogInformation("程序启动 进程={ProcessId} 实机参数={HardwareRequested} 配置库={Database} 日志={Logs}（{Retention}）",
+            Environment.ProcessId, options.HardwareRequested, options.DatabasePath, logSettings.Directory, logSettings.Retention);
 
-        if (logDirectory.FallbackReason is { } fallbackReason)
+        if (logSettings.FallbackReason is { } fallbackReason)
         {
-            _logger.LogWarning("本次运行日志写入默认目录 {Directory}。{Reason}", logDirectory.Directory, fallbackReason);
+            _logger.LogWarning("本次运行日志设置部分改用默认值，写入 {Directory}（{Retention}）。{Reason}",
+                logSettings.Directory, logSettings.Retention, fallbackReason);
         }
 
         if (_logging.SettingsError is { } settingsError)
@@ -81,8 +82,8 @@ public sealed class AppHost : IAsyncDisposable
                 options.LoggingSettingsPath, settingsError);
         }
 
-        LogDirectorySettings = new LogDirectoryService(
-            _logging, locationStore, options.LogDirectory, logDirectory, _loggerFactory.CreateLogger<LogDirectoryService>());
+        LogSettings = new LogSettingsService(
+            _logging, settingsStore, options.LogDirectory, logSettings, _loggerFactory.CreateLogger<LogSettingsService>());
     }
 
     /// <summary>
@@ -111,9 +112,9 @@ public sealed class AppHost : IAsyncDisposable
     public ILogArchive LogArchive { get; }
 
     /// <summary>
-    /// 日志目录的查看与切换，供设置页使用
+    /// 日志目录、保存天数与单个文件上限的查看与保存，供设置页使用
     /// </summary>
-    public ILogDirectorySettings LogDirectorySettings { get; }
+    public ILogSettings LogSettings { get; }
 
     /// <summary>
     /// 总线注册表；启动完成前或配置库不可用时为 null

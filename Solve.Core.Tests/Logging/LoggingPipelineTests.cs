@@ -2,6 +2,7 @@ using Serilog;
 using Serilog.Core;
 using Serilog.Events;
 using Serilog.Parsing;
+using Solve.Core.Application.Logging;
 using Solve.Core.Tests.Logging.TestSupport;
 using Solve.Desktop.Composition;
 using Solve.Desktop.Logging;
@@ -289,9 +290,9 @@ public sealed class LoggingPipelineTests : IDisposable
             return path;
         }
 
-        var expired = Touch(DailyLogFiles.FileName(today.AddDays(-DailyLogFiles.RetentionDays)));
+        var expired = Touch(DailyLogFiles.FileName(today.AddDays(-LogRetentionPolicy.DefaultRetentionDays)));
         var expiredLegacy = Touch($"solve-{today.AddDays(-45):yyyyMMdd}.log");
-        var kept = Touch(DailyLogFiles.FileName(today.AddDays(-(DailyLogFiles.RetentionDays - 1))));
+        var kept = Touch(DailyLogFiles.FileName(today.AddDays(-(LogRetentionPolicy.DefaultRetentionDays - 1))));
         var unrelated = Touch("notes.log");
 
         var pipeline = Create();
