@@ -1,8 +1,26 @@
 using System;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Avalonia.Threading;
 
 namespace Solve.UI.ViewModels;
+
+/// <summary>
+/// CanExecuteChanged 的订阅者是按钮等 UI 控件，只能在 UI 线程上通知；其他线程调用时转投 UI 线程。
+/// </summary>
+internal static class CommandNotifier
+{
+    public static void Raise(ICommand command, EventHandler? handler)
+    {
+        if (handler is null)
+            return;
+
+        if (Dispatcher.UIThread.CheckAccess())
+            handler(command, EventArgs.Empty);
+        else
+            Dispatcher.UIThread.Post(() => handler(command, EventArgs.Empty));
+    }
+}
 
 public sealed class RelayCommand : ICommand
 {
@@ -28,7 +46,7 @@ public sealed class RelayCommand : ICommand
 
     public void Execute(object? parameter) => _execute(parameter);
 
-    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    public void RaiseCanExecuteChanged() => CommandNotifier.Raise(this, CanExecuteChanged);
 }
 
 public sealed class AsyncRelayCommand : ICommand
@@ -73,7 +91,10 @@ public sealed class AsyncRelayCommand : ICommand
         {
             _isExecuting = true;
             RaiseCanExecuteChanged();
-            await _execute(parameter).ConfigureAwait(false);
+
+            // 不能 ConfigureAwait(false)：命令由 UI 发起，收尾（_isExecuting 复位、通知按钮）必须回到 UI 线程。
+            // 否则 _execute 在线程池上完成时，按钮在非 UI 线程读取 Command 会抛异常并导致进程退出
+            await _execute(parameter);
         }
         finally
         {
@@ -82,5 +103,5 @@ public sealed class AsyncRelayCommand : ICommand
         }
     }
 
-    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    public void RaiseCanExecuteChanged() => CommandNotifier.Raise(this, CanExecuteChanged);
 }

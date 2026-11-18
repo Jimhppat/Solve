@@ -239,9 +239,9 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
         var service = _busService;
         var deleted = await Task.Run(() => service.DeleteBusAsync(item.Id, CancellationToken.None));
 
-        // 成功时行会随 BusUnregistered 事件移除；失败时行仍在，把原因显示在说明栏
+        // 成功时行会随 BusUnregistered 事件移除；失败时行仍在，把原因显示在说明栏（显式回到 UI 线程）
         if (deleted.IsFailure)
-            item.ShowError($"删除失败：{deleted.Error.Message}");
+            Dispatcher.UIThread.Post(() => item.ShowError($"删除失败：{deleted.Error.Message}"));
     }
 
     private void ConnectAll()
