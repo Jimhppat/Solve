@@ -5,60 +5,95 @@
              xmlns:vm="using:Solve.UI.ViewModels"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
              x:Class="Solve.UI.Views.MasterConsoleView"
-             x:DataType="vm:MasterConsoleViewModel">
+             x:DataType="vm:MasterConsoleViewModel"
+             Background="#0D000000">
+    <!-- 页面底色：在主题底色上叠 5% 黑，浅色下为浅灰、深色下略压暗，白卡片才能“浮”起来 -->
 
     <Design.DataContext>
         <vm:MasterConsoleViewModel />
     </Design.DataContext>
 
-    <Grid Margin="16,12">
-        <!-- 主控台容器：上位机标准边框与底色 -->
-        <Border Background="{DynamicResource SemiColorBackground1}"
-                BorderBrush="{DynamicResource SemiColorBorder}"
-                BorderThickness="1"
-                CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
-                ClipToBounds="True">
-            <Grid RowDefinitions="Auto,*">
-                <!-- 顶部标题与状态栏预留槽位 -->
-                <Border Grid.Row="0"
-                        Height="46"
-                        Padding="16,0"
-                        Background="{DynamicResource SemiColorFill0}"
-                        BorderBrush="{DynamicResource SemiColorBorder}"
-                        BorderThickness="0,0,0,1">
-                    <DockPanel LastChildFill="True">
-                        <StackPanel DockPanel.Dock="Left"
-                                    Orientation="Horizontal"
-                                    Spacing="10"
-                                    VerticalAlignment="Center">
-                            <TextBlock Text="{Binding PageTitle}"
-                                       FontSize="15"
-                                       FontWeight="SemiBold"
-                                       Foreground="{DynamicResource SemiColorText0}"
-                                       VerticalAlignment="Center" />
-                            <Border Background="{DynamicResource SemiColorFill1}"
-                                    CornerRadius="{DynamicResource SemiBorderRadiusSmall}"
-                                    Padding="8,2"
-                                    VerticalAlignment="Center">
-                                <TextBlock Text="{Binding SystemStatusText}"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource SemiColorText2}" />
-                            </Border>
-                        </StackPanel>
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <!-- 卡片阴影：一层向下偏移的柔光（光源在上方）+ 一圈极淡的轮廓线代替边框 -->
+                <ResourceDictionary x:Key="Light">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #14000000, 0 0 1 0 #33000000</BoxShadows>
+                </ResourceDictionary>
+                <!-- 深色下黑色阴影不明显，加深阴影并用 1px 浅色描边勾出轮廓 -->
+                <ResourceDictionary x:Key="Dark">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #66000000, 0 0 0 1 #1AFFFFFF</BoxShadows>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
 
-                        <!-- 右侧操作与工具按钮槽位（供后续控制台指令扩展） -->
-                        <StackPanel DockPanel.Dock="Right"
-                                    Orientation="Horizontal"
-                                    Spacing="8"
-                                    VerticalAlignment="Center" />
-                    </DockPanel>
-                </Border>
+    <UserControl.Styles>
+        <!-- 浮起卡片：标题栏、显示区、控制区共用。
+             不设 ClipToBounds，否则阴影会被裁掉；内容靠内边距避开圆角 -->
+        <Style Selector="Border.panel">
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
+            <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
+        </Style>
+    </UserControl.Styles>
 
-                <!-- 主控台核心工作区（空白窗体区，便于后续自由布局仪表、图表与控制面板） -->
-                <Grid Grid.Row="1">
-                    <!-- 空白画布区 -->
-                </Grid>
-            </Grid>
+    <!-- 外边距与区块间距统一 20px：既拉开卡片，也给阴影留出不被裁切的空间 -->
+    <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
+
+        <!-- 顶部标题与状态栏 -->
+        <Border Grid.Row="0" Classes="panel" Height="52" Padding="20,0">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Left"
+                            Orientation="Horizontal"
+                            Spacing="10"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="{Binding PageTitle}"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SemiColorText0}"
+                               VerticalAlignment="Center" />
+                    <Border Background="{DynamicResource SemiColorFill1}"
+                            CornerRadius="{DynamicResource SemiBorderRadiusSmall}"
+                            Padding="8,2"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SystemStatusText}"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SemiColorText2}" />
+                    </Border>
+                </StackPanel>
+
+                <!-- 右侧操作与工具按钮槽位（供后续控制台指令扩展） -->
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center" />
+            </DockPanel>
         </Border>
+
+        <!-- 工作区：显示区 : 控制区 = 3 : 1；控制区宽度夹在 280~420px，
+             窄窗时保证控件放得下，宽屏时多出的空间全部让给显示区 -->
+        <Grid Grid.Row="1" ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="*" MinWidth="280" MaxWidth="420" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 显示区：仪表、曲线、图表等实时监视内容 -->
+            <Border Grid.Column="0" Classes="panel">
+                <Grid Margin="20">
+                    <!-- 显示内容槽位 -->
+                </Grid>
+            </Border>
+
+            <!-- 控制区：控制分组自上而下排列，超出高度时纵向滚动 -->
+            <Border Grid.Column="1" Classes="panel">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="20" Spacing="12">
+                        <!-- 控制分组槽位 -->
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>
