@@ -97,37 +97,36 @@ public sealed class DailyLogFilesTests : IDisposable
             File_("2026_11_18.log", Today),
         };
 
-        var deleted = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 30, maxTotalBytes: long.MaxValue, protectedPath: null);
+        var deleted = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 30, protectedPath: null);
 
         Assert.Equal(["2026_10_19.log"], deleted.Select(f => Path.GetFileName(f.Path)));
     }
 
     [Fact]
-    public void SelectForDeletion_OverSizeCap_DeletesOldestFirst()
+    public void SelectForDeletion_IgnoresFileSize_OnlyDaysCount()
     {
+        // 保存期内的日志再大也不删：删除只有保存天数这一个条件
+        const long huge = 50L * 1024 * 1024 * 1024;
         var files = new[]
         {
-            File_("2026_11_16.log", new DateOnly(2026, 11, 16)),
-            File_("2026_11_17.log", new DateOnly(2026, 11, 17)),
-            File_("2026_11_18.log", Today),
+            File_("2026_11_16.log", new DateOnly(2026, 11, 16), length: huge),
+            File_("2026_11_17.log", new DateOnly(2026, 11, 17), length: huge),
+            File_("2026_11_18.log", Today, length: huge),
         };
 
-        var deleted = DailyLogFiles.SelectForDeletion(files, Today, 30, maxTotalBytes: 250, protectedPath: null);
-
-        Assert.Equal(["2026_11_16.log"], deleted.Select(f => Path.GetFileName(f.Path)));
+        Assert.Empty(DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 3, protectedPath: null));
     }
 
     [Fact]
     public void SelectForDeletion_NeverDeletesTheFileBeingWritten()
     {
-        var active = File_("2026_11_16.log", new DateOnly(2026, 11, 16));
-        var files = new[] { active, File_("2026_11_17.log", new DateOnly(2026, 11, 17)), File_("2026_11_18.log", Today) };
+        // 跨午夜时前一天的文件可能仍在写入（午夜前产生、午夜后出队的日志）
+        var active = File_("2026_11_17.log", new DateOnly(2026, 11, 17));
+        var files = new[] { File_("2026_11_16.log", new DateOnly(2026, 11, 16)), active, File_("2026_11_18.log", Today) };
 
-        var bySize = DailyLogFiles.SelectForDeletion(files, Today, 30, maxTotalBytes: 250, protectedPath: active.Path);
-        var byAge = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 1, long.MaxValue, protectedPath: active.Path);
+        var deleted = DailyLogFiles.SelectForDeletion(files, Today, retentionDays: 1, protectedPath: active.Path);
 
-        Assert.Equal(["2026_11_17.log"], bySize.Select(f => Path.GetFileName(f.Path)));
-        Assert.DoesNotContain(byAge, f => f.Path == active.Path);
+        Assert.Equal(["2026_11_16.log"], deleted.Select(f => Path.GetFileName(f.Path)));
     }
 
     [Fact]

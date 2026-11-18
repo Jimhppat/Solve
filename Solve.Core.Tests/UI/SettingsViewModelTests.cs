@@ -61,7 +61,7 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
-    public void InputRanges_MatchThePolicy_AndHintMentionsTheTotalCap()
+    public void InputRanges_MatchThePolicy()
     {
         var vm = new SettingsViewModel();
 
@@ -69,8 +69,6 @@ public sealed class SettingsViewModelTests
         Assert.Equal(365m, vm.MaxRetentionDays);
         Assert.Equal(10m, vm.MinFileSizeLimitMegabytes);
         Assert.Equal(1024m, vm.MaxFileSizeLimitMegabytes);
-        Assert.Contains("2 GB", vm.RetentionHint);
-        Assert.Contains("_001", vm.RetentionHint);
     }
 
     // ==================== 保存 ====================

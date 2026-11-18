@@ -7,8 +7,7 @@ namespace Solve.Core.Application.Logging;
 /// </summary>
 /// <remarks>
 /// <para>日志按天分文件；单个文件超过上限后，同一天续写为 _001、_002…</para>
-/// <para>超过保存天数的日志、以及全部日志合计超过 <see cref="TotalSizeLimitBytes"/> 时最旧的日志，会被自动删除。
-/// 总量上限固定不可改：防止日志异常暴增时占满磁盘（配置库也在同一磁盘上）。</para>
+/// <para>删除只有一个条件：超过保存天数。不按总大小删除，磁盘占用由保存天数与每天的日志量决定。</para>
 /// </remarks>
 public sealed record LogRetentionPolicy
 {
@@ -19,11 +18,6 @@ public sealed record LogRetentionPolicy
     public const int MinFileSizeLimitMegabytes = 10;
     public const int MaxFileSizeLimitMegabytes = 1024;
     public const int DefaultFileSizeLimitMegabytes = 50;
-
-    /// <summary>
-    /// 全部日志文件合计的大小上限
-    /// </summary>
-    public const long TotalSizeLimitBytes = 2L * 1024 * 1024 * 1024;
 
     private LogRetentionPolicy(int retentionDays, int fileSizeLimitMegabytes)
     {

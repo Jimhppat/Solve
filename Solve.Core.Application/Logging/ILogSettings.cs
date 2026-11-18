@@ -26,7 +26,7 @@ public sealed record LogSettingsSaved(string Directory, LogRetentionPolicy Reten
 /// </summary>
 /// <remarks>
 /// <para>保存立即生效，并作为之后启动使用的设置。切换目录时旧目录中已有的日志原地保留：不迁移，也不再自动清理。</para>
-/// <para>保存后会立即按新设置清理当前目录中过期与超量的日志，删除不可恢复：保存前先用 <see cref="PreviewAsync"/>
+/// <para>保存后会立即按新的保存天数清理当前目录中过期的日志，删除不可恢复：保存前先用 <see cref="PreviewAsync"/>
 /// 列出会被删除的文件，由界面让人确认。</para>
 /// <para>切换前先确认目录可写；校验或保存失败时设置与写入位置都保持原样，日志不会中断。</para>
 /// </remarks>

@@ -26,7 +26,7 @@ public sealed record DailyLogFile(string Path, DateOnly Date, int Sequence, bool
 /// 同一天超过大小上限时由 Serilog 续写为 2026_11_18_001.log、_002…；超过 999 卷后序号变为 4 位（_1000），同样识别，
 /// 否则这些文件既不能查看、也不会被清理，会悄悄占满磁盘。</para>
 /// <para>同时识别升级前的旧命名 solve-20261118(_001).log：旧文件照常可查看、可导出，到期后一并清理。</para>
-/// <para>保存天数与总量上限见 <see cref="LogRetentionPolicy"/>。</para>
+/// <para>保存天数见 <see cref="LogRetentionPolicy"/>；只按天数删除，不按总大小删除。</para>
 /// </remarks>
 public static class DailyLogFiles
 {
@@ -102,7 +102,7 @@ public static class DailyLogFiles
     }
 
     /// <summary>
-    /// 选出应删除的文件：先删超过保留天数的，再在总大小超限时从最旧的开始删。
+    /// 选出应删除的文件：只按保存天数，早于「今天往前 <paramref name="retentionDays"/> 天（含今天）」的都删，不看文件大小。
     /// <paramref name="protectedPath"/>（正在写入的文件）永不删除。纯函数，不做任何 I/O。
     /// </summary>
     /// <param name="files">按 <see cref="List"/> 的顺序（从旧到新）</param>
@@ -110,41 +110,17 @@ public static class DailyLogFiles
         IReadOnlyList<DailyLogFile> files,
         DateOnly today,
         int retentionDays,
-        long maxTotalBytes,
         string? protectedPath)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentOutOfRangeException.ThrowIfLessThan(retentionDays, 1);
 
         var oldestKept = today.AddDays(-(retentionDays - 1));
-        var deletions = new List<DailyLogFile>();
-        var kept = new List<DailyLogFile>();
-
-        foreach (var file in files)
-        {
-            if (file.Date < oldestKept && !IsProtected(file, protectedPath))
-                deletions.Add(file);
-            else
-                kept.Add(file);
-        }
-
-        var total = kept.Sum(f => f.Length);
-        foreach (var file in kept)
-        {
-            if (total <= maxTotalBytes)
-                break;
-            if (IsProtected(file, protectedPath))
-                continue;
-
-            deletions.Add(file);
-            total -= file.Length;
-        }
-
-        return deletions;
+        return files.Where(f => f.Date < oldestKept && !IsProtected(f, protectedPath)).ToList();
     }
 
     /// <summary>
-    /// 清理过期与超限的日志文件。不抛出：删除失败（被占用、无权限）只记入 Serilog 自诊断，日志照常写入。
+    /// 删除超过保存天数的日志文件。不抛出：删除失败（被占用、无权限）只记入 Serilog 自诊断，日志照常写入。
     /// </summary>
     /// <returns>实际删除的文件</returns>
     public static IReadOnlyList<DailyLogFile> Prune(string directory, DateOnly today, int retentionDays, string? protectedPath)
@@ -154,7 +130,7 @@ public static class DailyLogFiles
             IReadOnlyList<DailyLogFile> candidates;
             try
             {
-                candidates = SelectForDeletion(List(directory), today, retentionDays, LogRetentionPolicy.TotalSizeLimitBytes, protectedPath);
+                candidates = SelectForDeletion(List(directory), today, retentionDays, protectedPath);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

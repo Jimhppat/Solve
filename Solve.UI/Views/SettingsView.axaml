@@ -142,7 +142,6 @@
                                            IsEnabled="{Binding IsLogSettingsAvailable}" />
                             <TextBlock Grid.Column="2" Classes="label" Text="MB" />
                         </Grid>
-                        <TextBlock Classes="muted" Text="{Binding RetentionHint}" />
 
                         <!-- 新设置会删除日志文件：列出个数、日期与大小，确认后才保存；确认前改动输入会取消这次保存 -->
                         <Border Classes="notice danger" IsVisible="{Binding IsAwaitingConfirmation}">

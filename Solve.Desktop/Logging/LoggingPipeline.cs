@@ -193,12 +193,11 @@ public sealed class LoggingPipeline : IDisposable
         ArgumentNullException.ThrowIfNull(policy);
 
         return DailyLogFiles.SelectForDeletion(
-            DailyLogFiles.List(directory), Today(), policy.RetentionDays, LogRetentionPolicy.TotalSizeLimitBytes,
-            _retention.ActiveFilePath);
+            DailyLogFiles.List(directory), Today(), policy.RetentionDays, _retention.ActiveFilePath);
     }
 
     /// <summary>
-    /// 立即按当前设置清理当前目录中过期与超量的日志，正在写入的文件不删。不抛出：删除失败只记自诊断。
+    /// 立即按当前的保存天数清理当前目录中过期的日志，正在写入的文件不删。不抛出：删除失败只记自诊断。
     /// 在调用线程上做磁盘 I/O，不要在 UI 线程上调用。
     /// </summary>
     /// <returns>实际删除的文件</returns>
@@ -242,7 +241,7 @@ public sealed class LoggingPipeline : IDisposable
     /// <remarks>
     /// <para>按每条日志自身的本地日期分文件（2026_11_18.log）：午夜前产生、午夜后才出队的日志仍写进前一天。
     /// 同时最多保持两天的文件打开，跨午夜时新旧日期交替出现不会反复开关文件，更早的立即关闭。</para>
-    /// <para>保留期由 <see cref="RetentionHooks"/> 按天数与总大小清理，不用 Serilog 自带的按文件数保留（它只认同一天的分卷）。
+    /// <para>保留期由 <see cref="RetentionHooks"/> 只按保存天数清理，不用 Serilog 自带的按文件数保留（它只认同一天的分卷）。
     /// 清理只管这个目录：切换目录后旧目录中的日志原地保留、不再清理（与设置页的说明一致）。</para>
     /// <para>单个文件上限在创建时取定；运行中修改上限时由 <see cref="ApplyRetention"/> 重新创建。</para>
     /// </remarks>
@@ -411,7 +410,7 @@ public sealed class LoggingPipeline : IDisposable
     }
 
     /// <summary>
-    /// 每次打开日志文件（启动、跨天、单文件超限续写）时按当前设置清理过期与超限的日志。
+    /// 每次打开日志文件（启动、跨天、单文件超限续写）时按当前的保存天数清理过期的日志。
     /// 在异步队列的后台线程上执行，不占用业务线程；清理失败只记自诊断，不影响写入。
     /// </summary>
     private sealed class RetentionHooks(string directory, RetentionState state) : FileLifecycleHooks

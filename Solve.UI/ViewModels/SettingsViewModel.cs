@@ -183,13 +183,6 @@ public sealed class SettingsViewModel : ViewModelBase
     public decimal MaxFileSizeLimitMegabytes => LogRetentionPolicy.MaxFileSizeLimitMegabytes;
 
     /// <summary>
-    /// 保留规则说明：总量上限固定，写出来免得设了很长的保存天数却发现旧日志不见了
-    /// </summary>
-    public string RetentionHint =>
-        $"超过保存天数，或全部日志合计超过 {FormatSize(LogRetentionPolicy.TotalSizeLimitBytes)} 时，从最旧的日志开始自动删除；" +
-        "单个文件超过上限后，同一天续写为 _001、_002…";
-
-    /// <summary>
     /// 启动时保存的设置不可用、本次运行改用默认值的原因
     /// </summary>
     public string? StartupFallback => _startupFallbackResolved ? null : _settings?.StartupFallbackReason;
