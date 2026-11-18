@@ -1,5 +1,7 @@
 using Serilog;
 using Serilog.Core;
+using Serilog.Events;
+using Serilog.Parsing;
 using Solve.Core.Tests.Logging.TestSupport;
 using Solve.Desktop.Composition;
 using Solve.Desktop.Logging;
@@ -233,6 +235,73 @@ public sealed class LoggingPipelineTests : IDisposable
 
         pipeline.Dispose();
         pipeline.Dispose();
+    }
+
+    // ==================== 按日期命名与保留期 ====================
+
+    private static readonly MessageTemplateParser TemplateParser = new();
+
+    private static void WriteAt(LoggingPipeline pipeline, DateTimeOffset timestamp, string text)
+        => pipeline.Logger.Write(new LogEvent(timestamp, LogEventLevel.Information, null, TemplateParser.Parse(text), []));
+
+    [Fact]
+    public void Files_AreNamedByLocalDate()
+    {
+        var pipeline = Create();
+
+        For(pipeline, OtherContext).Information("today-marker");
+        pipeline.Dispose();
+
+        var file = Assert.Single(DailyLogFiles.List(LogDirectory));
+        Assert.Equal(DailyLogFiles.FileName(DateOnly.FromDateTime(DateTime.Now)), Path.GetFileName(file.Path));
+        Assert.Contains("today-marker", LogFiles.Read(file.Path));
+    }
+
+    [Fact]
+    public void EventsAroundMidnight_GoToTheDayTheyHappened_EvenWhenArrivingLate()
+    {
+        var pipeline = Create();
+        var midnight = DateTime.Today;
+        var today = DateOnly.FromDateTime(midnight);
+
+        // 午夜后的先到、午夜前的后到：按日志自身时间分文件，而不是按写盘时间
+        WriteAt(pipeline, new DateTimeOffset(midnight.AddMilliseconds(100)), "after-midnight");
+        WriteAt(pipeline, new DateTimeOffset(midnight.AddMilliseconds(-100)), "before-midnight");
+        pipeline.Dispose();
+
+        var yesterdayLog = LogFiles.Read(DailyLogFiles.PathFor(LogDirectory, today.AddDays(-1)));
+        var todayLog = LogFiles.Read(DailyLogFiles.PathFor(LogDirectory, today));
+        Assert.Contains("before-midnight", yesterdayLog);
+        Assert.DoesNotContain("after-midnight", yesterdayLog);
+        Assert.Contains("after-midnight", todayLog);
+        Assert.DoesNotContain("before-midnight", todayLog);
+    }
+
+    [Fact]
+    public void OpeningLogFile_PrunesExpiredFiles_AndKeepsEverythingElse()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        Directory.CreateDirectory(LogDirectory);
+        string Touch(string name)
+        {
+            var path = Path.Combine(LogDirectory, name);
+            File.WriteAllText(path, "old");
+            return path;
+        }
+
+        var expired = Touch(DailyLogFiles.FileName(today.AddDays(-DailyLogFiles.RetentionDays)));
+        var expiredLegacy = Touch($"solve-{today.AddDays(-45):yyyyMMdd}.log");
+        var kept = Touch(DailyLogFiles.FileName(today.AddDays(-(DailyLogFiles.RetentionDays - 1))));
+        var unrelated = Touch("notes.log");
+
+        var pipeline = Create();
+        For(pipeline, OtherContext).Information("opens-today-file");
+        pipeline.Dispose();
+
+        Assert.False(File.Exists(expired));
+        Assert.False(File.Exists(expiredLegacy));
+        Assert.True(File.Exists(kept));
+        Assert.True(File.Exists(unrelated));
     }
 
     [Fact]

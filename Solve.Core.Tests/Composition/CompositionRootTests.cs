@@ -8,6 +8,7 @@ using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Core.Tests.Logging.TestSupport;
 using Solve.Desktop.Composition;
+using Solve.Desktop.Logging;
 
 namespace Solve.Core.Tests.Composition;
 
@@ -339,7 +340,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         Assert.Throws<ObjectDisposedException>(() => { _ = host.Start(); });
 
         // 日志已刷写并关闭：文件存在且可以独占读取
-        var log = Assert.Single(Directory.GetFiles(LogDirectory, "solve-*.log"));
+        var log = Assert.Single(DailyLogFiles.List(LogDirectory)).Path;
         await using var stream = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.None);
         using var reader = new StreamReader(stream);
         var text = await reader.ReadToEndAsync();
