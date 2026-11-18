@@ -1,10 +1,13 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
 using Solve.Desktop.Composition;
 using Solve.UI.ViewModels;
 using Solve.UI.Views;
@@ -13,7 +16,13 @@ namespace Solve.Desktop;
 
 public partial class App : Application
 {
+    /// <summary>
+    /// UI 线程未处理异常导致退出时的进程退出码
+    /// </summary>
+    private const int UiFaultExitCode = 1;
+
     private readonly AppHost? _host;
+    private int _uiFaulted;
 
     /// <summary>
     /// XAML 设计器 / 预览器使用：没有组合根，不启动总线系统
@@ -42,6 +51,12 @@ public partial class App : Application
             // 窗口先展示就绪，总线系统在线程池启动并异步注入 ViewModel
             if (_host is not null && !Design.IsDesignMode)
             {
+                var host = _host;
+                Dispatcher.UIThread.UnhandledException += (_, e) => OnUiThreadException(desktop, host, e);
+
+                // 日志管线在 UI 之前就已创建：先接入日志页与主控台最近日志，启动过程中的日志也能看到
+                vm.AttachLogFeed(host.Logging.Feed, host.Options.LogDirectory);
+
                 _ = Task.Run(async () =>
                 {
                     var report = await _host.Start().ConfigureAwait(false);
@@ -64,6 +79,30 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// UI 线程未处理异常（如异步命令抛出）：记录、对全部总线安全跳闸，然后有序退出，不带着不可信的界面状态继续运行。
+    /// </summary>
+    /// <remarks>
+    /// 首个异常标记为已处理并投递正常关停：关闭物理通道、刷写日志都走 Main 的 finally，
+    /// 不依赖异常冒泡到进程级处理器（进程级路径不保证 finally 执行）。
+    /// 关停过程中再出异常则不再拦截，交给 Main 的 catch 与进程级处理器。
+    /// </remarks>
+    private void OnUiThreadException(
+        IClassicDesktopStyleApplicationLifetime desktop,
+        AppHost host,
+        DispatcherUnhandledExceptionEventArgs e)
+    {
+        host.Logger.LogCritical(e.Exception, "UI 线程未处理异常，对全部总线执行安全跳闸并退出程序");
+        host.EmergencyStop("UI 线程未处理异常");
+
+        if (Interlocked.Exchange(ref _uiFaulted, 1) != 0)
+            return;
+
+        e.Handled = true;
+        // 投递而不是直接调用：关闭窗口时若再抛异常，作为新的调度器异常处理，而不是嵌套在本处理器内
+        Dispatcher.UIThread.Post(() => desktop.Shutdown(UiFaultExitCode));
     }
 
     private static StartupNotice? CreateStartupNotice(StartupReport report, string logDirectory)

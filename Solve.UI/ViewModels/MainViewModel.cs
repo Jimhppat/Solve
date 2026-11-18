@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.Logging;
 
 namespace Solve.UI.ViewModels;
 
@@ -9,6 +10,11 @@ namespace Solve.UI.ViewModels;
 /// </summary>
 public sealed class MainViewModel : ViewModelBase, IDisposable
 {
+    // 侧栏导航索引，与 MainWindow.axaml 中 ListBoxItem 的顺序一一对应（含暂未启用的项）
+    public const int MasterConsoleNavIndex = 0;
+    public const int BusConsoleNavIndex = 1;
+    public const int RuntimeLogNavIndex = 4;
+
     private Action<string>? _onEmergencyStop;
     private string _modeText = "仿真模式";
     private string _modeBadgeColor = "#F59E0B";
@@ -18,8 +24,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public MainViewModel()
     {
-        MasterConsole = new MasterConsoleViewModel();
+        MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
         BusConsole = new BusConsoleViewModel();
+        RuntimeLog = new RuntimeLogViewModel();
         _currentPage = MasterConsole;
 
         // 联动总线控制台的实时统计文本到主窗口底部状态栏
@@ -41,6 +48,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 总线控制台专属子页面
     /// </summary>
     public BusConsoleViewModel BusConsole { get; }
+
+    /// <summary>
+    /// 运行日志页。由组合根接入日志源，设计器中为空列表
+    /// </summary>
+    public RuntimeLogViewModel RuntimeLog { get; }
 
     /// <summary>
     /// 当前活动页面（驱动主窗体 ContentControl 呈现）
@@ -92,10 +104,20 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         CurrentPage = index switch
         {
-            0 => MasterConsole,
-            1 => BusConsole,
-            _ => MasterConsole // 后续拓扑、诊断、设置页面在此接入对应子 ViewModel
+            MasterConsoleNavIndex => MasterConsole,
+            BusConsoleNavIndex => BusConsole,
+            RuntimeLogNavIndex => RuntimeLog,
+            _ => MasterConsole // 后续拓扑（2）、诊断（3）、设置（5）页面在此接入对应子 ViewModel
         };
+    }
+
+    /// <summary>
+    /// 接入日志源：运行日志页与主控台的最近日志各自订阅。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachLogFeed(ILogFeed feed, string logDirectory)
+    {
+        RuntimeLog.Attach(feed, logDirectory);
+        MasterConsole.RecentLog.Attach(feed, logDirectory);
     }
 
     /// <summary>
@@ -130,5 +152,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         MasterConsole.Dispose();
         BusConsole.Dispose();
+        RuntimeLog.Dispose();
     }
 }

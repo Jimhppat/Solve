@@ -6,6 +6,7 @@ using Solve.Adapters.Persistence.Settings;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
+using Solve.Core.Tests.Logging.TestSupport;
 using Solve.Desktop.Composition;
 
 namespace Solve.Core.Tests.Composition;
@@ -13,6 +14,7 @@ namespace Solve.Core.Tests.Composition;
 /// <summary>
 /// 组合根测试。每个测试使用独立临时目录；只验证"注册不连接"，不对任何真实设备做 I/O。
 /// </summary>
+[Collection(LoggingPipelineCollection.Name)]
 public sealed class CompositionRootTests : IAsyncLifetime
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "solve-tests", Guid.NewGuid().ToString("N"));

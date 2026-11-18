@@ -1,0 +1,95 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="300" d:DesignHeight="280"
+             x:Class="Solve.UI.Views.RecentLogList"
+             x:DataType="vm:RuntimeLogViewModel">
+    <!-- 窄区域用的日志列表（主控台右栏，宽约 280~420px）：每条两行——级别、时间、来源一行，消息最多两行；
+         完整内容悬停查看，搜索、复制到运行日志页操作。级别筛选与自动滚动开关由宿主放在卡片标题行 -->
+
+    <Design.DataContext>
+        <vm:RuntimeLogViewModel />
+    </Design.DataContext>
+
+    <UserControl.Styles>
+        <StyleInclude Source="avares://Solve.UI/Styles/LogStyles.axaml" />
+
+        <!-- 比运行日志页更紧凑的行内边距 -->
+        <Style Selector="ListBox.log.compact > ListBoxItem">
+            <Setter Property="Padding" Value="8,5" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid>
+        <StackPanel IsVisible="{Binding IsEmpty}"
+                    Spacing="8"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <PathIcon Data="{DynamicResource SemiIconArticle}" Width="28" Height="28"
+                      Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Text="{Binding EmptyText}" FontSize="12"
+                       Foreground="{DynamicResource SemiColorText2}"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <!-- 高度由外层卡片限定，列表才能自己滚动并保持虚拟化；不要放进 StackPanel 或外层 ScrollViewer -->
+        <ListBox x:Name="LogList"
+                 Classes="log compact"
+                 Background="Transparent"
+                 IsVisible="{Binding !IsEmpty}"
+                 ItemsSource="{Binding Entries}">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:LogEntryItem">
+                    <StackPanel Spacing="3"
+                                Background="Transparent"
+                                ToolTip.Tip="{Binding DetailText}"
+                                Classes.debug="{Binding IsDebug}">
+                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                            <Border Grid.Column="0" Classes="level"
+                                    Classes.debug="{Binding IsDebug}"
+                                    Classes.warning="{Binding IsWarning}"
+                                    Classes.error="{Binding IsError}"
+                                    Classes.critical="{Binding IsCritical}">
+                                <TextBlock Text="{Binding LevelText}" />
+                            </Border>
+                            <TextBlock Grid.Column="1" Classes="mono meta" Text="{Binding ShortTimeText}" Margin="0,1,0,0" />
+                            <TextBlock Grid.Column="2" Classes="meta" Text="{Binding SourceText}"
+                                       TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                        <TextBlock Classes="message"
+                                   Text="{Binding Message}"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   MaxLines="2"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- 自动滚动关闭期间来了新日志：浮在列表底部提示，点击回到最新并恢复自动滚动。
+             外层不透明底色垫在按钮下面：主题按钮底色是半透明的，直接叠在列表上会透出下面的文字 -->
+        <Border IsVisible="{Binding HasUnseen}"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,8"
+                CornerRadius="14"
+                Background="{DynamicResource SemiColorBackground2}"
+                BoxShadow="0 2 8 0 #29000000">
+            <Button Classes="Primary"
+                    Height="28"
+                    Padding="12,0"
+                    CornerRadius="14"
+                    VerticalContentAlignment="Center"
+                    Command="{Binding JumpToLatestCommand}"
+                    ToolTip.Tip="回到最新日志并恢复自动滚动">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <PathIcon Data="{DynamicResource SemiIconArrowDown}" Width="10" Height="10" />
+                    <TextBlock Text="{Binding UnseenText}" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Border>
+    </Grid>
+</UserControl>

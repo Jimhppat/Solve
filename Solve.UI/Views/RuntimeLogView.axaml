@@ -1,0 +1,172 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             xmlns:views="using:Solve.UI.Views"
+             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
+             x:Class="Solve.UI.Views.RuntimeLogView"
+             x:DataType="vm:RuntimeLogViewModel"
+             Background="#0D000000">
+    <!-- 页面底色与卡片阴影沿用主控台：在主题底色上叠 5% 黑，让白卡片浮起来 -->
+
+    <Design.DataContext>
+        <vm:RuntimeLogViewModel />
+    </Design.DataContext>
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #14000000, 0 0 1 0 #33000000</BoxShadows>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #66000000, 0 0 0 1 #1AFFFFFF</BoxShadows>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <!-- 级别标签、日志行等与主控台最近日志控件共用 -->
+        <StyleInclude Source="avares://Solve.UI/Styles/LogStyles.axaml" />
+
+        <Style Selector="Border.panel">
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
+            <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
+
+        <!-- 标题、统计与工具 -->
+        <Border Grid.Row="0" Classes="panel" Padding="20,10">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Left"
+                            Orientation="Horizontal"
+                            Spacing="10"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="{Binding PageTitle}"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SemiColorText0}"
+                               VerticalAlignment="Center" />
+                    <Border Background="{DynamicResource SemiColorFill1}"
+                            CornerRadius="{DynamicResource SemiBorderRadiusSmall}"
+                            Padding="8,2"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SummaryText}"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SemiColorText2}" />
+                    </Border>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <!-- 级别多选：浮层里五类各自勾选，按钮上显示简短说明，悬停看已选全部级别 -->
+                    <DropDownButton Width="120"
+                                    HorizontalContentAlignment="Left"
+                                    ToolTip.Tip="{Binding LevelFilterDetail}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="级别：" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding LevelFilterText}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedLeft">
+                                <views:LevelFilterPanel />
+                            </Flyout>
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                    <TextBox Width="220"
+                             Classes="clearButton"
+                             PlaceholderText="搜索消息或来源"
+                             Text="{Binding SearchText}">
+                        <TextBox.InnerLeftContent>
+                            <PathIcon Data="{DynamicResource SemiIconSearch}" Width="12" Height="12" Margin="8,0,0,0"
+                                      Foreground="{DynamicResource SemiColorText2}" />
+                        </TextBox.InnerLeftContent>
+                    </TextBox>
+                    <CheckBox Content="自动滚动" IsChecked="{Binding AutoScroll}" VerticalAlignment="Center" />
+                    <Button Command="{Binding ClearCommand}" ToolTip.Tip="只清空界面上的日志，日志文件不受影响">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <PathIcon Data="{DynamicResource SemiIconDelete}" Width="12" Height="12" />
+                            <TextBlock Text="清空" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Click="OnOpenLogDirectory"
+                            IsVisible="{Binding HasLogDirectory}"
+                            ToolTip.Tip="{Binding LogDirectory}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <PathIcon Data="{DynamicResource SemiIconFolderOpen}" Width="12" Height="12" />
+                            <TextBlock Text="打开日志目录" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- 日志列表 -->
+        <Border Grid.Row="1" Classes="panel" Padding="8">
+            <Grid>
+                <StackPanel IsVisible="{Binding IsEmpty}"
+                            Spacing="12"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <PathIcon Data="{DynamicResource SemiIconArticle}" Width="40" Height="40"
+                              Foreground="{DynamicResource SemiColorText2}" />
+                    <TextBlock Text="{Binding EmptyText}" FontSize="14" FontWeight="Medium"
+                               Foreground="{DynamicResource SemiColorText2}"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+
+                <!-- ListBox 自带虚拟化：只为可见的行创建控件，保留 2000 条也不卡 -->
+                <ListBox x:Name="LogList"
+                         Classes="log"
+                         Background="Transparent"
+                         IsVisible="{Binding !IsEmpty}"
+                         ItemsSource="{Binding Entries}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:LogEntryItem">
+                            <Grid ColumnDefinitions="Auto,Auto,160,*"
+                                  ColumnSpacing="12"
+                                  Background="Transparent"
+                                  Classes.debug="{Binding IsDebug}">
+                                <Grid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="复制此条" Click="OnCopyEntry" />
+                                    </ContextMenu>
+                                </Grid.ContextMenu>
+
+                                <TextBlock Grid.Column="0" Classes="mono" Text="{Binding TimeText}"
+                                           Foreground="{DynamicResource SemiColorText2}" Margin="0,1,0,0" />
+                                <Border Grid.Column="1" Classes="level"
+                                        Classes.debug="{Binding IsDebug}"
+                                        Classes.warning="{Binding IsWarning}"
+                                        Classes.error="{Binding IsError}"
+                                        Classes.critical="{Binding IsCritical}">
+                                    <TextBlock Text="{Binding LevelText}" />
+                                </Border>
+                                <TextBlock Grid.Column="2" Text="{Binding SourceText}"
+                                           ToolTip.Tip="{Binding Source}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource SemiColorText2}" />
+                                <StackPanel Grid.Column="3" Spacing="2">
+                                    <TextBlock Classes="message" Text="{Binding Message}" TextWrapping="Wrap" />
+                                    <TextBlock IsVisible="{Binding HasException}"
+                                               Text="附带异常信息，悬停查看，右键可复制"
+                                               ToolTip.Tip="{Binding DetailText}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource SemiColorDanger}" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -227,9 +227,10 @@
         <!-- 主工作台区 -->
         <DockPanel Margin="16,12">
 
-            <!-- 启动问题横幅：配置无效 / 注册失败 / 启动失败，原先只写进日志，操作员看不到 -->
+            <!-- 启动问题横幅：配置无效 / 注册失败 / 启动失败，原先只写进日志，操作员看不到。
+                 平时 StartupNotice 为 null：路径用 ?. 短路为 null 值，否则每次启动都会产生绑定错误告警 -->
             <Border DockPanel.Dock="Top" Margin="0,0,0,10" Classes="notice"
-                    Classes.fatal="{Binding StartupNotice.IsError, FallbackValue=False}"
+                    Classes.fatal="{Binding StartupNotice?.IsError, TargetNullValue=False}"
                     IsVisible="{Binding HasStartupNotice}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Classes="Tertiary" Padding="4" VerticalAlignment="Top"
@@ -241,9 +242,9 @@
                               Margin="0,1,10,0" VerticalAlignment="Top"
                               Data="{DynamicResource SemiIconAlertTriangle}" />
                     <StackPanel Spacing="4">
-                        <TextBlock Text="{Binding StartupNotice.Title, FallbackValue=''}" FontWeight="SemiBold"
+                        <TextBlock Text="{Binding StartupNotice?.Title}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource SemiColorText0}" TextWrapping="Wrap" />
-                        <ItemsControl ItemsSource="{Binding StartupNotice.Details, FallbackValue={x:Null}}">
+                        <ItemsControl ItemsSource="{Binding StartupNotice?.Details}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="x:String">
                                     <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap"
