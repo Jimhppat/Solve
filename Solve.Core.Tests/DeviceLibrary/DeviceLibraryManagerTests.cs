@@ -126,11 +126,13 @@ public sealed class DeviceLibraryManagerTests : IDisposable
         var library = await LoadAsync();
 
         // 驱动来自独立加载上下文，但与内核共享 SDK 类型：能直接按 SDK 接口调用
-        var session = library.Drivers[SamplePower].CreateSession(new DeviceContext(Address: 3));
+        var session = library.Drivers[SamplePower].CreateSession(SampleContext(address: 3, settleMs: "200"));
         var exchange = session.BeginPoll();
         var send = Assert.IsType<ExchangeStep.Send>(exchange.Start());
 
         Assert.Equal(new byte[] { 0xAA, 3, 0x01, 0xAE }, send.Request.ToArray());
+        Assert.Equal(new FrameGap(3.5, TimeSpan.FromMilliseconds(2)), send.GapBefore);
+        Assert.Equal(TimeSpan.Zero, send.DelayAfter);
 
         // 响应：电压 12.34 V（1234），电流 0.5 A（500）
         byte[] response = [0x55, 3, 0x01, 0x04, 0xD2, 0x01, 0xF4, 0];
@@ -140,6 +142,28 @@ public sealed class DeviceLibraryManagerTests : IDisposable
 
         var done = Assert.IsType<ExchangeStep.Completed>(exchange.OnFrame(response.AsSpan(0, length)));
         Assert.Equal([new PointSample("voltage", 12.34), new PointSample("current", 0.5)], done.Samples);
+    }
+
+    private static DeviceContext SampleContext(int address, string settleMs)
+        => new(address, LinkKind.Serial, new DeviceParameters(new Dictionary<string, string> { ["settle-ms"] = settleMs }));
+
+    [Fact]
+    public async Task LoadedDriver_UsesParameters_AndClassifiesFailures()
+    {
+        AddPackage("sample");
+        await ApproveCurrentAsync();
+        var library = await LoadAsync();
+        var driver = library.Drivers[SamplePower];
+
+        // 驱动声明的参数通过了 SDK 校验；命令按参数给出稳定时间
+        Assert.Empty(driver.Info.Validate());
+        var session = driver.CreateSession(SampleContext(address: 1, settleMs: "500"));
+        var on = Assert.IsType<ExchangeStep.Send>(session.BeginCommand(new DeviceCommand("output.on", new Dictionary<string, double>())).Start());
+        Assert.Equal(TimeSpan.FromMilliseconds(500), on.DelayAfter);
+
+        // 不支持的命令不应重试：配置错误
+        var unknown = session.BeginCommand(new DeviceCommand("self-destruct", new Dictionary<string, double>())).Start();
+        Assert.Equal(FailureKind.Configuration, Assert.IsType<ExchangeStep.Failed>(unknown).Kind);
     }
 
     [Fact]

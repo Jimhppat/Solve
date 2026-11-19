@@ -438,6 +438,14 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             return null;
         }
 
+        // 先按 SDK 的规则整体校验：标识格式、地址范围、点位 / 命令 / 参数的 Key 与参数声明
+        var declared = info.Validate();
+        if (declared.Count > 0)
+        {
+            problem = string.Join("；", declared);
+            return null;
+        }
+
         if (!DriverId.TryParse(info.Id, out var id))
         {
             problem = $"驱动标识「{info.Id}」格式无效。";

@@ -25,6 +25,12 @@ public sealed class SamplePowerDriver : IDeviceDriver
     public const string CurrentKey = "current";
     public const string OutputOnKey = "output.on";
     public const string OutputOffKey = "output.off";
+    public const string SettleTimeKey = "settle-ms";
+
+    /// <summary>
+    /// 帧间隔：示例协议与 Modbus RTU 一样以 3.5 个字符的静默分隔帧
+    /// </summary>
+    private static readonly FrameGap Gap = new(3.5, TimeSpan.FromMilliseconds(2));
 
     public DriverInfo Info { get; } = new("sample.power", "示例电源", DeviceCategory.PowerAndLoad,
         "演示用虚构协议，不对应真实设备", MinAddress: 1, MaxAddress: 32)
@@ -39,21 +45,35 @@ public sealed class SamplePowerDriver : IDeviceDriver
             new CommandInfo(OutputOnKey, "打开输出", CommandSafety.Output),
             new CommandInfo(OutputOffKey, "关闭输出", CommandSafety.Output),
         ],
+        Parameters =
+        [
+            // 输出切换后电源需要一段稳定时间，期间读数无意义；不同负载下所需时间不同，所以做成模块参数
+            new ParameterInfo(SettleTimeKey, "输出稳定时间", ParameterKind.Integer, DefaultValue: "200")
+            {
+                Unit = "ms",
+                Minimum = 0,
+                Maximum = 2000,
+            },
+        ],
     };
 
-    public IDeviceSession CreateSession(DeviceContext context) => new Session((byte)context.Address);
+    public IDeviceSession CreateSession(DeviceContext context)
+        => new Session((byte)context.Address, TimeSpan.FromMilliseconds(context.Parameters.GetInteger(SettleTimeKey)));
 
     private delegate IReadOnlyList<PointSample> FrameDecoder(ReadOnlySpan<byte> frame);
 
-    private sealed class Session(byte address) : IDeviceSession
+    private sealed class Session(byte address, TimeSpan settleTime) : IDeviceSession
     {
-        public IExchange BeginPoll() => new FixedExchange(address, function: 0x01, payload: [], responseLength: 8, DecodePoll);
+        public IExchange BeginPoll()
+            => new FixedExchange(address, function: 0x01, payload: [], responseLength: 8, TimeSpan.Zero, DecodePoll);
 
         public IExchange BeginCommand(DeviceCommand command) => command.Key switch
         {
-            OutputOnKey => new FixedExchange(address, function: 0x10, payload: [1], responseLength: 5, _ => []),
-            OutputOffKey => new FixedExchange(address, function: 0x10, payload: [0], responseLength: 5, _ => []),
-            _ => new FailedExchange($"示例电源不支持命令 {command.Key}。"),
+            OutputOnKey => new FixedExchange(address, function: 0x10, payload: [1], responseLength: 5, settleTime, _ => []),
+            OutputOffKey => new FixedExchange(address, function: 0x10, payload: [0], responseLength: 5, settleTime, _ => []),
+
+            // 设备不支持的命令重试也没用：标为配置错误
+            _ => new FailedExchange($"示例电源不支持命令 {command.Key}。", FailureKind.Configuration),
         };
 
         private static IReadOnlyList<PointSample> DecodePoll(ReadOnlySpan<byte> frame)
@@ -72,6 +92,7 @@ public sealed class SamplePowerDriver : IDeviceDriver
         byte function,
         byte[] payload,
         int responseLength,
+        TimeSpan delayAfter,
         FrameDecoder decode) : IExchange
     {
         public ExchangeStep Start()
@@ -82,7 +103,7 @@ public sealed class SamplePowerDriver : IDeviceDriver
             request[2] = function;
             payload.CopyTo(request, 3);
             request[^1] = Sum(request.AsSpan(0, request.Length - 1));
-            return new ExchangeStep.Send(request);
+            return new ExchangeStep.Send(request) { GapBefore = Gap, DelayAfter = delayAfter };
         }
 
         public FrameStatus Match(ReadOnlySpan<byte> received, out int frameLength)
@@ -112,9 +133,9 @@ public sealed class SamplePowerDriver : IDeviceDriver
         }
     }
 
-    private sealed class FailedExchange(string reason) : IExchange
+    private sealed class FailedExchange(string reason, FailureKind kind) : IExchange
     {
-        public ExchangeStep Start() => new ExchangeStep.Failed(reason);
+        public ExchangeStep Start() => new ExchangeStep.Failed(reason, kind);
 
         public FrameStatus Match(ReadOnlySpan<byte> received, out int frameLength)
         {
@@ -122,6 +143,6 @@ public sealed class SamplePowerDriver : IDeviceDriver
             return FrameStatus.Invalid;
         }
 
-        public ExchangeStep OnFrame(ReadOnlySpan<byte> frame) => new ExchangeStep.Failed(reason);
+        public ExchangeStep OnFrame(ReadOnlySpan<byte> frame) => new ExchangeStep.Failed(reason, kind);
     }
 }

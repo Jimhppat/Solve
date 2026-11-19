@@ -25,10 +25,29 @@ public interface IDeviceDriver
 }
 
 /// <summary>
+/// 模块所在总线的物理链路类型
+/// </summary>
+public enum LinkKind
+{
+    /// <summary>
+    /// 串口（RS-232 / RS-485）
+    /// </summary>
+    Serial = 1,
+
+    /// <summary>
+    /// TCP 客户端（直连设备，或经串口服务器转发）
+    /// </summary>
+    Tcp = 2,
+}
+
+/// <summary>
 /// 模块的上下文
 /// </summary>
 /// <param name="Address">模块在总线上的地址，已按 <see cref="DriverInfo.MinAddress"/>–<see cref="DriverInfo.MaxAddress"/> 校验</param>
-public sealed record DeviceContext(int Address);
+/// <param name="Link">所在总线的链路类型。只表示物理链路：经串口服务器转发的 RTU 也是 <see cref="LinkKind.Tcp"/>，
+/// 报文封装方式应由驱动声明的参数决定，链路类型只适合作为该参数的默认值参考</param>
+/// <param name="Parameters">模块参数值，已按 <see cref="DriverInfo.Parameters"/> 校验并补全默认值</param>
+public sealed record DeviceContext(int Address, LinkKind Link, DeviceParameters Parameters);
 
 /// <summary>
 /// 发给模块的一条命令

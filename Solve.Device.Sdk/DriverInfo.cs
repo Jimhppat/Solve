@@ -81,7 +81,66 @@ public sealed record DriverInfo(
     int MinAddress,
     int MaxAddress)
 {
+    public const int MaxNameLength = 64;
+    public const int MinAllowedAddress = 1;
+    public const int MaxAllowedAddress = 255;
+
     public IReadOnlyList<PointInfo> Points { get; init; } = [];
 
     public IReadOnlyList<CommandInfo> Commands { get; init; } = [];
+
+    /// <summary>
+    /// 模块参数（同一型号在不同现场的不同配置）
+    /// </summary>
+    public IReadOnlyList<ParameterInfo> Parameters { get; init; } = [];
+
+    /// <summary>
+    /// 检查驱动说明是否有效（设备库加载驱动包时调用，驱动的测试也应调用）。返回全部问题，空列表表示有效。
+    /// </summary>
+    public IReadOnlyList<string> Validate()
+    {
+        var problems = new List<string>();
+
+        if (!KeyFormat.IsValid(Id))
+            problems.Add($"驱动标识「{Id}」格式无效：只能含小写字母、数字、'.'、'-'、'_'，最长 {KeyFormat.MaxLength} 个字符。");
+        if (string.IsNullOrWhiteSpace(Name) || Name.Length > MaxNameLength)
+            problems.Add($"驱动 {Id} 的名称不能为空，且不能超过 {MaxNameLength} 个字符。");
+        if (!Enum.IsDefined(Category))
+            problems.Add($"驱动 {Id} 的分类未定义：{(int)Category}。");
+        if (MinAddress < MinAllowedAddress || MaxAddress > MaxAllowedAddress || MinAddress > MaxAddress)
+            problems.Add($"驱动 {Id} 的地址范围 [{MinAddress}, {MaxAddress}] 必须在 [{MinAllowedAddress}, {MaxAllowedAddress}] 之内且下限不大于上限。");
+
+        // 记录的 init 列表可被设成 null，这里不能信任可空注解
+        CheckKeys("点位", Points?.Select(p => (p?.Key, p is not null && !string.IsNullOrWhiteSpace(p.Name) && Enum.IsDefined(p.Access))), problems);
+        CheckKeys("命令", Commands?.Select(c => (c?.Key, c is not null && !string.IsNullOrWhiteSpace(c.Name) && Enum.IsDefined(c.Safety))), problems);
+        CheckKeys("参数", Parameters?.Select(p => (p?.Key, p is not null)), problems);
+
+        foreach (var parameter in Parameters ?? [])
+        {
+            if (parameter is not null)
+                problems.AddRange(parameter.ValidateDeclaration());
+        }
+
+        return problems;
+    }
+
+    private void CheckKeys(string kind, IEnumerable<(string? Key, bool Complete)>? items, List<string> problems)
+    {
+        if (items is null)
+        {
+            problems.Add($"驱动 {Id} 的{kind}列表不能为 null。");
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (key, complete) in items)
+        {
+            if (!KeyFormat.IsValid(key))
+                problems.Add($"驱动 {Id} 的{kind}标识「{key}」格式无效。");
+            else if (!seen.Add(key!))
+                problems.Add($"驱动 {Id} 的{kind}标识 {key} 重复。");
+            else if (!complete)
+                problems.Add($"驱动 {Id} 的{kind} {key} 名称为空或枚举值未定义。");
+        }
+    }
 }
