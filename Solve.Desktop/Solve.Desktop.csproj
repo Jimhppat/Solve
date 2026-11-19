@@ -34,6 +34,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\Solve.Adapters.DeviceLibrary\Solve.Adapters.DeviceLibrary.csproj" />
       <ProjectReference Include="..\Solve.Adapters.Hardware\Solve.Adapters.Hardware.csproj" />
       <ProjectReference Include="..\Solve.Adapters.Persistence\Solve.Adapters.Persistence.csproj" />
       <ProjectReference Include="..\Solve.Core.Application\Solve.Core.Application.csproj" />

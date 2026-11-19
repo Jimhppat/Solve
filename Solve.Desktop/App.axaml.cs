@@ -75,6 +75,10 @@ public partial class App : Application
                     if (_host.Devices is { } devices)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDevices(devices));
 
+                    // 设置页的设备库卡片：查看驱动包状态，确认或撤销第三方驱动包
+                    if (_host.DeviceLibrary is { } library)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDeviceLibrary(library));
+
                     if (_host.BusService is not null)
                     {
                         var isHardware = report.Mode?.Mode == TransportMode.Hardware;

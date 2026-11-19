@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        示例驱动包：给驱动作者的样板，也是设备库加载测试的夹具。
+        只引用 SDK；交付时把 Sample.DriverPackage.dll 与 package.json 放进设备库下的一个子目录。
+        SDK 由主程序提供，不随驱动包复制（Private=false），避免包里出现第二份契约程序集。
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>14</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Solve.Device.Sdk\Solve.Device.Sdk.csproj" Private="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="package.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>

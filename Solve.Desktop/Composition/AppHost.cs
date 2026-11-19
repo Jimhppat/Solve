@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Serilog.Extensions.Logging;
 using Solve.Adapters.Hardware.Buses;
 using Solve.Adapters.Hardware.Buses.Simulation;
-using Solve.Adapters.Hardware.Drivers;
+using Solve.Adapters.DeviceLibrary;
 using Solve.Adapters.Persistence.Buses;
 using Solve.Adapters.Persistence.Devices;
 using Solve.Adapters.Persistence.Settings;
@@ -14,6 +14,7 @@ using Solve.Adapters.Persistence.Sqlite;
 using Solve.Adapters.Persistence.Topology;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
@@ -54,6 +55,7 @@ public sealed class AppHost : IAsyncDisposable
     private BusManager? _buses;
     private BusManagementService? _busService;
     private DeviceService? _devices;
+    private DeviceLibraryManager? _deviceLibrary;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
     private bool _disposed;
@@ -165,6 +167,20 @@ public sealed class AppHost : IAsyncDisposable
             lock (_gate)
             {
                 return _devices;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 设备库（第三方驱动包的发现、确认与加载状态）；启动完成前、配置库不可用或未配置设备库目录时为 null
+    /// </summary>
+    public IDeviceLibrary? DeviceLibrary
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _deviceLibrary;
             }
         }
     }
@@ -342,16 +358,25 @@ public sealed class AppHost : IAsyncDisposable
             var service = new BusManagementService(
                 manager, repository, _loggerFactory.CreateLogger<BusManagementService>());
 
-            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除。
-            // 驱动目录是代码常量，构造时校验，登记错误在启动时就暴露
+            // 设备库：只加载经操作员确认且文件未变的第三方驱动包；单个包出错只影响它自己。
+            // 未配置设备库目录时只有程序内置驱动
+            DeviceLibraryManager? library = null;
+            if (Options.DeviceLibraryDirectory is { } libraryDirectory)
+            {
+                library = await DeviceLibraryManager.LoadAsync(
+                    libraryDirectory, settings, _loggerFactory.CreateLogger<DeviceLibraryManager>(), cancellationToken).ConfigureAwait(false);
+            }
+
+            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除
             var devices = new DeviceService(
                 new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>()),
-                new BuiltInDriverCatalog(),
+                library?.Catalog ?? new DriverCatalog(),
                 _loggerFactory.CreateLogger<DeviceService>());
             lock (_gate)
             {
                 _busService = service;
                 _devices = devices;
+                _deviceLibrary = library;
             }
 
             var snapshot = await repository.LoadAllAsync(cancellationToken).ConfigureAwait(false);

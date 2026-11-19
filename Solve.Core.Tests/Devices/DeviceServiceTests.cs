@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Solve.Adapters.Hardware.Drivers;
+using Solve.Adapters.DeviceLibrary;
 using Solve.Core.Application.Devices;
 using Solve.Core.Application.Devices.Ports;
 using Solve.Core.Domain.Buses;
@@ -47,11 +47,11 @@ public sealed class DeviceServiceTests
         }
     }
 
-    private static readonly DriverId Generic = BuiltInDriverCatalog.GenericModule;
+    private static readonly DriverId Generic = DriverCatalog.GenericModule;
     private static readonly DriverId Power = DriverId.Of("test.power");
 
     // 测试目录：通用模块 1–255，电源 1–10（验证驱动自身的地址范围）
-    private static readonly BuiltInDriverCatalog Catalog = new(
+    private static readonly DriverCatalog Catalog = new(
     [
         new DriverDescriptor(Generic, "通用模块", HardwareCategory.General, "", 1, 255),
         new DriverDescriptor(Power, "程控电源", HardwareCategory.PowerAndLoad, "", 1, 10),
@@ -158,22 +158,22 @@ public sealed class DeviceServiceTests
     [Fact]
     public void BuiltInCatalog_IsValid_AndContainsGenericModule()
     {
-        var catalog = new BuiltInDriverCatalog();
+        var catalog = new DriverCatalog();
 
-        Assert.True(catalog.TryGet(BuiltInDriverCatalog.GenericModule, out var generic));
+        Assert.True(catalog.TryGet(DriverCatalog.GenericModule, out var generic));
         Assert.Equal(HardwareCategory.General, generic.Category);
     }
 
     [Fact]
     public void Catalog_RejectsDuplicateIds_AndInvalidRange()
     {
-        Assert.Throws<InvalidOperationException>(() => new BuiltInDriverCatalog(
+        Assert.Throws<InvalidOperationException>(() => new DriverCatalog(
         [
             new DriverDescriptor(Generic, "a", HardwareCategory.General, "", 1, 2),
             new DriverDescriptor(Generic, "b", HardwareCategory.General, "", 1, 2),
         ]));
 
-        Assert.Throws<InvalidOperationException>(() => new BuiltInDriverCatalog(
+        Assert.Throws<InvalidOperationException>(() => new DriverCatalog(
             [new DriverDescriptor(Generic, "a", HardwareCategory.General, "", 0, 256)]));
     }
 

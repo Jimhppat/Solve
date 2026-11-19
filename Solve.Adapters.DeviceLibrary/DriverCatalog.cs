@@ -3,19 +3,22 @@ using Solve.Core.Application.Drivers;
 using Solve.Core.Domain.Devices;
 using Solve.Core.Domain.Drivers;
 
-namespace Solve.Adapters.Hardware.Drivers;
+namespace Solve.Adapters.DeviceLibrary;
 
 /// <summary>
-/// 程序内置的驱动目录。新增硬件驱动时在 <see cref="Definitions"/> 里登记一项；已发布的 <see cref="DriverId"/> 不得改名。
+/// 驱动目录：程序自带的驱动 + 设备库中已加载的驱动包。构造后不可变，可被任意线程无锁读取。
 /// </summary>
-public sealed class BuiltInDriverCatalog : IDriverCatalog
+public sealed class DriverCatalog : IDriverCatalog
 {
     /// <summary>
-    /// 通用模块：不含协议，只记录名称与地址。在具体硬件驱动接入之前用于登记总线上的模块。
+    /// 通用模块：不含协议，只记录名称与地址，程序自带。已发布的标识不得改名。
     /// </summary>
     public static readonly DriverId GenericModule = DriverId.Of("generic.module");
 
-    private static readonly DriverDescriptor[] Definitions =
+    /// <summary>
+    /// 程序自带的驱动
+    /// </summary>
+    public static IReadOnlyList<DriverDescriptor> BuiltIns { get; } =
     [
         new(GenericModule, "通用模块", HardwareCategory.General,
             "不含通信协议，只登记模块名称与地址",
@@ -24,15 +27,15 @@ public sealed class BuiltInDriverCatalog : IDriverCatalog
 
     private readonly Dictionary<DriverId, DriverDescriptor> _byId;
 
-    public BuiltInDriverCatalog()
-        : this(Definitions)
+    /// <summary>
+    /// 只含程序自带的驱动（设备库不可用时使用）
+    /// </summary>
+    public DriverCatalog()
+        : this(BuiltIns)
     {
     }
 
-    /// <summary>
-    /// 供测试注入自定义目录
-    /// </summary>
-    public BuiltInDriverCatalog(IEnumerable<DriverDescriptor> drivers)
+    public DriverCatalog(IEnumerable<DriverDescriptor> drivers)
     {
         ArgumentNullException.ThrowIfNull(drivers);
 
@@ -45,7 +48,7 @@ public sealed class BuiltInDriverCatalog : IDriverCatalog
         }
 
         All = _byId.Values
-            .OrderBy(d => HardwareCategoryOrder(d.Category))
+            .OrderBy(d => CategoryOrder(d.Category))
             .ThenBy(d => d.Name, StringComparer.CurrentCulture)
             .ToArray();
     }
@@ -55,7 +58,7 @@ public sealed class BuiltInDriverCatalog : IDriverCatalog
     public bool TryGet(DriverId id, [NotNullWhen(true)] out DriverDescriptor? driver)
         => _byId.TryGetValue(id, out driver);
 
-    private static int HardwareCategoryOrder(HardwareCategory category)
+    private static int CategoryOrder(HardwareCategory category)
     {
         for (var i = 0; i < HardwareCategories.All.Count; i++)
         {

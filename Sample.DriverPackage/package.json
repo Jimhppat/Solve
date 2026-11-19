@@ -1,0 +1,9 @@
+{
+  "id": "sample.drivers",
+  "name": "示例驱动包",
+  "version": "1.0.0",
+  "author": "Solve",
+  "sdkVersion": 1,
+  "entryAssembly": "Sample.DriverPackage.dll",
+  "entryType": "Sample.DriverPackage.SampleDriverPackage"
+}

@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
@@ -139,6 +140,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 接入总线挂载设备服务（总线页的设备页）。须在 UI 线程上调用。
     /// </summary>
     public void AttachDevices(IDeviceService devices) => BusConsole.AttachDevices(devices);
+
+    /// <summary>
+    /// 接入设备库（设置页的「设备库」卡片）。须在 UI 线程上调用。
+    /// </summary>
+    public void AttachDeviceLibrary(IDeviceLibrary library) => Settings.DeviceLibrary.Attach(library);
 
     /// <summary>
     /// 接入孪生状态库（主控台显示区）。须在 UI 线程上调用，只能调用一次。

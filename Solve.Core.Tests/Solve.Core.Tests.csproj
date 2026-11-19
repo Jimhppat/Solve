@@ -24,6 +24,8 @@
     <ProjectReference Include="..\Solve.Adapters.Hardware\Solve.Adapters.Hardware.csproj" />
     <ProjectReference Include="..\Solve.Adapters.Persistence\Solve.Adapters.Persistence.csproj" />
     <ProjectReference Include="..\Solve.Desktop\Solve.Desktop.csproj" />
+    <!-- 设备库加载测试的夹具：只为把示例驱动包的程序集复制到测试输出目录，测试代码不直接引用其中的类型 -->
+    <ProjectReference Include="..\Sample.DriverPackage\Sample.DriverPackage.csproj" />
   </ItemGroup>
 
 </Project>

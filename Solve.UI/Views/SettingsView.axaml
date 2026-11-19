@@ -52,6 +52,14 @@
         <Style Selector="TextBlock.error">
             <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
         </Style>
+        <!-- 设备库操作结果：正常字号；失败为危险色（.error 须排在 .message 之后） -->
+        <Style Selector="TextBlock.message">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.message.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
         <Style Selector="Border.notice">
             <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
             <Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" />
@@ -175,6 +183,107 @@
                                    Classes.error="{Binding IsSaveError}"
                                    IsVisible="{Binding HasSaveMessage}"
                                    Text="{Binding SaveMessage}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 设备库：第三方驱动包。启用 / 撤销是即时操作，重启后生效，不随页面「保存」提交 -->
+                <Border Classes="panel" Padding="20,16" DataContext="{Binding DeviceLibrary}"
+                        x:DataType="vm:DeviceLibraryViewModel">
+                    <StackPanel Spacing="12">
+
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Command="{Binding RescanCommand}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Data="{DynamicResource SemiIconRefresh}" Width="12" Height="12" />
+                                    <TextBlock Text="重新扫描" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14"
+                                          Foreground="{DynamicResource SemiColorPrimary}" />
+                                <TextBlock Classes="section" Text="设备库" />
+                            </StackPanel>
+                        </DockPanel>
+                        <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+
+                        <TextBlock IsVisible="{Binding !IsAvailable}" Text="设备库不可用：配置库未就绪"
+                                   Foreground="{DynamicResource SemiColorText1}" />
+
+                        <Grid ColumnDefinitions="88,*,Auto" ColumnSpacing="12" IsVisible="{Binding IsAvailable}">
+                            <TextBlock Grid.Column="0" Classes="label" Text="目录" />
+                            <TextBox Grid.Column="1" IsReadOnly="True" Text="{Binding RootDirectory}" />
+                            <Button Grid.Column="2" Click="OnOpenDeviceLibrary">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <PathIcon Data="{DynamicResource SemiIconFolderOpen}" Width="12" Height="12" />
+                                    <TextBlock Text="打开" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <TextBlock IsVisible="{Binding IsEmpty}" Text="设备库中暂无驱动包"
+                                   Foreground="{DynamicResource SemiColorText1}" />
+
+                        <!-- 驱动包列表：名称、版本、作者、驱动、状态、操作；有问题的包在下一行写明原因 -->
+                        <StackPanel IsVisible="{Binding HasPackages}" Spacing="0">
+                            <Grid ColumnDefinitions="1.6*,90,1*,1.6*,150,90" ColumnSpacing="12" Margin="0,0,0,6">
+                                <TextBlock Grid.Column="0" Classes="label" Text="驱动包" />
+                                <TextBlock Grid.Column="1" Classes="label" Text="版本" />
+                                <TextBlock Grid.Column="2" Classes="label" Text="作者" />
+                                <TextBlock Grid.Column="3" Classes="label" Text="驱动" />
+                                <TextBlock Grid.Column="4" Classes="label" Text="状态" />
+                            </Grid>
+                            <ItemsControl ItemsSource="{Binding Packages}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DriverPackageItemViewModel">
+                                        <Border BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,1,0,0" Padding="0,8">
+                                            <StackPanel Spacing="4">
+                                                <Grid ColumnDefinitions="1.6*,90,1*,1.6*,150,90" ColumnSpacing="12">
+                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Medium"
+                                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource SemiColorText0}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Version}" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource SemiColorText1}" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding Author}" VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource SemiColorText1}" />
+                                                    <TextBlock Grid.Column="3" Text="{Binding DriversText}" VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DriversText}"
+                                                               Foreground="{DynamicResource SemiColorText1}" />
+                                                    <TextBlock Grid.Column="4" Text="{Binding StatusText}" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" Foreground="{Binding StatusColor}" />
+                                                    <StackPanel Grid.Column="5" HorizontalAlignment="Right">
+                                                        <Button Classes="Small Primary" Content="启用"
+                                                                IsVisible="{Binding CanApprove}"
+                                                                Command="{Binding ApproveCommand}" />
+                                                        <Button Classes="Small Warning" Content="撤销"
+                                                                IsVisible="{Binding CanRevoke}"
+                                                                Command="{Binding RevokeCommand}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                                <TextBlock IsVisible="{Binding HasProblem}" Text="{Binding Problem}"
+                                                           TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText1}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- 启用前再次确认：启用意味着重启后加载并执行包内代码 -->
+                        <Border Classes="notice danger" IsVisible="{Binding IsApprovalPending}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="{Binding ApprovalText}" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource SemiColorText0}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Classes="Danger" Theme="{DynamicResource SolidButton}"
+                                            Content="确认启用" Command="{Binding ConfirmApprovalCommand}" />
+                                    <Button Content="取消" Command="{Binding CancelApprovalCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Classes="message" Classes.error="{Binding IsMessageError}"
+                                   IsVisible="{Binding HasMessage}" Text="{Binding Message}" />
                     </StackPanel>
                 </Border>
             </StackPanel>

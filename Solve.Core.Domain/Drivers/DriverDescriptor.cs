@@ -15,6 +15,8 @@ public sealed record DriverDescriptor(
     int MinAddress,
     int MaxAddress)
 {
+    public const int MaxNameLength = 64;
+
     /// <summary>
     /// 该驱动允许的地址个数，即一次最多添加的模块数
     /// </summary>
@@ -31,6 +33,8 @@ public sealed record DriverDescriptor(
             throw new InvalidOperationException("驱动标识不能为空。");
         if (string.IsNullOrWhiteSpace(Name))
             throw new InvalidOperationException($"驱动 {Id} 的名称不能为空。");
+        if (Name.Length > MaxNameLength)
+            throw new InvalidOperationException($"驱动 {Id} 的名称不能超过 {MaxNameLength} 个字符。");
         if (!Enum.IsDefined(Category))
             throw new InvalidOperationException($"驱动 {Id} 的分类未定义：{(int)Category}。");
         if (MinAddress < DeviceDescriptor.MinAddress || MaxAddress > DeviceDescriptor.MaxAddress || MinAddress > MaxAddress)

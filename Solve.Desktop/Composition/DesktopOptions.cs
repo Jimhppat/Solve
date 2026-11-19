@@ -14,13 +14,17 @@ namespace Solve.Desktop.Composition;
 /// <param name="LogDirectory">默认的黑匣子日志目录；设置页可改到其他目录，与保存天数等一起保存在 <paramref name="LogLocationPath"/></param>
 /// <param name="LoggingSettingsPath">日志级别配置文件；为 null 时不读取，使用默认级别</param>
 /// <param name="LogLocationPath">日志设置文件（目录、保存天数、单个文件上限）；为 null 时始终使用默认设置，设置页不能保存</param>
+/// <param name="DeviceLibraryDirectory">设备库目录（第三方驱动包）；为 null 时不扫描，只有程序内置驱动</param>
 public sealed record DesktopOptions(
     bool HardwareRequested,
     string DatabasePath,
     string LogDirectory,
     string? LoggingSettingsPath = null,
-    string? LogLocationPath = null)
+    string? LogLocationPath = null,
+    string? DeviceLibraryDirectory = null)
 {
+    public const string DeviceLibraryDirectoryName = "DeviceLibrary";
+
     public const string HardwareArgument = "--hardware";
 
     public const string LoggingSettingsFileName = "appsettings.json";
@@ -38,6 +42,7 @@ public sealed record DesktopOptions(
             DatabasePath: Path.Combine(baseDirectory, "config", "solve.db"),
             LogDirectory: Path.Combine(baseDirectory, "logs"),
             LoggingSettingsPath: Path.Combine(baseDirectory, LoggingSettingsFileName),
-            LogLocationPath: Path.Combine(baseDirectory, "config", LogSettingsStore.FileName));
+            LogLocationPath: Path.Combine(baseDirectory, "config", LogSettingsStore.FileName),
+            DeviceLibraryDirectory: Path.Combine(baseDirectory, DeviceLibraryDirectoryName));
     }
 }

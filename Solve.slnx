@@ -1,12 +1,19 @@
 <Solution>
   <Folder Name="/src/" />
   <Folder Name="/src/Adapters/">
+    <Project Path="Solve.Adapters.DeviceLibrary/Solve.Adapters.DeviceLibrary.csproj" />
     <Project Path="Solve.Adapters.Hardware/Solve.Adapters.Hardware.csproj" />
     <Project Path="Solve.Adapters.Persistence/Solve.Adapters.Persistence.csproj" />
   </Folder>
   <Folder Name="/src/Core/">
     <Project Path="Solve.Core.Application/Solve.Core.Application.csproj" />
     <Project Path="Solve.Core.Domain/Solve.Core.Domain.csproj" />
+  </Folder>
+  <Folder Name="/sdk/">
+    <Project Path="Solve.Device.Sdk/Solve.Device.Sdk.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="Sample.DriverPackage/Sample.DriverPackage.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="Solve.Core.Tests/Solve.Core.Tests.csproj" />
