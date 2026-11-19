@@ -67,6 +67,7 @@ public partial class MainWindow : Window
         window.Closed += (_, _) =>
         {
             _moduleWindows.Remove(page);
+            page.Dispose();
             _busConsole?.ReleaseModulePage(page);
         };
         window.Show(this);

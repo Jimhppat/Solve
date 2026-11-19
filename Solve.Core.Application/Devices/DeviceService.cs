@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Devices.Ports;
+using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Drivers;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
@@ -24,21 +25,26 @@ public sealed class DeviceService : IDeviceService
         IDeviceRepository repository,
         IDriverCatalog drivers,
         IDeviceBindings bindings,
+        IModuleStatusSource statuses,
         ILogger<DeviceService> logger)
     {
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(drivers);
         ArgumentNullException.ThrowIfNull(bindings);
+        ArgumentNullException.ThrowIfNull(statuses);
         ArgumentNullException.ThrowIfNull(logger);
         _repository = repository;
         Drivers = drivers;
         Bindings = bindings;
+        Statuses = statuses;
         _logger = logger;
     }
 
     public IDriverCatalog Drivers { get; }
 
     public IDeviceBindings Bindings { get; }
+
+    public IModuleStatusSource Statuses { get; }
 
     public Task<Result<IReadOnlyList<DeviceDescriptor>>> ListAsync(BusId busId, CancellationToken cancellationToken)
         => _repository.ListByBusAsync(busId, cancellationToken);

@@ -52,6 +52,11 @@ public sealed record DriverBinding(DeviceDescriptor Device, DriverBindingStatus 
 {
     public IDeviceSession? Session { get; init; }
 
+    /// <summary>
+    /// 驱动说明（点位、命令、参数的声明）；有驱动实现时非空
+    /// </summary>
+    public DriverInfo? Driver { get; init; }
+
     public DeviceContext? Context { get; init; }
 }
 
@@ -104,7 +109,7 @@ public sealed class DriverBinder
             if (session is null)
                 return new DriverBinding(device, DriverBindingStatus.SessionFailed, $"{info.Name}没有返回会话。");
 
-            return new DriverBinding(device, DriverBindingStatus.Ready, null) { Session = session, Context = context };
+            return new DriverBinding(device, DriverBindingStatus.Ready, null) { Session = session, Context = context, Driver = info };
         }
         catch (Exception ex)
         {

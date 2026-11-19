@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.DeviceLibrary;
 using Solve.Core.Application.Devices;
+using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Devices.Ports;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
@@ -78,7 +79,7 @@ public sealed class DeviceServiceTests
 
     private readonly RecordingBindings _bindings = new();
 
-    private DeviceService CreateService() => new(_repository, Catalog, _bindings, NullLogger<DeviceService>.Instance);
+    private DeviceService CreateService() => new(_repository, Catalog, _bindings, new ModuleStatusStore(), NullLogger<DeviceService>.Instance);
 
     private Task<Result<IReadOnlyList<DeviceDescriptor>>> AddAsync(DriverId driver, string name, int start, int count)
         => CreateService().AddBatchAsync(new DeviceBatchRequest(_busId, driver, name, start, count), CancellationToken.None);

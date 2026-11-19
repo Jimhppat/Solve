@@ -5,6 +5,7 @@ using Solve.Adapters.Persistence.Devices;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Devices;
+using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Core.Domain.Devices;
@@ -176,7 +177,7 @@ public sealed class DriverBindingTests : IAsyncLifetime
         var catalog = CreateCatalog();
         _registry = new DeviceBindingRegistry(_devices, _buses, new DriverBinder(catalog, NullLogger<DriverBinder>.Instance),
             NullLogger<DeviceBindingRegistry>.Instance);
-        _service = new DeviceService(_devices, catalog, _registry, NullLogger<DeviceService>.Instance);
+        _service = new DeviceService(_devices, catalog, _registry, new ModuleStatusStore(), NullLogger<DeviceService>.Instance);
     }
 
     public async Task DisposeAsync()

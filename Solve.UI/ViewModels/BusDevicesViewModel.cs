@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using Solve.Core.Application.Devices;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Devices;
@@ -20,8 +21,13 @@ namespace Solve.UI.ViewModels;
 /// 线程：命令由 UI 线程发起；存储调用（同步磁盘 I/O）经 Task.Run 放到线程池，await 后回到 UI 线程更新列表。
 /// 添加、保存、删除使用 AsyncRelayCommand，执行期间按钮不可再次点击，防止重复提交。
 /// </remarks>
-public sealed class BusDevicesViewModel : ViewModelBase
+public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
 {
+    private static readonly TimeSpan StatusRefreshInterval = TimeSpan.FromMilliseconds(500);
+
+    private DispatcherTimer? _statusTimer;
+    private bool _disposed;
+
     private const string UnknownDriverName = "未知驱动";
 
     private readonly IDeviceService? _service;
@@ -305,6 +311,33 @@ public sealed class BusDevicesViewModel : ViewModelBase
         // 绑定在增删改成功后已由服务重新计算；这里只读取内存中的快照，不触发绑定
         var bindings = service.Bindings.Get(busId).ToDictionary(b => b.Device.Id);
         Show(listed.Value, bindings);
+        RefreshStatuses();
+
+        // 通信状态与读数按固定频率从内存快照刷新（不随每次轮询刷新，限制界面重绘频率）
+        if (_statusTimer is null && !_disposed)
+        {
+            _statusTimer = new DispatcherTimer(StatusRefreshInterval, DispatcherPriority.Background, (_, _) => RefreshStatuses());
+            _statusTimer.Start();
+        }
+    }
+
+    /// <summary>
+    /// 窗口关闭：停止刷新。须在 UI 线程上调用，幂等。
+    /// </summary>
+    public void Dispose()
+    {
+        _disposed = true;
+        _statusTimer?.Stop();
+        _statusTimer = null;
+    }
+
+    private void RefreshStatuses()
+    {
+        if (_service is null)
+            return;
+
+        foreach (var item in Devices)
+            item.ApplyStatus(_service.Statuses.Get(item.Device.Id));
     }
 
     private static IReadOnlyList<DriverCategoryItem> BuildCategories(IReadOnlyList<DriverItemViewModel> drivers)

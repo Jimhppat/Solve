@@ -292,7 +292,7 @@
 
                             <Grid RowDefinitions="Auto,*">
                                 <Border Grid.Row="0" Classes="head">
-                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,120,1.4*,100">
+                                    <Grid ColumnDefinitions="40,70,1.2*,1*,100,90,2*,1*,90">
                                         <CheckBox Grid.Column="0" IsThreeState="True" VerticalAlignment="Center"
                                                   IsChecked="{Binding IsAllChecked}" IsEnabled="{Binding HasDevices}"
                                                   ToolTip.Tip="全选" />
@@ -300,8 +300,10 @@
                                         <TextBlock Grid.Column="2" Text="名称" />
                                         <TextBlock Grid.Column="3" Text="驱动" />
                                         <TextBlock Grid.Column="4" Text="驱动状态" />
-                                        <TextBlock Grid.Column="5" Text="备注" />
-                                        <TextBlock Grid.Column="6" Text="操作" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="5" Text="通信" />
+                                        <TextBlock Grid.Column="6" Text="读数" />
+                                        <TextBlock Grid.Column="7" Text="备注" />
+                                        <TextBlock Grid.Column="8" Text="操作" HorizontalAlignment="Right" />
                                     </Grid>
                                 </Border>
 
@@ -321,7 +323,7 @@
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:DeviceItemViewModel">
                                                 <Border Classes="row">
-                                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,120,1.4*,100">
+                                                    <Grid ColumnDefinitions="40,70,1.2*,1*,100,90,2*,1*,90">
                                                         <CheckBox Grid.Column="0" VerticalAlignment="Center"
                                                                   IsChecked="{Binding IsChecked}" />
                                                         <TextBlock Grid.Column="1" Classes="mono" Text="{Binding Address}" />
@@ -330,9 +332,14 @@
                                                         <TextBlock Grid.Column="4" Text="{Binding BindingText}" FontWeight="SemiBold"
                                                                    Foreground="{Binding BindingColor}"
                                                                    ToolTip.Tip="{Binding BindingProblem}" />
-                                                        <TextBlock Grid.Column="5" Classes="muted" Text="{Binding Remark}"
+                                                        <TextBlock Grid.Column="5" Text="{Binding CommText}" FontWeight="SemiBold"
+                                                                   Foreground="{Binding CommColor}"
+                                                                   ToolTip.Tip="{Binding CommProblem}" />
+                                                        <TextBlock Grid.Column="6" Classes="mono" Text="{Binding Readings}"
+                                                                   ToolTip.Tip="{Binding Readings}" />
+                                                        <TextBlock Grid.Column="7" Classes="muted" Text="{Binding Remark}"
                                                                    ToolTip.Tip="{Binding Remark}" />
-                                                        <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="6"
+                                                        <StackPanel Grid.Column="8" Orientation="Horizontal" Spacing="6"
                                                                     HorizontalAlignment="Right" VerticalAlignment="Center">
                                                             <Button Classes="Small Tertiary" Command="{Binding EditCommand}"
                                                                     ToolTip.Tip="编辑模块">

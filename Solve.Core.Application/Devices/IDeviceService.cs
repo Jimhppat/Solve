@@ -27,6 +27,11 @@ public interface IDeviceService
     IDeviceBindings Bindings { get; }
 
     /// <summary>
+    /// 各模块的通信状态与点位实时值（由轮询调度写入）
+    /// </summary>
+    Runtime.IModuleStatusSource Statuses { get; }
+
+    /// <summary>
     /// 一条总线上的全部模块，按地址升序
     /// </summary>
     Task<Result<IReadOnlyList<DeviceDescriptor>>> ListAsync(BusId busId, CancellationToken cancellationToken);
