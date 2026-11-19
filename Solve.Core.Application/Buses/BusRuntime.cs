@@ -17,7 +17,8 @@ namespace Solve.Core.Application.Buses;
 /// 都只在这里发生。其他线程只能投递请求并唤醒它（控制面的“单所有者”）。</item>
 /// <item>协议事务在调用方线程执行，通过 <see cref="ExecuteAsync{T}"/> 由通道锁串行化；
 /// 监督任务的 Open/Close 也持有同一把锁，因此物理通道上任意时刻只有一个操作。</item>
-/// <item>所有状态迁移经 <see cref="Fire"/> 在 _stateGate 内完成，事件按迁移顺序入队。</item>
+/// <item>所有状态迁移经 <see cref="Fire"/> 在 _stateGate 内完成，事件按迁移顺序入队；
+/// 对外的 <see cref="State"/> 也经 _stateGate 读取，读到的状态不会领先于已发布的事件。</item>
 /// </list>
 /// <para>故障安全：</para>
 /// <list type="bullet">
@@ -135,7 +136,22 @@ public sealed class BusRuntime : IAsyncDisposable
         }
     }
 
-    public BusState State => _machine.State;
+    /// <summary>
+    /// 当前状态，与状态事件线性一致：读到某个状态时，导致它的迁移事件已进入所有订阅队列。
+    /// </summary>
+    public BusState State
+    {
+        get
+        {
+            // 必须经运行时状态锁读取：Fire 在同一临界区内先迁移状态机、再取时间戳并发布事件。
+            // 只经状态机自身的锁读取，会在这两步之间读到新状态，而对应事件尚未入队；
+            // "先看状态、再取事件"的消费方会因此漏掉该事件，随后又把它当作新事件收到。
+            lock (_stateGate)
+            {
+                return _machine.State;
+            }
+        }
+    }
 
     /// <summary>
     /// 订阅状态变化事件，并原子地取得订阅时刻的状态：<paramref name="current"/> 之后的每一次迁移都会进入返回的队列，

@@ -36,36 +36,37 @@ public sealed class BusRuntimeTests : IAsyncDisposable
     private readonly SimulatedTransport _sim;
     private readonly EventSubscription<BusStateChanged> _events;
 
+    private static readonly BusRuntimeOptions Options = new()
+    {
+        ChannelLockTimeout = TimeSpan.FromMilliseconds(500),
+        TransactionTimeout = TimeSpan.FromSeconds(1),
+        ShutdownTimeout = TimeSpan.FromSeconds(2),
+        FaultCooldown = TimeSpan.FromMilliseconds(50),
+    };
+
     public BusRuntimeTests()
     {
-        var descriptor = new TcpBusDescriptor(BusId.New(), "PLC-01", "127.0.0.1", 502)
-        {
-            Timeouts = new BusTimeouts(
-                Connect: TimeSpan.FromMilliseconds(200),
-                Read: TimeSpan.FromMilliseconds(100),
-                Write: TimeSpan.FromMilliseconds(100)),
-            Reconnect = new ReconnectPolicy(
-                InitialDelay: TimeSpan.FromMilliseconds(10),
-                MaxDelay: TimeSpan.FromMilliseconds(40),
-                Multiplier: 2.0,
-                MaxAttempts: 3),
-        };
-
-        var options = new BusRuntimeOptions
-        {
-            ChannelLockTimeout = TimeSpan.FromMilliseconds(500),
-            TransactionTimeout = TimeSpan.FromSeconds(1),
-            ShutdownTimeout = TimeSpan.FromSeconds(2),
-            FaultCooldown = TimeSpan.FromMilliseconds(50),
-        };
-
-        _runtime = BusRuntime.Create(descriptor, _factory, _interlock, NullLogger.Instance, options).Value;
+        var descriptor = NewDescriptor();
+        _runtime = BusRuntime.Create(descriptor, _factory, _interlock, NullLogger.Instance, Options).Value;
         Assert.True(_factory.TryGet(descriptor.Id, out _sim));
         _sim.Responder = request => request.ToArray();
         _events = _runtime.SubscribeStateChanges(out _);
     }
 
     public ValueTask DisposeAsync() => _runtime.DisposeAsync();
+
+    private static TcpBusDescriptor NewDescriptor() => new(BusId.New(), "PLC-01", "127.0.0.1", 502)
+    {
+        Timeouts = new BusTimeouts(
+            Connect: TimeSpan.FromMilliseconds(200),
+            Read: TimeSpan.FromMilliseconds(100),
+            Write: TimeSpan.FromMilliseconds(100)),
+        Reconnect = new ReconnectPolicy(
+            InitialDelay: TimeSpan.FromMilliseconds(10),
+            MaxDelay: TimeSpan.FromMilliseconds(40),
+            Multiplier: 2.0,
+            MaxAttempts: 3),
+    };
 
     // ---------- 辅助 ----------
 
@@ -366,7 +367,8 @@ public sealed class BusRuntimeTests : IAsyncDisposable
 
         Assert.True(_runtime.ReportHeartbeatLost().IsSuccess);
 
-        await WaitUntilAsync(() => DrainEvents().Any(e => e.Transition.To == BusState.Connected), "重连成功");
+        // 按事件顺序断言心跳丢失之后的完整路径；"出现过任一 →Connected"会被早于心跳丢失的陈旧事件误满足
+        Assert.Equal([BusState.Reconnecting, BusState.Connected], await CollectPathAsync(BusState.Connected));
         Assert.Equal(BusState.Connected, _runtime.State);
     }
 
@@ -527,6 +529,37 @@ public sealed class BusRuntimeTests : IAsyncDisposable
 
         Assert.Equal(BusState.Connected, current);
         Assert.Empty(Drain(late));
+    }
+
+    [Fact]
+    public async Task State_IsNeverObservedAheadOfItsEvent()
+    {
+        // 第 1 次取时间戳是测试线程上的 Disconnected → Connecting；第 2 次是监督任务上的 Connecting → Connected，
+        // 在这里挂住，监督任务就停在"状态机已迁移、事件未入队"的临界区中间（仍持有运行时状态锁）
+        using var clock = new BlockingTimeProvider(blockOnCall: 2, watchdog: Guard);
+        await using var runtime = BusRuntime.Create(
+            NewDescriptor(), new SimulatedTransportFactory(), _interlock, NullLogger.Instance, Options, clock).Value;
+        using var events = runtime.SubscribeStateChanges(out _);
+
+        Assert.True(runtime.Connect().IsSuccess);
+        await clock.Blocked.WaitAsync(Guard);
+
+        // 消费方常见写法：先看状态，再取事件（ConnectAsync + DrainEvents 就是这样）
+        var observer = Task.Run(() => (State: runtime.State, Events: Drain(events)));
+        try
+        {
+            // 旧实现读状态不经运行时状态锁，观察者会立刻带着 Connected 返回，而 →Connected 事件还不在队列里。
+            // 等待只用于给旧实现暴露问题的机会；修复后观察者阻塞到放行为止，结果与这段等待时长无关。
+            await Task.WhenAny(observer, Task.Delay(TimeSpan.FromMilliseconds(200)));
+        }
+        finally
+        {
+            clock.Release();
+        }
+
+        var (state, seen) = await observer.WaitAsync(Guard);
+        Assert.Equal(BusState.Connected, state);
+        Assert.Equal([BusState.Connecting, BusState.Connected], seen.Select(e => e.Transition.To));
     }
 
     [Fact]
