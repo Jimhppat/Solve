@@ -9,7 +9,7 @@
              x:DataType="tvm:TwinBoardViewModel"
              x:CompileBindings="True">
     <!-- 主控台显示区：从系统根开始的六层节点，铺满整个区域。
-         六层控件按视图模型类型在这里统一登记，各层控件互不引用，可单独修改 -->
+         各层控件按视图模型类型在这里统一登记，互不引用，可单独修改 -->
 
     <Design.DataContext>
         <tvm:TwinBoardViewModel />
@@ -28,11 +28,9 @@
         <DataTemplate DataType="tvm:SlotNodeViewModel">
             <tv:SlotNodeView />
         </DataTemplate>
+        <!-- 产品位没有自己的控件：由治具位一个元素画出全部产品格（见 FixtureNodeView） -->
         <DataTemplate DataType="tvm:FixtureNodeViewModel">
             <tv:FixtureNodeView />
-        </DataTemplate>
-        <DataTemplate DataType="tvm:ProductNodeViewModel">
-            <tv:ProductNodeView />
         </DataTemplate>
     </UserControl.DataTemplates>
 

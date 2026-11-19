@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using Avalonia;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
@@ -86,30 +85,9 @@ public static class TwinLegend
 /// </summary>
 public static class TwinConverters
 {
-    public static readonly IValueConverter StateBrush =
-        new FuncValueConverter<ProductState, IBrush>(TwinPalette.For);
-
-    public static readonly IValueConverter StateForeground =
-        new FuncValueConverter<ProductState, IBrush>(TwinPalette.TextOn);
-
     /// <summary>
     /// 容器边框与圆点：最严重的状态；全部空闲时为中性灰；没有启用的产品位时为停用色
     /// </summary>
     public static readonly IValueConverter WorstBrush =
         new FuncValueConverter<ProductState?, IBrush>(TwinPalette.ForContainer);
-
-    /// <summary>
-    /// 选中时加 2 px 外框
-    /// </summary>
-    public static readonly IValueConverter SelectionThickness =
-        new FuncValueConverter<bool, Thickness>(selected => selected ? new Thickness(2) : new Thickness(0));
-
-    /// <summary>
-    /// 产品格宽、高都放得下状态名时才显示第二行；格子小时只显示序号，不会把序号挤掉、也不会撑大格子
-    /// </summary>
-    public static readonly IValueConverter FitsStateText =
-        new FuncValueConverter<Rect, bool>(bounds => bounds.Width >= StateTextWidth && bounds.Height >= StateTextHeight);
-
-    private const double StateTextWidth = 44;
-    private const double StateTextHeight = 34;
 }

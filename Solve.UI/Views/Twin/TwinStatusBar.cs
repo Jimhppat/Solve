@@ -31,19 +31,23 @@ public sealed class TwinStatusBar : Control
         set => SetValue(SummaryProperty, value);
     }
 
-    public override void Render(DrawingContext context)
+    public override void Render(DrawingContext context) => Draw(context, new Rect(Bounds.Size), Summary);
+
+    /// <summary>
+    /// 在指定区域画一条状态比例条。自绘的治具位在摘要模式下也用它，不必为一条比例条再建控件。
+    /// </summary>
+    public static void Draw(DrawingContext context, Rect bounds, TwinStatusSummary? summary)
     {
-        var bounds = new Rect(Bounds.Size);
         if (bounds.Width <= 0 || bounds.Height <= 0)
             return;
 
         using (context.PushClip(new RoundedRect(bounds, Math.Min(3, bounds.Height / 2))))
         {
             context.FillRectangle(TwinPalette.Track, bounds);
-            if (Summary is not { Total: > 0 } summary)
+            if (summary is not { Total: > 0 })
                 return;
 
-            var x = 0.0;
+            var x = bounds.X;
             foreach (var state in ProductStates.BySeverity)
                 x = DrawSegment(context, bounds, x, summary[state], summary.Total, TwinPalette.For(state));
 
@@ -53,11 +57,11 @@ public sealed class TwinStatusBar : Control
 
     private static double DrawSegment(DrawingContext context, Rect bounds, double x, int count, int total, IBrush brush)
     {
-        if (count == 0 || x >= bounds.Width)
+        if (count == 0 || x >= bounds.Right)
             return x;
 
         var width = Math.Max(MinSegmentWidth, bounds.Width * count / total);
-        context.FillRectangle(brush, new Rect(x, 0, Math.Min(width, bounds.Width - x), bounds.Height));
+        context.FillRectangle(brush, new Rect(x, bounds.Y, Math.Min(width, bounds.Right - x), bounds.Height));
         return x + width;
     }
 }
