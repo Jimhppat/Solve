@@ -26,6 +26,7 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
     private const string SelectByBusSql = """
         SELECT id         AS Id,
                bus_id     AS BusId,
+               driver_id  AS DriverId,
                address    AS Address,
                name       AS Name,
                remark     AS Remark,
@@ -39,14 +40,15 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
     private const string CountByBusSql = "SELECT count(*) FROM bus_devices WHERE bus_id = @BusId;";
 
     private const string InsertSql = """
-        INSERT INTO bus_devices (id, bus_id, address, name, remark, created_at, updated_at)
-        VALUES (@Id, @BusId, @Address, @Name, @Remark, @CreatedAt, @UpdatedAt);
+        INSERT INTO bus_devices (id, bus_id, driver_id, address, name, remark, created_at, updated_at)
+        VALUES (@Id, @BusId, @DriverId, @Address, @Name, @Remark, @CreatedAt, @UpdatedAt);
         """;
 
     // bus_id 只作条件不作更新：设备不在总线之间移动，传错总线时按"不存在"处理而不是悄悄换线
     private const string UpdateSql = """
         UPDATE bus_devices
-           SET address    = @Address,
+           SET driver_id  = @DriverId,
+               address    = @Address,
                name       = @Name,
                remark     = @Remark,
                updated_at = @UpdatedAt
@@ -116,23 +118,37 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
         }
     }
 
-    public async Task<Result> AddAsync(DeviceDescriptor device, CancellationToken cancellationToken)
+    public async Task<Result> AddRangeAsync(IReadOnlyList<DeviceDescriptor> devices, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(devices);
+        if (devices.Count == 0)
+            return Result.Success();
 
-        var errors = device.Validate();
+        var errors = devices.SelectMany(d => d.Validate()).ToList();
         if (errors.Count > 0)
             return Result.Failure(DeviceErrors.InvalidDescriptor(errors));
 
-        var row = DeviceRowMapper.ToRow(device, _time.GetUtcNow());
+        var now = _time.GetUtcNow();
+        var rows = devices.Select(d => DeviceRowMapper.ToRow(d, now)).ToList();
         try
         {
             await using var connection = await _database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            await connection.ExecuteAsync(_database.Command(InsertSql, cancellationToken, row)).ConfigureAwait(false);
+
+            // 一批在同一事务内：任一行违反约束则整体回滚，不会留下半批模块
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var row in rows)
+            {
+                await connection.ExecuteAsync(_database.Command(InsertSql, cancellationToken, row, transaction))
+                    .ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SqliteException ex) when (IsConstraint(ex, SqliteConstraintUnique))
         {
-            return Result.Failure(DeviceErrors.AddressConflict(device.Address));
+            return Result.Failure(devices.Count == 1
+                ? DeviceErrors.AddressConflict(devices[0].Address)
+                : DeviceErrors.AddressConflict());
         }
         catch (SqliteException ex) when (IsConstraint(ex, SqliteConstraintForeignKey))
         {
@@ -140,10 +156,12 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
         }
         catch (SqliteException ex)
         {
-            return Result.Failure(StorageFailure($"新增{device}", ex));
+            return Result.Failure(StorageFailure($"新增 {devices.Count} 个模块", ex));
         }
 
-        _logger.LogInformation("总线 {BusId} 新增{Device}", device.BusId, device);
+        foreach (var device in devices)
+            _logger.LogInformation("总线 {BusId} 新增{Device} 驱动 {Driver}", device.BusId, device, device.Driver);
+
         return Result.Success();
     }
 
@@ -174,29 +192,37 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
         if (affected == 0)
             return Result.Failure(DeviceErrors.StorageNotFound());
 
-        _logger.LogInformation("总线 {BusId} 修改{Device}", device.BusId, device);
+        _logger.LogInformation("总线 {BusId} 修改{Device} 驱动 {Driver}", device.BusId, device, device.Driver);
         return Result.Success();
     }
 
-    public async Task<Result> DeleteAsync(DeviceId id, CancellationToken cancellationToken)
+    public async Task<Result<int>> DeleteRangeAsync(IReadOnlyList<DeviceId> ids, CancellationToken cancellationToken)
     {
-        int affected;
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0)
+            return Result<int>.Success(0);
+
+        var deleted = 0;
         try
         {
             await using var connection = await _database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            affected = await connection.ExecuteAsync(
-                _database.Command(DeleteSql, cancellationToken, new { Id = id.ToString() })).ConfigureAwait(false);
+
+            // 一批在同一事务内：中途出错整体回滚，不会只删掉一部分
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var id in ids)
+            {
+                deleted += await connection.ExecuteAsync(
+                    _database.Command(DeleteSql, cancellationToken, new { Id = id.ToString() }, transaction)).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SqliteException ex)
         {
-            return Result.Failure(StorageFailure($"删除模块 {id}", ex));
+            return Result<int>.Failure(StorageFailure($"删除 {ids.Count} 个模块", ex));
         }
 
-        if (affected == 0)
-            return Result.Failure(DeviceErrors.StorageNotFound());
-
-        _logger.LogInformation("删除模块 {DeviceId}", id);
-        return Result.Success();
+        return Result<int>.Success(deleted);
     }
 
     private static string Text(BusId busId) => busId.Value.ToString("D");

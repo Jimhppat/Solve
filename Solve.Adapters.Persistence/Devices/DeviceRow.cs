@@ -10,6 +10,8 @@ internal sealed class DeviceRow
 
     public string BusId { get; set; } = "";
 
+    public string DriverId { get; set; } = "";
+
     public long Address { get; set; }
 
     public string Name { get; set; } = "";

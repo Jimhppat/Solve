@@ -5,7 +5,7 @@ using Solve.Core.Domain.Common;
 namespace Solve.Core.Application.Devices.Ports;
 
 /// <summary>
-/// 总线挂载设备的存储出站端口。
+/// 总线挂载设备（界面称"模块"）的存储出站端口。
 /// </summary>
 /// <remarks>
 /// <para>实现可能执行同步磁盘 I/O（Microsoft.Data.Sqlite 的 Async 方法实际为同步实现），调用方不要在 UI 线程上直接 await。</para>
@@ -24,17 +24,18 @@ public interface IDeviceRepository
     Task<Result<int>> CountByBusAsync(BusId busId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// 新增。地址与同总线其他设备冲突返回 Device.AddressConflict；总线不存在返回 Device.BusNotFound。
+    /// 在同一事务内新增一批设备：全部成功或全部不写。任一地址与同总线已有设备冲突返回 Device.AddressConflict；
+    /// 总线不存在返回 Device.BusNotFound。
     /// </summary>
-    Task<Result> AddAsync(DeviceDescriptor device, CancellationToken cancellationToken);
+    Task<Result> AddRangeAsync(IReadOnlyList<DeviceDescriptor> devices, CancellationToken cancellationToken);
 
     /// <summary>
-    /// 修改名称、地址、备注。所属总线不可变：Id 不存在或不在该总线上返回 Device.Storage.NotFound。
+    /// 修改驱动、名称、地址、备注。所属总线不可变：Id 不存在或不在该总线上返回 Device.Storage.NotFound。
     /// </summary>
     Task<Result> UpdateAsync(DeviceDescriptor device, CancellationToken cancellationToken);
 
     /// <summary>
-    /// 删除。记录不存在返回 Device.Storage.NotFound。
+    /// 在同一事务内删除一批设备，返回实际删除的条数（已被删除的记录不计入，也不算失败）。
     /// </summary>
-    Task<Result> DeleteAsync(DeviceId id, CancellationToken cancellationToken);
+    Task<Result<int>> DeleteRangeAsync(IReadOnlyList<DeviceId> ids, CancellationToken cancellationToken);
 }

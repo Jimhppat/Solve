@@ -1,11 +1,14 @@
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Devices;
+using Solve.Core.Domain.Drivers;
 
 namespace Solve.Core.Tests.Devices;
 
 public sealed class DeviceDescriptorValidationTests
 {
-    private static DeviceDescriptor Valid() => new(DeviceId.New(), BusId.New(), "程控电源", 1);
+    private static readonly DriverId Generic = DriverId.Of("generic.module");
+
+    private static DeviceDescriptor Valid() => new(DeviceId.New(), BusId.New(), Generic, "程控电源", 1);
 
     private static IReadOnlyList<string> Codes(DeviceDescriptor device)
         => device.Validate().Select(e => e.Code).ToList();
@@ -51,12 +54,13 @@ public sealed class DeviceDescriptorValidationTests
     [Fact]
     public void EmptyIds_AreRejected_AllErrorsAtOnce()
     {
-        var device = new DeviceDescriptor(DeviceId.Empty, BusId.Empty, "", 0);
+        var device = new DeviceDescriptor(DeviceId.Empty, BusId.Empty, default, "", 0);
 
         Assert.Equal(
             [
                 DeviceErrors.DescriptorCodePrefix + "Id",
                 DeviceErrors.DescriptorCodePrefix + "BusId",
+                DeviceErrors.DescriptorCodePrefix + "Driver",
                 DeviceErrors.DescriptorCodePrefix + "Name",
                 DeviceErrors.DescriptorCodePrefix + "Address",
             ],

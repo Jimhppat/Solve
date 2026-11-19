@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Serilog.Extensions.Logging;
 using Solve.Adapters.Hardware.Buses;
 using Solve.Adapters.Hardware.Buses.Simulation;
+using Solve.Adapters.Hardware.Drivers;
 using Solve.Adapters.Persistence.Buses;
 using Solve.Adapters.Persistence.Devices;
 using Solve.Adapters.Persistence.Settings;
@@ -341,9 +342,11 @@ public sealed class AppHost : IAsyncDisposable
             var service = new BusManagementService(
                 manager, repository, _loggerFactory.CreateLogger<BusManagementService>());
 
-            // 挂载设备只是配置，不访问硬件；与总线共用配置库，删除总线时其下设备由库级联删除
+            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除。
+            // 驱动目录是代码常量，构造时校验，登记错误在启动时就暴露
             var devices = new DeviceService(
                 new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>()),
+                new BuiltInDriverCatalog(),
                 _loggerFactory.CreateLogger<DeviceService>());
             lock (_gate)
             {

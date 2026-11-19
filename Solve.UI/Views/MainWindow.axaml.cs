@@ -62,6 +62,7 @@ public partial class MainWindow : Window
         }
 
         var window = new BusModulesWindow { DataContext = page };
+        FitToScreen(window);
         _moduleWindows.Add(page, window);
         window.Closed += (_, _) =>
         {
@@ -69,6 +70,22 @@ public partial class MainWindow : Window
             _busConsole?.ReleaseModulePage(page);
         };
         window.Show(this);
+    }
+
+    /// <summary>
+    /// 模块配置窗口取主窗口所在屏幕工作区（不含任务栏）的 90%：各种分辨率下都完整可见，仍可手动最大化
+    /// </summary>
+    private void FitToScreen(Window window)
+    {
+        const double ScreenFraction = 0.9;
+
+        if (Screens.ScreenFromWindow(this) is not { } screen)
+            return;
+
+        // WorkingArea 是物理像素，窗口尺寸是与 DPI 无关的逻辑像素，按屏幕缩放换算
+        var area = screen.WorkingArea;
+        window.Width = Math.Max(window.MinWidth, area.Width / screen.Scaling * ScreenFraction);
+        window.Height = Math.Max(window.MinHeight, area.Height / screen.Scaling * ScreenFraction);
     }
 
     // 自绘系统按钮：ElementRole 只负责 Win32 命中测试（贴靠布局、悬停语义），

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Devices.Ports;
+using Solve.Core.Application.Drivers;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Core.Domain.Devices;
@@ -7,23 +8,28 @@ using Solve.Core.Domain.Devices;
 namespace Solve.Core.Application.Devices;
 
 /// <summary>
-/// 总线挂载设备用例服务：保存前做领域校验（无效输入不触达存储），并为每次增删改留下操作记录。
+/// 总线挂载模块用例服务：按驱动校验地址范围、展开批量请求，无效输入不触达存储，并为每次增删改留下操作记录。
 /// </summary>
 /// <remarks>
-/// 地址唯一、所属总线存在等跨记录约束由仓储在同一条语句内保证，这里不做"先查后写"的预检，避免并发下的检查失效。
+/// 批量添加前先按已有模块列出冲突地址，便于操作员一次改好；真正的唯一性仍由仓储在同一事务内保证，
+/// 预检与写入之间被并发占用时，写入整体失败、不留半批数据。
 /// </remarks>
 public sealed class DeviceService : IDeviceService
 {
     private readonly IDeviceRepository _repository;
     private readonly ILogger _logger;
 
-    public DeviceService(IDeviceRepository repository, ILogger<DeviceService> logger)
+    public DeviceService(IDeviceRepository repository, IDriverCatalog drivers, ILogger<DeviceService> logger)
     {
         ArgumentNullException.ThrowIfNull(repository);
+        ArgumentNullException.ThrowIfNull(drivers);
         ArgumentNullException.ThrowIfNull(logger);
         _repository = repository;
+        Drivers = drivers;
         _logger = logger;
     }
+
+    public IDriverCatalog Drivers { get; }
 
     public Task<Result<IReadOnlyList<DeviceDescriptor>>> ListAsync(BusId busId, CancellationToken cancellationToken)
         => _repository.ListByBusAsync(busId, cancellationToken);
@@ -31,32 +37,42 @@ public sealed class DeviceService : IDeviceService
     public Task<Result<int>> CountAsync(BusId busId, CancellationToken cancellationToken)
         => _repository.CountByBusAsync(busId, cancellationToken);
 
-    public Task<Result> AddAsync(DeviceDescriptor device, CancellationToken cancellationToken)
-        => SaveAsync("新增", device, _repository.AddAsync, cancellationToken);
-
-    public Task<Result> UpdateAsync(DeviceDescriptor device, CancellationToken cancellationToken)
-        => SaveAsync("修改", device, _repository.UpdateAsync, cancellationToken);
-
-    public async Task<Result> DeleteAsync(DeviceDescriptor device, CancellationToken cancellationToken)
+    public async Task<Result<IReadOnlyList<DeviceDescriptor>>> AddBatchAsync(
+        DeviceBatchRequest request,
+        CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(request);
 
-        var deleted = await _repository.DeleteAsync(device.Id, cancellationToken).ConfigureAwait(false);
-        if (deleted.IsFailure)
+        if (!Drivers.TryGet(request.Driver, out var driver))
+            return Result<IReadOnlyList<DeviceDescriptor>>.Failure(DeviceErrors.UnknownDriver(request.Driver));
+
+        var expanded = DeviceBatch.Expand(request, driver);
+        if (expanded.IsFailure)
+            return expanded;
+
+        var existing = await _repository.ListByBusAsync(request.BusId, cancellationToken).ConfigureAwait(false);
+        if (existing.IsFailure)
+            return Result<IReadOnlyList<DeviceDescriptor>>.Failure(existing.Error);
+
+        var used = existing.Value.Select(d => d.Address).ToHashSet();
+        var conflicts = expanded.Value.Select(d => d.Address).Where(used.Contains).ToList();
+        if (conflicts.Count > 0)
+            return Result<IReadOnlyList<DeviceDescriptor>>.Failure(DeviceErrors.AddressConflict(conflicts));
+
+        var added = await _repository.AddRangeAsync(expanded.Value, cancellationToken).ConfigureAwait(false);
+        if (added.IsFailure)
         {
-            _logger.LogWarning("删除{Device}失败：{Error}", device, deleted.Error);
-            return deleted;
+            _logger.LogWarning("总线 {BusId} 添加 {Count} 个模块（驱动 {Driver}，起始地址 {Start}）失败：{Error}",
+                request.BusId, request.Count, driver.Name, request.StartAddress, added.Error);
+            return Result<IReadOnlyList<DeviceDescriptor>>.Failure(added.Error);
         }
 
-        _logger.LogInformation("总线 {BusId} 删除{Device}", device.BusId, device);
-        return deleted;
+        _logger.LogInformation("总线 {BusId} 添加 {Count} 个模块（驱动 {Driver}），地址 {Start}–{End}",
+            request.BusId, request.Count, driver.Name, request.StartAddress, request.StartAddress + request.Count - 1);
+        return expanded;
     }
 
-    private async Task<Result> SaveAsync(
-        string operation,
-        DeviceDescriptor device,
-        Func<DeviceDescriptor, CancellationToken, Task<Result>> save,
-        CancellationToken cancellationToken)
+    public async Task<Result> UpdateAsync(DeviceDescriptor device, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(device);
 
@@ -64,10 +80,40 @@ public sealed class DeviceService : IDeviceService
         if (errors.Count > 0)
             return Result.Failure(DeviceErrors.InvalidDescriptor(errors));
 
-        var saved = await save(device, cancellationToken).ConfigureAwait(false);
+        // 驱动已从程序中移除时只校验绝对范围：仍允许改名、改备注，不让历史记录变成无法编辑。
+        // 界面上只能换成目录里的驱动，未知驱动只可能是原本就在用的那个
+        if (Drivers.TryGet(device.Driver, out var driver) && !driver.AcceptsAddress(device.Address))
+        {
+            return Result.Failure(DeviceErrors.InvalidField("Address",
+                $"{driver.Name}的地址必须在 [{driver.MinAddress}, {driver.MaxAddress}] 之间，当前为 {device.Address}。"));
+        }
+
+        var saved = await _repository.UpdateAsync(device, cancellationToken).ConfigureAwait(false);
         if (saved.IsFailure)
-            _logger.LogWarning("{Operation}{Device}失败：{Error}", operation, device, saved.Error);
+            _logger.LogWarning("修改{Device}失败：{Error}", device, saved.Error);
 
         return saved;
+    }
+
+    public async Task<Result<int>> DeleteAsync(IReadOnlyList<DeviceDescriptor> devices, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(devices);
+        if (devices.Count == 0)
+            return Result<int>.Success(0);
+
+        var deleted = await _repository.DeleteRangeAsync(devices.Select(d => d.Id).ToList(), cancellationToken).ConfigureAwait(false);
+        if (deleted.IsFailure)
+        {
+            _logger.LogWarning("删除 {Count} 个模块失败：{Error}", devices.Count, deleted.Error);
+            return deleted;
+        }
+
+        foreach (var device in devices)
+            _logger.LogInformation("总线 {BusId} 删除{Device}", device.BusId, device);
+
+        if (deleted.Value < devices.Count)
+            _logger.LogInformation("请求删除 {Requested} 个模块，其中 {Missing} 个已不存在", devices.Count, devices.Count - deleted.Value);
+
+        return deleted;
     }
 }

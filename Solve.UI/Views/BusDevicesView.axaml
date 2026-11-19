@@ -3,11 +3,11 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Solve.UI.ViewModels"
-             mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
+             mc:Ignorable="d" d:DesignWidth="1600" d:DesignHeight="900"
              x:Class="Solve.UI.Views.BusDevicesView"
              x:DataType="vm:BusDevicesViewModel">
 
-    <!-- 一条总线的模块配置内容，承载于 BusModulesWindow -->
+    <!-- 一条总线的模块配置内容，承载于 BusModulesWindow：左栏分类 + 驱动表，右上添加模块，右下已挂载模块 -->
 
     <Design.DataContext>
         <vm:BusDevicesViewModel />
@@ -15,40 +15,89 @@
 
     <UserControl.Styles>
         <StyleInclude Source="avares://Solve.UI/Styles/TableStyles.axaml" />
+
+        <!-- 面板：白底细边框圆角，与总线页的表格面板一致 -->
+        <Style Selector="Border.panel">
+            <Setter Property="ClipToBounds" Value="True" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+        </Style>
+        <Style Selector="Border.panel-title">
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+        <Style Selector="Border.panel-title TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+        </Style>
+
+        <!-- 驱动表与分类列表：行高与总线表一致，选中态沿用主题 -->
+        <Style Selector="ListBox.table > ListBoxItem">
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="MinHeight" Value="42" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+        <Style Selector="ListBox.categories > ListBoxItem">
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <!-- 只读回显：细边框 + 透明底，与可编辑输入框区分 -->
+        <Style Selector="Border.readout">
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+        </Style>
+        <Style Selector="Border.readout TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+        </Style>
+
+        <!-- 错误横条 -->
+        <Style Selector="Border.form-error">
+            <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorDanger}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+        </Style>
+        <Style Selector="Border.form-error TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
     </UserControl.Styles>
 
     <Grid>
         <DockPanel Margin="16,12">
 
-            <!-- 页头：总线名称、链路参数、实时状态 + 新增模块 -->
-            <Border DockPanel.Dock="Top" Margin="0,0,0,10"
-                    Padding="14,6,10,6" CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
-                    Background="{DynamicResource SemiColorBackground1}"
-                    BorderBrush="{DynamicResource SemiColorBorder}"
-                    BorderThickness="1">
-                <DockPanel>
-                    <Button DockPanel.Dock="Right" Classes="Primary" Command="{Binding OpenAddCommand}">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <PathIcon Data="{DynamicResource SemiIconPlus}" Width="12" Height="12" />
-                            <TextBlock Text="新增模块" VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Button>
-
-                    <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding Bus.Name}" FontSize="15" FontWeight="SemiBold"
-                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="320"
-                                   Foreground="{DynamicResource SemiColorText0}" />
-                        <TextBlock Text="{Binding Bus.Kind}" VerticalAlignment="Center"
-                                   Foreground="{DynamicResource SemiColorText1}" />
-                        <TextBlock Classes="mono" Text="{Binding Bus.PortParams}" VerticalAlignment="Center"
-                                   Foreground="{DynamicResource SemiColorText1}" />
-                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Ellipse Classes="dot" Fill="{Binding Bus.StateColor}" />
-                            <TextBlock Text="{Binding Bus.StateText}" FontWeight="SemiBold"
-                                       VerticalAlignment="Center" Foreground="{Binding Bus.StateColor}" />
-                        </StackPanel>
+            <!-- 页头：总线名称、链路参数、实时状态 -->
+            <Border DockPanel.Dock="Top" Margin="0,0,0,10" Classes="panel" Padding="14,10">
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <TextBlock Text="{Binding Bus.Name}" FontSize="15" FontWeight="SemiBold"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                               Foreground="{DynamicResource SemiColorText0}" />
+                    <TextBlock Text="{Binding Bus.Kind}" VerticalAlignment="Center"
+                               Foreground="{DynamicResource SemiColorText1}" />
+                    <TextBlock Classes="mono" Text="{Binding Bus.PortParams}" VerticalAlignment="Center"
+                               Foreground="{DynamicResource SemiColorText1}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Ellipse Classes="dot" Fill="{Binding Bus.StateColor}" />
+                        <TextBlock Text="{Binding Bus.StateText}" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Foreground="{Binding Bus.StateColor}" />
                     </StackPanel>
-                </DockPanel>
+                </StackPanel>
             </Border>
 
             <!-- 读取 / 删除失败 -->
@@ -63,67 +112,213 @@
                 </DockPanel>
             </Border>
 
-            <!-- 模块表 -->
-            <Border ClipToBounds="True"
-                    CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
-                    BorderBrush="{DynamicResource SemiColorBorder}"
-                    BorderThickness="1"
-                    Background="{DynamicResource SemiColorBackground1}">
-                <Grid RowDefinitions="Auto,*">
+            <Grid ColumnDefinitions="2*,12,3*">
 
-                    <Border Grid.Row="0" Classes="head">
-                        <Grid ColumnDefinitions="100,1.2*,2*,120">
-                            <TextBlock Grid.Column="0" Text="地址" />
-                            <TextBlock Grid.Column="1" Text="名称" />
-                            <TextBlock Grid.Column="2" Text="备注" />
-                            <TextBlock Grid.Column="3" Text="操作" HorizontalAlignment="Right" />
+                <!-- ==================== 左栏：硬件分类 + 驱动表 ==================== -->
+                <Border Grid.Column="0" Classes="panel">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Classes="panel-title">
+                            <TextBlock Text="驱动" />
+                        </Border>
+
+                        <Grid ColumnDefinitions="180,*">
+                            <!-- 硬件分类 -->
+                            <Border Grid.Column="0" BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,0,1,0"
+                                    Background="{DynamicResource SemiColorFill0}">
+                                <ListBox Classes="categories" Background="Transparent"
+                                         ItemsSource="{Binding Categories}"
+                                         SelectedItem="{Binding SelectedCategory}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DriverCategoryItem">
+                                            <TextBlock Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Border>
+
+                            <!-- 驱动表 -->
+                            <Grid Grid.Column="1" RowDefinitions="Auto,*">
+                                <Border Grid.Row="0" Classes="head">
+                                    <Grid ColumnDefinitions="1.4*,1.2*,110">
+                                        <TextBlock Grid.Column="0" Text="驱动名称" />
+                                        <TextBlock Grid.Column="1" Text="分类" />
+                                        <TextBlock Grid.Column="2" Text="地址范围" />
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Row="1" IsVisible="{Binding !HasDrivers}"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center" Padding="32">
+                                    <StackPanel Spacing="12" HorizontalAlignment="Center">
+                                        <PathIcon Data="{DynamicResource SemiIconComponent}" Width="40" Height="40"
+                                                  Foreground="{DynamicResource SemiColorText2}" />
+                                        <TextBlock Text="该分类暂无驱动" FontSize="14" FontWeight="Medium"
+                                                   Foreground="{DynamicResource SemiColorText2}"
+                                                   HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+
+                                <ListBox Grid.Row="1" Classes="table" Background="Transparent"
+                                         IsVisible="{Binding HasDrivers}"
+                                         ItemsSource="{Binding Drivers}"
+                                         SelectedItem="{Binding SelectedDriver}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DriverItemViewModel">
+                                            <Grid ColumnDefinitions="1.4*,1.2*,110" ToolTip.Tip="{Binding Description}">
+                                                <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Medium"
+                                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding CategoryName}"
+                                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="2" Classes="mono" Text="{Binding AddressRange}"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
                         </Grid>
-                    </Border>
+                    </DockPanel>
+                </Border>
 
-                    <Border Grid.Row="1" IsVisible="{Binding IsEmpty}"
-                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                            Padding="32">
-                        <StackPanel Spacing="12" HorizontalAlignment="Center">
-                            <PathIcon Data="{DynamicResource SemiIconComponent}" Width="40" Height="40"
-                                      Foreground="{DynamicResource SemiColorText2}" />
-                            <TextBlock Text="暂无挂载模块" FontSize="14" FontWeight="Medium"
-                                       Foreground="{DynamicResource SemiColorText2}"
-                                       HorizontalAlignment="Center" />
-                        </StackPanel>
-                    </Border>
+                <!-- ==================== 右栏 ==================== -->
+                <Grid Grid.Column="2" RowDefinitions="Auto,12,*">
 
-                    <ScrollViewer Grid.Row="1" IsVisible="{Binding HasDevices}" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding Devices}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:DeviceItemViewModel">
-                                    <Border Classes="row">
-                                        <Grid ColumnDefinitions="100,1.2*,2*,120">
-                                            <TextBlock Grid.Column="0" Classes="mono" Text="{Binding Address}" />
-                                            <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="Medium" />
-                                            <TextBlock Grid.Column="2" Classes="muted" Text="{Binding Remark}"
-                                                       ToolTip.Tip="{Binding Remark}" />
-                                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
-                                                        HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                <Button Classes="Small Tertiary" Command="{Binding EditCommand}"
-                                                        ToolTip.Tip="编辑模块">
-                                                    <PathIcon Data="{DynamicResource SemiIconSetting}" Width="12" Height="12" />
-                                                </Button>
-                                                <Button Classes="Small Danger" Command="{Binding DeleteCommand}"
-                                                        ToolTip.Tip="删除模块">
-                                                    <PathIcon Data="{DynamicResource SemiIconDelete}" Width="12" Height="12" />
-                                                </Button>
-                                            </StackPanel>
-                                        </Grid>
+                    <!-- 右上：添加模块 -->
+                    <Border Grid.Row="0" Classes="panel">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" Classes="panel-title">
+                                <TextBlock Text="添加模块" />
+                            </Border>
+
+                            <StackPanel Margin="14,12,14,14" Spacing="14">
+                                <StackPanel Classes="field">
+                                    <TextBlock Classes="field-label" Text="驱动" />
+                                    <Border Classes="readout">
+                                        <TextBlock Text="{Binding BatchForm.DriverText}" />
                                     </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                                </StackPanel>
+
+                                <Grid ColumnDefinitions="2*,*,*" ColumnSpacing="12">
+                                    <StackPanel Grid.Column="0" Classes="field">
+                                        <TextBlock Classes="field-label" Text="模块名称" />
+                                        <TextBox Text="{Binding BatchForm.Name}" MaxLength="64"
+                                                 IsEnabled="{Binding BatchForm.HasDriver}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Classes="field">
+                                        <TextBlock Classes="field-label" Text="起始地址" />
+                                        <TextBox Text="{Binding BatchForm.StartAddressText}" MaxLength="3"
+                                                 IsEnabled="{Binding BatchForm.HasDriver}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Classes="field">
+                                        <TextBlock Classes="field-label" Text="数量" />
+                                        <TextBox Text="{Binding BatchForm.CountText}" MaxLength="3"
+                                                 IsEnabled="{Binding BatchForm.HasDriver}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid ColumnDefinitions="2*,2*" ColumnSpacing="12">
+                                    <StackPanel Grid.Column="0" Classes="field">
+                                        <TextBlock Classes="field-label" Text="备注" />
+                                        <TextBox Text="{Binding BatchForm.Remark}" MaxLength="200"
+                                                 IsEnabled="{Binding BatchForm.HasDriver}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Classes="field">
+                                        <TextBlock Classes="field-label" Text="占用地址" />
+                                        <Border Classes="readout">
+                                            <TextBlock Classes="mono" Text="{Binding BatchForm.AddressPreview}" />
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Border Classes="form-error" IsVisible="{Binding BatchForm.HasError}">
+                                    <TextBlock Text="{Binding BatchForm.ErrorMessage}" />
+                                </Border>
+
+                                <Button HorizontalAlignment="Right" Classes="Primary" Theme="{DynamicResource SolidButton}"
+                                        Command="{Binding AddCommand}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <PathIcon Data="{DynamicResource SemiIconPlus}" Width="12" Height="12" />
+                                        <TextBlock Text="添加到总线" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- 右下：已挂载模块 -->
+                    <Border Grid.Row="2" Classes="panel">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" Classes="panel-title" Padding="14,0,10,0">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Classes="Small Danger" VerticalAlignment="Center"
+                                            Content="{Binding DeleteCheckedText}"
+                                            Command="{Binding DeleteCheckedCommand}" />
+                                    <TextBlock Text="{Binding DeviceCountText}" />
+                                </DockPanel>
+                            </Border>
+
+                            <Grid RowDefinitions="Auto,*">
+                                <Border Grid.Row="0" Classes="head">
+                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,1.6*,100">
+                                        <CheckBox Grid.Column="0" IsThreeState="True" VerticalAlignment="Center"
+                                                  IsChecked="{Binding IsAllChecked}" IsEnabled="{Binding HasDevices}"
+                                                  ToolTip.Tip="全选" />
+                                        <TextBlock Grid.Column="1" Text="地址" />
+                                        <TextBlock Grid.Column="2" Text="名称" />
+                                        <TextBlock Grid.Column="3" Text="驱动" />
+                                        <TextBlock Grid.Column="4" Text="备注" />
+                                        <TextBlock Grid.Column="5" Text="操作" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Row="1" IsVisible="{Binding IsEmpty}"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center" Padding="32">
+                                    <StackPanel Spacing="12" HorizontalAlignment="Center">
+                                        <PathIcon Data="{DynamicResource SemiIconLink}" Width="40" Height="40"
+                                                  Foreground="{DynamicResource SemiColorText2}" />
+                                        <TextBlock Text="暂无挂载模块" FontSize="14" FontWeight="Medium"
+                                                   Foreground="{DynamicResource SemiColorText2}"
+                                                   HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+
+                                <ScrollViewer Grid.Row="1" IsVisible="{Binding HasDevices}" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding Devices}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:DeviceItemViewModel">
+                                                <Border Classes="row">
+                                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,1.6*,100">
+                                                        <CheckBox Grid.Column="0" VerticalAlignment="Center"
+                                                                  IsChecked="{Binding IsChecked}" />
+                                                        <TextBlock Grid.Column="1" Classes="mono" Text="{Binding Address}" />
+                                                        <TextBlock Grid.Column="2" Text="{Binding Name}" FontWeight="Medium" />
+                                                        <TextBlock Grid.Column="3" Classes="muted" Text="{Binding DriverName}" />
+                                                        <TextBlock Grid.Column="4" Classes="muted" Text="{Binding Remark}"
+                                                                   ToolTip.Tip="{Binding Remark}" />
+                                                        <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6"
+                                                                    HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                            <Button Classes="Small Tertiary" Command="{Binding EditCommand}"
+                                                                    ToolTip.Tip="编辑模块">
+                                                                <PathIcon Data="{DynamicResource SemiIconSetting}" Width="12" Height="12" />
+                                                            </Button>
+                                                            <Button Classes="Small Danger" Command="{Binding DeleteCommand}"
+                                                                    ToolTip.Tip="删除模块">
+                                                                <PathIcon Data="{DynamicResource SemiIconDelete}" Width="12" Height="12" />
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
+                        </DockPanel>
+                    </Border>
                 </Grid>
-            </Border>
+            </Grid>
         </DockPanel>
 
-        <!-- ==================== 新增 / 编辑模块 弹窗 ==================== -->
+        <!-- ==================== 编辑模块 弹窗 ==================== -->
         <Grid IsVisible="{Binding IsEditOpen}">
             <Border Background="#80000000" />
 
@@ -142,7 +337,7 @@
                                 Command="{Binding CloseEditCommand}">
                             <PathIcon Data="{DynamicResource SemiIconClose}" Width="12" Height="12" />
                         </Button>
-                        <TextBlock Text="{Binding EditForm.Title}" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="编辑模块" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{DynamicResource SemiColorText0}" />
                     </DockPanel>
 
@@ -150,15 +345,33 @@
                                 Spacing="8" Margin="0,16,0,0">
                         <Button Classes="Tertiary" Content="取消" Command="{Binding CloseEditCommand}" />
                         <Button Classes="Primary" Theme="{DynamicResource SolidButton}"
-                                Content="保存" Command="{Binding SaveCommand}" />
+                                Content="保存" Command="{Binding SaveEditCommand}" />
                     </StackPanel>
 
                     <StackPanel Spacing="14">
+                        <StackPanel Classes="field">
+                            <TextBlock Classes="field-label" Text="驱动" />
+                            <ComboBox HorizontalAlignment="Stretch"
+                                      ItemsSource="{Binding EditForm.Drivers}"
+                                      SelectedItem="{Binding EditForm.SelectedDriver}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DriverItemViewModel">
+                                        <TextBlock>
+                                            <Run Text="{Binding Name}" />
+                                            <Run Text=" · " />
+                                            <Run Text="{Binding CategoryName}" />
+                                            <Run Text=" · 地址 " />
+                                            <Run Text="{Binding AddressRange}" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+
                         <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
                             <StackPanel Classes="field">
                                 <TextBlock Classes="field-label" Text="模块名称" />
-                                <TextBox Text="{Binding EditForm.Name}" MaxLength="64"
-                                         PlaceholderText="例如：1 号电源模块" />
+                                <TextBox Text="{Binding EditForm.Name}" MaxLength="64" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Classes="field">
                                 <TextBlock Classes="field-label" Text="地址" />
@@ -168,19 +381,11 @@
 
                         <StackPanel Classes="field">
                             <TextBlock Classes="field-label" Text="备注" />
-                            <TextBox Text="{Binding EditForm.Remark}" MaxLength="200"
-                                     PlaceholderText="例如：型号、安装位置" />
+                            <TextBox Text="{Binding EditForm.Remark}" MaxLength="200" />
                         </StackPanel>
 
-                        <Border IsVisible="{Binding EditForm.HasError}"
-                                Background="{DynamicResource SemiColorDangerLight}"
-                                BorderBrush="{DynamicResource SemiColorDanger}"
-                                BorderThickness="1"
-                                Padding="12,8"
-                                CornerRadius="{DynamicResource SemiBorderRadiusSmall}">
-                            <TextBlock Text="{Binding EditForm.ErrorMessage}"
-                                       Foreground="{DynamicResource SemiColorDanger}"
-                                       TextWrapping="Wrap" />
+                        <Border Classes="form-error" IsVisible="{Binding EditForm.HasError}">
+                            <TextBlock Text="{Binding EditForm.ErrorMessage}" />
                         </Border>
                     </StackPanel>
                 </DockPanel>

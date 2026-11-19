@@ -8,12 +8,14 @@
         x:Class="Solve.UI.Views.BusModulesWindow"
         x:DataType="vm:BusDevicesViewModel"
         Title="{Binding Bus.Name, StringFormat='模块配置 - {0}'}"
-        Width="960" Height="640"
-        MinWidth="720" MinHeight="480"
+        Width="1440" Height="900"
+        MinWidth="1100" MinHeight="640"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource SemiColorBackground0}">
 
-    <!-- 一条总线的模块配置窗口：非模态、从属于主窗口（见 MainWindow.OnModuleWindowRequested） -->
+    <!-- 一条总线的模块配置窗口：非模态、从属于主窗口（见 MainWindow.OnModuleWindowRequested）。
+         Width/Height 只是取不到屏幕信息时的后备值，打开时按所在屏幕工作区的 90% 设置 -->
+
 
     <Design.DataContext>
         <vm:BusDevicesViewModel />

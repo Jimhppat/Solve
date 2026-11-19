@@ -5,6 +5,7 @@ using Solve.Adapters.Persistence.Devices;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Devices;
+using Solve.Core.Domain.Drivers;
 
 namespace Solve.Core.Tests.Devices;
 
@@ -51,8 +52,10 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         return bus.Id;
     }
 
+    private static readonly DriverId Generic = DriverId.Of("generic.module");
+
     private static DeviceDescriptor Device(BusId busId, int address, string name = "程控电源")
-        => new(DeviceId.New(), busId, name, address);
+        => new(DeviceId.New(), busId, Generic, name, address);
 
     private async Task<IReadOnlyList<DeviceDescriptor>> ListAsync(BusId busId)
         => (await _repository.ListByBusAsync(busId, CancellationToken.None)).Value;
@@ -72,8 +75,8 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var second = Device(busId, 2, "温控表") with { Remark = "1 号柜" };
         var first = Device(busId, 1);
 
-        Assert.True((await _repository.AddAsync(second, CancellationToken.None)).IsSuccess);
-        Assert.True((await _repository.AddAsync(first, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([second], CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([first], CancellationToken.None)).IsSuccess);
 
         Assert.Equal([first, second], await ListAsync(busId));
         Assert.Equal(2, (await _repository.CountByBusAsync(busId, CancellationToken.None)).Value);
@@ -85,7 +88,7 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var busA = await SeedBusAsync("COM3");
         var busB = await SeedBusAsync("COM4");
         var onA = Device(busA, 1);
-        Assert.True((await _repository.AddAsync(onA, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([onA], CancellationToken.None)).IsSuccess);
 
         Assert.Equal([onA], await ListAsync(busA));
         Assert.Empty(await ListAsync(busB));
@@ -97,7 +100,7 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var busId = await SeedBusAsync();
         var device = Device(busId, 1) with { Remark = "   " };
 
-        Assert.True((await _repository.AddAsync(device, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
 
         Assert.Null(Assert.Single(await ListAsync(busId)).Remark);
     }
@@ -106,9 +109,9 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
     public async Task Add_DuplicateAddressOnSameBus_IsConflict()
     {
         var busId = await SeedBusAsync();
-        Assert.True((await _repository.AddAsync(Device(busId, 5), CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([Device(busId, 5)], CancellationToken.None)).IsSuccess);
 
-        var result = await _repository.AddAsync(Device(busId, 5, "另一台"), CancellationToken.None);
+        var result = await _repository.AddRangeAsync([Device(busId, 5, "另一台")], CancellationToken.None);
 
         Assert.Equal(DeviceErrors.AddressConflictCode, result.Error.Code);
         Assert.Single(await ListAsync(busId));
@@ -120,14 +123,14 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var busA = await SeedBusAsync("COM3");
         var busB = await SeedBusAsync("COM4");
 
-        Assert.True((await _repository.AddAsync(Device(busA, 1), CancellationToken.None)).IsSuccess);
-        Assert.True((await _repository.AddAsync(Device(busB, 1), CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([Device(busA, 1)], CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([Device(busB, 1)], CancellationToken.None)).IsSuccess);
     }
 
     [Fact]
     public async Task Add_UnknownBus_IsBusNotFound()
     {
-        var result = await _repository.AddAsync(Device(BusId.New(), 1), CancellationToken.None);
+        var result = await _repository.AddRangeAsync([Device(BusId.New(), 1)], CancellationToken.None);
 
         Assert.Equal(DeviceErrors.BusNotFoundCode, result.Error.Code);
         Assert.Equal(0L, await ScalarRawAsync<long>("SELECT count(*) FROM bus_devices;"));
@@ -138,10 +141,36 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
     {
         var busId = await SeedBusAsync();
 
-        var result = await _repository.AddAsync(Device(busId, 0), CancellationToken.None);
+        var result = await _repository.AddRangeAsync([Device(busId, 0)], CancellationToken.None);
 
         Assert.Equal(DeviceErrors.InvalidDescriptorCode, result.Error.Code);
         Assert.Empty(await ListAsync(busId));
+    }
+
+    [Fact]
+    public async Task AddRange_WithOneConflict_WritesNothing()
+    {
+        var busId = await SeedBusAsync();
+        var existing = Device(busId, 3);
+        Assert.True((await _repository.AddRangeAsync([existing], CancellationToken.None)).IsSuccess);
+
+        // 第三个与已有地址冲突：整批回滚，前两个也不能留下
+        var result = await _repository.AddRangeAsync([Device(busId, 1), Device(busId, 2), Device(busId, 3)], CancellationToken.None);
+
+        Assert.Equal(DeviceErrors.AddressConflictCode, result.Error.Code);
+        Assert.Equal([existing], await ListAsync(busId));
+    }
+
+    [Fact]
+    public async Task AddRange_StoresDriver()
+    {
+        var busId = await SeedBusAsync();
+        var device = Device(busId, 1);
+
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
+
+        Assert.Equal(Generic, Assert.Single(await ListAsync(busId)).Driver);
+        Assert.Equal("generic.module", await ScalarRawAsync<string>("SELECT driver_id FROM bus_devices;"));
     }
 
     // ---------- 修改 ----------
@@ -151,7 +180,7 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
     {
         var busId = await SeedBusAsync();
         var device = Device(busId, 1);
-        Assert.True((await _repository.AddAsync(device, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
 
         _time.Now = _time.Now.AddHours(1);
         var changed = device with { Name = "2 号电源", Address = 7, Remark = "新备注" };
@@ -171,8 +200,8 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var busId = await SeedBusAsync();
         var first = Device(busId, 1);
         var second = Device(busId, 2);
-        Assert.True((await _repository.AddAsync(first, CancellationToken.None)).IsSuccess);
-        Assert.True((await _repository.AddAsync(second, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([first], CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([second], CancellationToken.None)).IsSuccess);
 
         var result = await _repository.UpdateAsync(second with { Address = 1 }, CancellationToken.None);
 
@@ -186,7 +215,7 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var busA = await SeedBusAsync("COM3");
         var busB = await SeedBusAsync("COM4");
         var device = Device(busA, 1);
-        Assert.True((await _repository.AddAsync(device, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
 
         var result = await _repository.UpdateAsync(device with { BusId = busB }, CancellationToken.None);
 
@@ -208,18 +237,34 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
     // ---------- 删除 ----------
 
     [Fact]
-    public async Task Delete_RemovesOnlyThatDevice()
+    public async Task DeleteRange_RemovesOnlyThoseDevices_AndCountsDeleted()
     {
         var busId = await SeedBusAsync();
         var keep = Device(busId, 1);
-        var remove = Device(busId, 2);
-        Assert.True((await _repository.AddAsync(keep, CancellationToken.None)).IsSuccess);
-        Assert.True((await _repository.AddAsync(remove, CancellationToken.None)).IsSuccess);
+        var removeA = Device(busId, 2);
+        var removeB = Device(busId, 3);
+        Assert.True((await _repository.AddRangeAsync([keep, removeA, removeB], CancellationToken.None)).IsSuccess);
 
-        Assert.True((await _repository.DeleteAsync(remove.Id, CancellationToken.None)).IsSuccess);
+        var deleted = await _repository.DeleteRangeAsync([removeA.Id, removeB.Id], CancellationToken.None);
 
+        Assert.Equal(2, deleted.Value);
         Assert.Equal([keep], await ListAsync(busId));
-        Assert.Equal(DeviceErrors.StorageNotFoundCode, (await _repository.DeleteAsync(remove.Id, CancellationToken.None)).Error.Code);
+
+        // 已被删除的不算失败，只是不计入
+        Assert.Equal(0, (await _repository.DeleteRangeAsync([removeA.Id], CancellationToken.None)).Value);
+    }
+
+    [Fact]
+    public async Task Update_CanChangeDriver()
+    {
+        var busId = await SeedBusAsync();
+        var device = Device(busId, 1);
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
+
+        var changed = device with { Driver = DriverId.Of("test.power") };
+        Assert.True((await _repository.UpdateAsync(changed, CancellationToken.None)).IsSuccess);
+
+        Assert.Equal([changed], await ListAsync(busId));
     }
 
     // ---------- 与总线的关系 ----------
@@ -229,10 +274,10 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
     {
         var busA = await SeedBusAsync("COM3");
         var busB = await SeedBusAsync("COM4");
-        Assert.True((await _repository.AddAsync(Device(busA, 1), CancellationToken.None)).IsSuccess);
-        Assert.True((await _repository.AddAsync(Device(busA, 2), CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([Device(busA, 1)], CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([Device(busA, 2)], CancellationToken.None)).IsSuccess);
         var onB = Device(busB, 1);
-        Assert.True((await _repository.AddAsync(onB, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([onB], CancellationToken.None)).IsSuccess);
 
         Assert.True((await _buses.DeleteAsync(busA, CancellationToken.None)).IsSuccess);
 
@@ -248,7 +293,7 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         var bus = new SerialBusDescriptor(BusId.New(), "RS485-COM3", "COM3");
         Assert.True((await _buses.SaveAsync(bus, CancellationToken.None)).IsSuccess);
         var device = Device(bus.Id, 1);
-        Assert.True((await _repository.AddAsync(device, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
 
         Assert.True((await _buses.SaveAsync(bus with { BaudRate = 115_200 }, CancellationToken.None)).IsSuccess);
 
@@ -260,13 +305,13 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
     {
         var busId = await SeedBusAsync();
         var good = Device(busId, 1);
-        Assert.True((await _repository.AddAsync(good, CancellationToken.None)).IsSuccess);
+        Assert.True((await _repository.AddRangeAsync([good], CancellationToken.None)).IsSuccess);
 
         // 手工改库写入越界地址：读取时按不可信输入校验，不能作为设备返回
         await using (var connection = await _database.OpenConnectionAsync(CancellationToken.None))
         {
             await connection.ExecuteAsync(
-                "INSERT INTO bus_devices (id, bus_id, address, name, remark, created_at, updated_at) VALUES (@Id, @BusId, 999, 'bad', NULL, 'x', 'x');",
+                "INSERT INTO bus_devices (id, bus_id, driver_id, address, name, remark, created_at, updated_at) VALUES (@Id, @BusId, 'generic.module', 999, 'bad', NULL, 'x', 'x');",
                 new { Id = Guid.NewGuid().ToString("D"), BusId = busId.Value.ToString("D") });
         }
 

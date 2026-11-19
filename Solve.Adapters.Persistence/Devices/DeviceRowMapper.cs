@@ -1,6 +1,7 @@
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Core.Domain.Devices;
+using Solve.Core.Domain.Drivers;
 
 namespace Solve.Adapters.Persistence.Devices;
 
@@ -16,6 +17,7 @@ internal static class DeviceRowMapper
         {
             Id = device.Id.ToString(),
             BusId = device.BusId.Value.ToString("D"),
+            DriverId = device.Driver.ToString(),
             Address = device.Address,
             Name = device.Name,
 
@@ -46,7 +48,10 @@ internal static class DeviceRowMapper
         else
             address = (int)row.Address;
 
-        var device = new DeviceDescriptor(id, busId, row.Name, address) { Remark = row.Remark };
+        if (!DriverId.TryParse(row.DriverId, out var driver))
+            errors.Add(DeviceErrors.StorageCorruptRow("driver_id", $"'{row.DriverId}' 不是有效的驱动标识"));
+
+        var device = new DeviceDescriptor(id, busId, driver, row.Name, address) { Remark = row.Remark };
 
         // 解析无误后再做领域校验：库文件可能被手工修改成越界值
         if (errors.Count == 0)
