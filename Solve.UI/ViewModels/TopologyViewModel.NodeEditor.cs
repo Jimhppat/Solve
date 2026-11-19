@@ -48,11 +48,6 @@ public sealed partial class TopologyViewModel
         : node.Level == TopologyLevel.System ? "系统" : $"{node.Level.DisplayName()} {node.Address}";
 
     /// <summary>
-    /// 节点 Id（系统用），可选中复制
-    /// </summary>
-    public string? SelectedIdText => _selectedItem?.Node.Id.ToString();
-
-    /// <summary>
     /// 停用标记：自身停用为"停用"，被上级屏蔽为"上级停用"；可用时为 null
     /// </summary>
     public string? SelectedDisabledText => _selectedItem?.Node is { IsEffectivelyEnabled: false } node
@@ -274,7 +269,6 @@ public sealed partial class TopologyViewModel
     {
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(SelectedTitle));
-        OnPropertyChanged(nameof(SelectedIdText));
         OnPropertyChanged(nameof(SelectedDisabledText));
         OnPropertyChanged(nameof(IsSelectedDisabled));
         OnPropertyChanged(nameof(IsNodeEditable));

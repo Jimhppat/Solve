@@ -83,7 +83,7 @@ public sealed partial class TopologyViewModel
 
     public string NodeScopeText => CanScopeToNode ? $"选中：{SelectedTitle}" : "选中节点";
 
-    // ==================== 数量与预览 ====================
+    // ==================== 数量 ====================
 
     /// <summary>
     /// 生成对象下面每一层的数量输入：整机 5 个，柜体 4 个……治具位 1 个
@@ -94,27 +94,6 @@ public sealed partial class TopologyViewModel
         private set => SetProperty(ref _layoutInputs, value);
     }
 
-    /// <summary>
-    /// 卡片标题旁：生成后整台设备的规模，输入有误时是原因
-    /// </summary>
-    public string LayoutSummaryText
-    {
-        get
-        {
-            if (_service is null)
-                return "配置库不可用";
-            if (_service.LoadError is not null)
-                return "拓扑未能读取";
-
-            var request = ReadLayoutRequest();
-            return request.IsFailure
-                ? request.Error.Message
-                : $"生成后共 {Format(request.Value.Total)} 个节点，其中产品位 {Format(request.Value.Products)} 个";
-        }
-    }
-
-    public bool IsLayoutSummaryError => IsEditable && ReadLayoutRequest().IsFailure;
-
     // ==================== 命令 ====================
 
     private async Task GenerateAsync()
@@ -122,14 +101,15 @@ public sealed partial class TopologyViewModel
         if (_service is not { } service || !IsEditable || _state != TopologySaveState.Idle)
             return;
 
-        var request = ReadLayoutRequest();
-        if (request.IsFailure)
+        // 输入有误或规模超限时，原因显示在卡片里（超限由领域层在生成前按数量拦截）
+        var read = ReadLayoutCounts();
+        if (read.IsFailure)
         {
-            ShowMessage(PendingOrigin.Layout, request.Error.Message, isError: true);
+            ShowMessage(PendingOrigin.Layout, read.Error.Message, isError: true);
             return;
         }
 
-        var counts = request.Value.Counts;
+        var counts = read.Value;
         if (Current is null)
         {
             var name = _systemNameInput.Trim();
@@ -178,46 +158,19 @@ public sealed partial class TopologyViewModel
     private TopologyNode? LayoutTarget => IsNodeScope ? _selectedItem!.Node : Current?.Root;
 
     /// <summary>
-    /// 读取各层数量并估算生成后整台设备的规模（与领域层的上限校验一致，只用于实时预览；最终以领域层为准）
+    /// 读取各层数量：都必须填写，且是 1～999 之间的整数
     /// </summary>
-    private Result<LayoutRequest> ReadLayoutRequest()
+    private Result<int[]> ReadLayoutCounts()
     {
         var counts = new int[_layoutInputs.Count];
         for (var i = 0; i < counts.Length; i++)
         {
             var input = _layoutInputs[i];
             if (!TryReadCount(input.Value, input.ErrorLabel, MinCount, out counts[i], out var error))
-                return Result<LayoutRequest>.Failure(new Error(TopologyErrors.InvalidLayoutCode, error));
+                return Result<int[]>.Failure(new Error(TopologyErrors.InvalidLayoutCode, error));
         }
 
-        // 新下级的规模；每层最多 999、最多 5 层，连乘不会溢出 long
-        long below = 0;
-        long levelCount = 1;
-        foreach (var count in counts)
-        {
-            levelCount *= count;
-            below += levelCount;
-        }
-
-        long total = 1 + below;
-        var products = levelCount;
-        if (Current is { } topology && LayoutTarget is { } target)
-        {
-            long oldBelow = 0;
-            for (var level = target.Level + 1; level <= TopologyLevel.Product; level++)
-                oldBelow += topology.GetDescendants(target.Address, level).Count;
-
-            total = topology.NodeCount - oldBelow + below;
-            products = topology.CountAt(TopologyLevel.Product) - topology.GetDescendants(target.Address, TopologyLevel.Product).Count + levelCount;
-        }
-
-        if (total > EquipmentTopology.MaxNodeCount)
-        {
-            return Result<LayoutRequest>.Failure(new Error(TopologyErrors.InvalidLayoutCode,
-                $"生成后共 {Format(total)} 个节点，超过上限 {Format(EquipmentTopology.MaxNodeCount)}"));
-        }
-
-        return Result<LayoutRequest>.Success(new LayoutRequest(counts, total, products));
+        return Result<int[]>.Success(counts);
     }
 
     /// <summary>
@@ -285,8 +238,6 @@ public sealed partial class TopologyViewModel
 
     private void RaiseLayoutChanged()
     {
-        OnPropertyChanged(nameof(LayoutSummaryText));
-        OnPropertyChanged(nameof(IsLayoutSummaryError));
         OnPropertyChanged(nameof(ShowSystemNameInput));
         OnPropertyChanged(nameof(ShowScope));
         OnPropertyChanged(nameof(CanScopeToNode));
@@ -307,9 +258,4 @@ public sealed partial class TopologyViewModel
         TopologyLevel.Product => "每治具产品位",
         _ => level.DisplayName(),
     };
-
-    /// <param name="Counts">生成对象下面每一层的数量</param>
-    /// <param name="Total">生成后整台设备的节点数</param>
-    /// <param name="Products">生成后整台设备的产品位数</param>
-    private readonly record struct LayoutRequest(int[] Counts, long Total, long Products);
 }

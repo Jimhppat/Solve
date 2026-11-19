@@ -124,22 +124,6 @@ public sealed partial class TopologyViewModel : ViewModelBase
 
     public bool IsConfigured => Current is not null;
 
-    /// <summary>
-    /// 节点浏览标题旁的各层数量；尚未建档时为 null
-    /// </summary>
-    public string? SummaryText
-    {
-        get
-        {
-            if (Current is not { } topology)
-                return null;
-
-            var levels = TopologyLevels.All.Skip(1)
-                .Select(level => $"{level.DisplayName()} {Format(topology.CountAt(level))}");
-            return $"{string.Join(" · ", levels)}（共 {Format(topology.NodeCount)} 个节点）";
-        }
-    }
-
     // 数字输入框的范围，与 TopologyAddress.MaxOrdinal 一致；下级数量允许 0（空容器）
     public decimal MinCount => 1;
 
@@ -374,7 +358,6 @@ public sealed partial class TopologyViewModel : ViewModelBase
         OnPropertyChanged(nameof(LoadErrorText));
         OnPropertyChanged(nameof(HasLoadError));
         OnPropertyChanged(nameof(IsConfigured));
-        OnPropertyChanged(nameof(SummaryText));
         RaiseMessageChanged();
 
         // 选中的还是同一个节点时 SelectedItem 不会触发变更，这里统一刷新两处输入（节点内容可能已变）

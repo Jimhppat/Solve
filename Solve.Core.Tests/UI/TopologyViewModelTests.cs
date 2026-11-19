@@ -58,7 +58,6 @@ public sealed class TopologyViewModelTests
 
         Assert.False(vm.IsEditable);
         Assert.False(vm.GenerateCommand.CanExecute(null));
-        Assert.Equal("配置库不可用", vm.LayoutSummaryText);
     }
 
     [Fact]
@@ -72,7 +71,6 @@ public sealed class TopologyViewModelTests
         Assert.False(vm.ShowScope);
         Assert.Equal(["柜体数", "每柜层位", "每层槽位", "每槽治具位", "每治具产品位"], vm.LayoutInputs.Select(i => i.Label));
         Assert.All(vm.LayoutInputs, input => Assert.Equal(1m, input.Value));
-        Assert.Equal("生成后共 6 个节点，其中产品位 1 个", vm.LayoutSummaryText);
         Assert.True(vm.GenerateCommand.CanExecute(null));
         Assert.Throws<InvalidOperationException>(() => vm.Attach(new TopologyService(_repository, NullLogger<TopologyService>.Instance)));
     }
@@ -85,8 +83,6 @@ public sealed class TopologyViewModelTests
         var vm = await AttachedAsync();
         vm.SystemNameInput = "老化房 1#";
         SetLayout(vm, 2, 1, 1, 1, 4);
-        // 1 + 2 柜 + 2 层 + 2 槽 + 2 治具位 + 8 产品位
-        Assert.Equal("生成后共 17 个节点，其中产品位 8 个", vm.LayoutSummaryText);
 
         await vm.GenerateCommand.ExecuteAsync();
 
@@ -110,13 +106,11 @@ public sealed class TopologyViewModelTests
         var vm = await AttachedAsync();
         SetLayout(vm, 999, 999, 999, 999, 999);
 
-        Assert.True(vm.IsLayoutSummaryError);
-        Assert.Contains("超过上限", vm.LayoutSummaryText);
-
         await vm.GenerateCommand.ExecuteAsync();
 
         Assert.True(vm.IsSaveError);
         Assert.True(vm.HasLayoutMessage);
+        Assert.Contains("超过上限", vm.SaveMessage);
         Assert.Empty(_repository.Saves);
     }
 
@@ -126,9 +120,9 @@ public sealed class TopologyViewModelTests
         var vm = await AttachedAsync();
         vm.LayoutInputs[2].Value = null;
 
-        Assert.Equal("请填写每层槽位数", vm.LayoutSummaryText);
         await vm.GenerateCommand.ExecuteAsync();
         Assert.True(vm.IsSaveError);
+        Assert.Equal("请填写每层槽位数", vm.SaveMessage);
 
         vm.LayoutInputs[2].Value = 1;
         vm.SystemNameInput = "   ";
@@ -155,7 +149,11 @@ public sealed class TopologyViewModelTests
         Assert.Equal([2m, null, 1m, 1m, 2m], LayoutValues(vm));
         Assert.Equal("不统一", vm.LayoutInputs[1].Placeholder);
         Assert.Null(vm.LayoutInputs[0].Placeholder);
-        Assert.Equal("请填写每柜层位数", vm.LayoutSummaryText);
+
+        // 不统一的层必须填写后才能生成，不会按任何默认值悄悄抹平
+        await vm.GenerateCommand.ExecuteAsync();
+        Assert.Equal("请填写每柜层位数", vm.SaveMessage);
+        Assert.Empty(_repository.Saves);
     }
 
     [Fact]
@@ -175,7 +173,6 @@ public sealed class TopologyViewModelTests
         var stored = FakeTopologyRepository.Layout(2, 1, 1, 1, 2);
         var vm = await AttachedAsync(stored);
         vm.LayoutInputs[1].Value = 2;
-        Assert.Equal("生成后共 23 个节点，其中产品位 8 个", vm.LayoutSummaryText);
 
         await vm.GenerateCommand.ExecuteAsync();
 
@@ -248,7 +245,6 @@ public sealed class TopologyViewModelTests
         var cabinet = Select(vm, 2);
         vm.IsNodeScope = true;
         vm.LayoutInputs[0].Value = 1;
-        Assert.Equal("生成后共 15 个节点，其中产品位 3 个", vm.LayoutSummaryText);
 
         await vm.GenerateCommand.ExecuteAsync();
 
@@ -331,7 +327,6 @@ public sealed class TopologyViewModelTests
         Assert.False(vm.GenerateCommand.CanExecute(null));
         Assert.False(vm.IsNodeEditable);
         Assert.Contains("已禁止保存", vm.LoadErrorText);
-        Assert.Equal("拓扑未能读取", vm.LayoutSummaryText);
 
         _repository.NextLoadError = null;
         _repository.Stored = FakeTopologyRepository.Layout(1, 1, 1, 1, 1);
@@ -347,20 +342,18 @@ public sealed class TopologyViewModelTests
     // ==================== 节点浏览 ====================
 
     [Fact]
-    public async Task Configured_SelectsRoot_AndSummarizesLevels()
+    public async Task Configured_SelectsRoot()
     {
         var stored = FakeTopologyRepository.Layout(2, 3, 4, 1, 2);
 
         var vm = await AttachedAsync(stored);
 
-        Assert.Contains("产品位 48", vm.SummaryText);
         Assert.Same(stored.Root, Assert.Single(vm.Roots).Node);
         Assert.Same(vm.Roots[0], vm.SelectedItem);
-        Assert.Equal(stored.Root.Id.ToString(), vm.SelectedIdText);
     }
 
     [Fact]
-    public async Task Selection_ShowsTitleAndId()
+    public async Task Selection_ShowsTitle_WithoutSystemId()
     {
         var stored = FakeTopologyRepository.Layout(1, 1, 1, 1, 2);
         var vm = await AttachedAsync(stored);
@@ -368,7 +361,6 @@ public sealed class TopologyViewModelTests
         var product = Select(vm, 1, 1, 1, 1, 2);
 
         Assert.Equal("产品位 C01-L01-S01-F01-P02", vm.SelectedTitle);
-        Assert.Equal(stored.GetNode(TopologyAddress.Of(1, 1, 1, 1, 2)).Value.Id.ToString(), vm.SelectedIdText);
         Assert.False(vm.IsSelectedDisabled);
         Assert.Equal("产品位 C01-L01-S01-F01-P02", product.Header);
     }
