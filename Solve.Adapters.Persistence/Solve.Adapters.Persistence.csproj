@@ -13,7 +13,8 @@
 
     <ItemGroup>
       <PackageReference Include="Dapper" Version="2.1.89" />
-      <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+      <!-- 不得低于 10.0.13：更早版本的连接池会把并发取出的同一连接借给两个所有者或误关其句柄（dotnet/efcore#39008） -->
+      <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
     </ItemGroup>
 
 </Project>
