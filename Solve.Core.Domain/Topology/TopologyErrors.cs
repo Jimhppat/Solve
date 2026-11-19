@@ -47,6 +47,15 @@ public static class TopologyErrors
     public static Error InvalidLayout(IReadOnlyList<Error> errors)
         => new(InvalidLayoutCode, "拓扑布局无效：" + string.Join("；", errors.Select(e => e.ToString())));
 
+    // ---------- 结构编辑（新增、删除、重新编号、复制）----------
+
+    public const string InvalidEditCode = "Topology.InvalidEdit";
+
+    /// <summary>
+    /// 结构编辑请求本身不成立（如删除系统根、序号冲突、序号用尽），拓扑保持不变
+    /// </summary>
+    public static Error InvalidEdit(string message) => new(InvalidEditCode, message);
+
     // ---------- 查询与联锁 ----------
 
     public const string NodeNotFoundCode = "Topology.NodeNotFound";

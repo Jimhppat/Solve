@@ -19,7 +19,13 @@ internal sealed class FixedTopologyService(EquipmentTopology? current = null) : 
 
     public Result<TopologyChangePlan> PlanLayout(string systemName, TopologyLayout layout) => throw new NotSupportedException();
 
-    public Result<TopologyChangePlan> PlanNodeSettings(TopologyNodeId id, string? name, bool enabled) => throw new NotSupportedException();
+    public Result<TopologyChangePlan> PlanNodeEdit(TopologyNodeId id, TopologyNodeEdit edit) => throw new NotSupportedException();
+
+    public Result<TopologyChangePlan> PlanChildLayout(TopologyNodeId id, IReadOnlyList<int> counts) => throw new NotSupportedException();
+
+    public Result<TopologyChangePlan> PlanRemove(TopologyNodeId id) => throw new NotSupportedException();
+
+    public Result<TopologyChangePlan> PlanCopy(TopologyNodeId id) => throw new NotSupportedException();
 
     public Task<Result> SaveAsync(TopologyChangePlan plan, CancellationToken cancellationToken) => throw new NotSupportedException();
 }

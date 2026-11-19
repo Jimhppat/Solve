@@ -7,7 +7,8 @@ using Solve.UI.ViewModels;
 namespace Solve.Core.Tests.UI;
 
 /// <summary>
-/// 拓扑页：接入、按布局建档 / 扩缩容、删除位置前的确认、读取失败时禁止保存、节点浏览的两套身份
+/// 拓扑页：接入、一键拓扑（首次建档、整机重建、选中节点重建）、读取失败时禁止保存、节点浏览。
+/// 选中节点后的表单见 <see cref="TopologyViewModelNodeEditorTests"/>
 /// </summary>
 public sealed class TopologyViewModelTests
 {
@@ -24,25 +25,39 @@ public sealed class TopologyViewModelTests
         return vm;
     }
 
-    private static void SetLayout(TopologyViewModel vm, int c, int l, int s, int f, int p)
+    private static void SetLayout(TopologyViewModel vm, params int[] counts)
     {
-        vm.CabinetsInput = c;
-        vm.LayersPerCabinetInput = l;
-        vm.SlotsPerLayerInput = s;
-        vm.FixturesPerSlotInput = f;
-        vm.ProductsPerFixtureInput = p;
+        for (var i = 0; i < counts.Length; i++)
+            vm.LayoutInputs[i].Value = counts[i];
     }
+
+    private static decimal?[] LayoutValues(TopologyViewModel vm) => vm.LayoutInputs.Select(input => input.Value).ToArray();
+
+    /// <summary>
+    /// 沿序号逐级找到树上的节点并选中；不传序号即系统根
+    /// </summary>
+    private static TopologyTreeItemViewModel Select(TopologyViewModel vm, params int[] ordinals)
+    {
+        var item = vm.Roots[0];
+        foreach (var ordinal in ordinals)
+            item = item.Children.First(child => child.Node.Ordinal == ordinal);
+
+        vm.SelectedItem = item;
+        return item;
+    }
+
+    private static TopologyNodeDefinition Node(int ordinal, params TopologyNodeDefinition[] children)
+        => new(TopologyNodeId.New(), ordinal, children);
 
     // ==================== 接入 ====================
 
     [Fact]
-    public void Designer_CannotSave()
+    public void Designer_CannotGenerate()
     {
         var vm = new TopologyViewModel();
 
         Assert.False(vm.IsEditable);
-        Assert.False(vm.SaveCommand.CanExecute(null));
-        Assert.Contains("不可用", vm.SummaryText);
+        Assert.False(vm.GenerateCommand.CanExecute(null));
     }
 
     [Fact]
@@ -50,143 +65,39 @@ public sealed class TopologyViewModelTests
     {
         var vm = await AttachedAsync();
 
-        Assert.True(vm.IsEditable);
         Assert.False(vm.IsConfigured);
         Assert.Empty(vm.Roots);
-        Assert.True(vm.SaveCommand.CanExecute(null));
-        Assert.Contains("尚未建档", vm.SummaryText);
+        Assert.True(vm.ShowSystemNameInput);
+        Assert.False(vm.ShowScope);
+        Assert.Equal(["柜体数", "每柜层位", "每层槽位", "每槽治具位", "每治具产品位"], vm.LayoutInputs.Select(i => i.Label));
+        Assert.All(vm.LayoutInputs, input => Assert.Equal(1m, input.Value));
+        Assert.True(vm.GenerateCommand.CanExecute(null));
         Assert.Throws<InvalidOperationException>(() => vm.Attach(new TopologyService(_repository, NullLogger<TopologyService>.Instance)));
     }
 
-    [Fact]
-    public async Task Attach_Configured_PrefillsLayout_AndSelectsRoot()
-    {
-        var stored = FakeTopologyRepository.Layout(2, 3, 4, 1, 2);
-
-        var vm = await AttachedAsync(stored);
-
-        Assert.True(vm.IsConfigured);
-        Assert.False(vm.IsNonUniform);
-        Assert.Equal("老化房", vm.SystemNameInput);
-        Assert.Equal((2m, 3m, 4m, 1m, 2m),
-            (vm.CabinetsInput, vm.LayersPerCabinetInput, vm.SlotsPerLayerInput, vm.FixturesPerSlotInput, vm.ProductsPerFixtureInput));
-        Assert.Contains("产品位 48", vm.SummaryText);
-        Assert.Equal(stored.Root.Id.ToString(), vm.SystemIdText);
-        Assert.Same(stored.Root, Assert.Single(vm.Roots).Node);
-        Assert.Same(vm.Roots[0], vm.SelectedItem);
-    }
+    // ==================== 首次建档 ====================
 
     [Fact]
-    public async Task Attach_NonUniformTopology_IsFlagged()
-    {
-        var stored = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
-        [
-            new TopologyNodeDefinition(TopologyNodeId.New(), 1, []),
-            new TopologyNodeDefinition(TopologyNodeId.New(), 3, []),
-        ])).Value;
-
-        var vm = await AttachedAsync(stored);
-
-        Assert.True(vm.IsNonUniform);
-    }
-
-    // ==================== 保存 ====================
-
-    [Fact]
-    public async Task Save_FirstCreation_CreatesAllNodes_AndShowsTree()
+    public async Task FirstCreation_CreatesAllNodes_ThenCardPrefillsTheNewLayout()
     {
         var vm = await AttachedAsync();
         vm.SystemNameInput = "老化房 1#";
         SetLayout(vm, 2, 1, 1, 1, 4);
-        // 1 + 2 柜 + 2 层 + 2 槽 + 2 治具位 + 8 产品位
-        Assert.Contains("共 17 个节点", vm.LayoutPreviewText);
 
-        await vm.SaveCommand.ExecuteAsync();
+        await vm.GenerateCommand.ExecuteAsync();
 
         var saved = Assert.Single(_repository.Saves);
-        Assert.Equal("老化房 1#", saved.Name);
-        Assert.Equal(17, saved.NodeCount);
+        Assert.Equal(("老化房 1#", 17), (saved.Name, saved.NodeCount));
         Assert.True(vm.IsConfigured);
         Assert.Same(saved.Root, Assert.Single(vm.Roots).Node);
-        Assert.False(vm.IsSaveError);
-        Assert.Contains("已建档", vm.SaveMessage);
-        Assert.Equal(TopologySaveState.Idle, vm.State);
-    }
+        Assert.Equal("已建档，共 17 个节点", vm.SaveMessage);
+        Assert.True(vm.HasLayoutMessage);
+        Assert.False(vm.HasNodeMessage);
 
-    [Fact]
-    public async Task Save_Unchanged_SavesNothing()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 1, 1, 1, 2));
-
-        await vm.SaveCommand.ExecuteAsync();
-
-        Assert.Empty(_repository.Saves);
-        Assert.Contains("没有变化", vm.SaveMessage);
-    }
-
-    [Fact]
-    public async Task Save_Grow_KeepsExistingIds()
-    {
-        var stored = FakeTopologyRepository.Layout(1, 1, 1, 1, 2);
-        var vm = await AttachedAsync(stored);
-        vm.CabinetsInput = 2;
-
-        await vm.SaveCommand.ExecuteAsync();
-
-        var saved = Assert.Single(_repository.Saves);
-        foreach (var node in TopologyLevels.All.SelectMany(stored.GetNodes))
-            Assert.Equal(node.Address, saved.GetNode(node.Id).Value.Address);
-        Assert.Contains("新增 6", vm.SaveMessage);
-    }
-
-    [Fact]
-    public async Task Save_Shrink_WaitsForConfirmation_ThenSaves()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 2));
-        vm.CabinetsInput = 1;
-
-        await vm.SaveCommand.ExecuteAsync();
-
-        Assert.Equal(TopologySaveState.AwaitingConfirmation, vm.State);
-        Assert.Empty(_repository.Saves);
-        Assert.Contains("删除 6 个位置", vm.PendingConfirmationText);
-        Assert.Contains("C02", vm.PendingConfirmationText);
-        Assert.False(vm.SaveCommand.CanExecute(null));
-
-        await vm.ConfirmCommand.ExecuteAsync();
-
-        Assert.Equal(1, Assert.Single(_repository.Saves).CountAt(TopologyLevel.Cabinet));
-        Assert.Equal(TopologySaveState.Idle, vm.State);
-        Assert.Null(vm.PendingConfirmationText);
-    }
-
-    [Fact]
-    public async Task Save_Shrink_Cancelled_SavesNothing()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 2));
-        vm.CabinetsInput = 1;
-        await vm.SaveCommand.ExecuteAsync();
-
-        vm.CancelCommand.Execute(null);
-
-        Assert.Equal(TopologySaveState.Idle, vm.State);
-        Assert.Empty(_repository.Saves);
-        Assert.Contains("已取消", vm.SaveMessage);
-    }
-
-    [Fact]
-    public async Task EditingInput_WhileAwaitingConfirmation_CancelsThePendingSave()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 2));
-        vm.CabinetsInput = 1;
-        await vm.SaveCommand.ExecuteAsync();
-
-        vm.ProductsPerFixtureInput = 3;
-
-        Assert.Equal(TopologySaveState.Idle, vm.State);
-        Assert.False(vm.ConfirmCommand.CanExecute(null));
-        Assert.Contains("重新保存", vm.SaveMessage);
-        Assert.Empty(_repository.Saves);
+        // 建档后卡片仍在：不再填系统名称，可选范围，数量按新拓扑预填
+        Assert.False(vm.ShowSystemNameInput);
+        Assert.True(vm.ShowScope);
+        Assert.Equal([2m, 1m, 1m, 1m, 4m], LayoutValues(vm));
     }
 
     [Fact]
@@ -195,12 +106,11 @@ public sealed class TopologyViewModelTests
         var vm = await AttachedAsync();
         SetLayout(vm, 999, 999, 999, 999, 999);
 
-        Assert.True(vm.IsLayoutPreviewError);
-        Assert.Contains("超过上限", vm.LayoutPreviewText);
-
-        await vm.SaveCommand.ExecuteAsync();
+        await vm.GenerateCommand.ExecuteAsync();
 
         Assert.True(vm.IsSaveError);
+        Assert.True(vm.HasLayoutMessage);
+        Assert.Contains("超过上限", vm.SaveMessage);
         Assert.Empty(_repository.Saves);
     }
 
@@ -208,16 +118,198 @@ public sealed class TopologyViewModelTests
     public async Task EmptyInputs_AreRejectedBeforePlanning()
     {
         var vm = await AttachedAsync();
-        vm.SlotsPerLayerInput = null;
+        vm.LayoutInputs[2].Value = null;
 
-        Assert.Equal("请填写每层槽位数", vm.LayoutPreviewText);
-        await vm.SaveCommand.ExecuteAsync();
+        await vm.GenerateCommand.ExecuteAsync();
         Assert.True(vm.IsSaveError);
+        Assert.Equal("请填写每层槽位数", vm.SaveMessage);
 
-        vm.SlotsPerLayerInput = 1;
+        vm.LayoutInputs[2].Value = 1;
         vm.SystemNameInput = "   ";
-        await vm.SaveCommand.ExecuteAsync();
+        await vm.GenerateCommand.ExecuteAsync();
         Assert.Equal("系统名称不能为空", vm.SaveMessage);
+        Assert.Empty(_repository.Saves);
+    }
+
+    // ==================== 整机重建 ====================
+
+    [Fact]
+    public async Task Configured_PrefillsUniformLevels_AndLeavesMixedLevelsEmpty()
+    {
+        // 1 号柜 2 层、2 号柜 1 层
+        var stored = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            Node(1, Node(1, Node(1, Node(1, Node(1), Node(2)))), Node(2, Node(1, Node(1, Node(1), Node(2))))),
+            Node(2, Node(1, Node(1, Node(1, Node(1), Node(2))))),
+        ])).Value;
+
+        var vm = await AttachedAsync(stored);
+
+        Assert.True(vm.IsWholeDeviceScope);
+        Assert.Equal([2m, null, 1m, 1m, 2m], LayoutValues(vm));
+        Assert.Equal("不统一", vm.LayoutInputs[1].Placeholder);
+        Assert.Null(vm.LayoutInputs[0].Placeholder);
+
+        // 不统一的层必须填写后才能生成，不会按任何默认值悄悄抹平
+        await vm.GenerateCommand.ExecuteAsync();
+        Assert.Equal("请填写每柜层位数", vm.SaveMessage);
+        Assert.Empty(_repository.Saves);
+    }
+
+    [Fact]
+    public async Task Regenerate_Unchanged_SavesNothing()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 2));
+
+        await vm.GenerateCommand.ExecuteAsync();
+
+        Assert.Empty(_repository.Saves);
+        Assert.Equal("结构没有变化", vm.SaveMessage);
+    }
+
+    [Fact]
+    public async Task Regenerate_WholeDevice_ConfirmsInCard_AndKeepsIds()
+    {
+        var stored = FakeTopologyRepository.Layout(2, 1, 1, 1, 2);
+        var vm = await AttachedAsync(stored);
+        vm.LayoutInputs[1].Value = 2;
+
+        await vm.GenerateCommand.ExecuteAsync();
+
+        Assert.True(vm.IsLayoutAwaitingConfirmation);
+        Assert.False(vm.IsNodeAwaitingConfirmation);
+        Assert.Equal("将新增并启用 C01-L02、C02-L02，共 10 个位置（产品位 4 个）", vm.PendingConfirmationText);
+        Assert.Empty(_repository.Saves);
+
+        await vm.ConfirmCommand.ExecuteAsync();
+
+        var saved = Assert.Single(_repository.Saves);
+        foreach (var node in TopologyLevels.All.SelectMany(stored.GetNodes))
+            Assert.Equal(node.Address, saved.GetNode(node.Id).Value.Address);
+        Assert.Equal("已生成，新增 10 个位置", vm.SaveMessage);
+        Assert.True(vm.HasLayoutMessage);
+    }
+
+    [Fact]
+    public async Task EditingLayoutInput_WhileAwaitingConfirmation_CancelsIt()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 1));
+        vm.LayoutInputs[0].Value = 1;
+        await vm.GenerateCommand.ExecuteAsync();
+        Assert.True(vm.IsLayoutAwaitingConfirmation);
+
+        vm.LayoutInputs[0].Value = 3;
+
+        Assert.Equal(TopologySaveState.Idle, vm.State);
+        Assert.Empty(_repository.Saves);
+    }
+
+    [Fact]
+    public async Task BrowsingTree_WhileWholeDeviceGenerationAwaits_DoesNotCancelIt()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 1));
+        vm.LayoutInputs[0].Value = 1;
+        await vm.GenerateCommand.ExecuteAsync();
+
+        // 点开要删除的 2 号柜看看：整机生成与选中哪个节点无关，不取消
+        Select(vm, 2);
+
+        Assert.True(vm.IsLayoutAwaitingConfirmation);
+        await vm.ConfirmCommand.ExecuteAsync();
+        Assert.Equal(1, Assert.Single(_repository.Saves).CountAt(TopologyLevel.Cabinet));
+    }
+
+    // ==================== 选中节点重建 ====================
+
+    [Fact]
+    public async Task NodeScope_PrefillsFromSelectedNode()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 2, 1, 1, 1));
+        Select(vm, 2);
+
+        Assert.True(vm.CanScopeToNode);
+        Assert.Equal("选中：柜体 C02", vm.NodeScopeText);
+
+        vm.IsNodeScope = true;
+
+        Assert.False(vm.IsWholeDeviceScope);
+        Assert.Equal(["层位数", "每层槽位", "每槽治具位", "每治具产品位"], vm.LayoutInputs.Select(i => i.Label));
+        Assert.Equal([2m, 1m, 1m, 1m], LayoutValues(vm));
+    }
+
+    [Fact]
+    public async Task NodeScope_RegeneratesOnlyThatSubtree_ThenSelectsIt()
+    {
+        var stored = FakeTopologyRepository.Layout(2, 2, 1, 1, 1);
+        var vm = await AttachedAsync(stored);
+        var cabinet = Select(vm, 2);
+        vm.IsNodeScope = true;
+        vm.LayoutInputs[0].Value = 1;
+
+        await vm.GenerateCommand.ExecuteAsync();
+
+        Assert.Equal("将删除 C02-L02 及其下级，共 4 个位置（产品位 1 个）", vm.PendingConfirmationText);
+
+        await vm.ConfirmCommand.ExecuteAsync();
+
+        var saved = Assert.Single(_repository.Saves);
+        Assert.Equal(2, saved.GetDescendants(TopologyAddress.Of(1), TopologyLevel.Layer).Count);
+        Assert.Single(saved.GetDescendants(TopologyAddress.Of(2), TopologyLevel.Layer));
+        Assert.Equal(cabinet.Node.Id, vm.SelectedItem!.Node.Id);
+        Assert.True(vm.SelectedItem.IsExpanded);
+        Assert.True(vm.IsNodeScope);
+        Assert.Equal([1m, 1m, 1m, 1m], LayoutValues(vm));
+        Assert.Equal("已生成，删除 4 个位置", vm.SaveMessage);
+    }
+
+    [Fact]
+    public async Task NodeScope_IsUnavailableForRootAndProduct()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 1, 1, 1, 1));
+
+        vm.IsNodeScope = true; // 选中的是系统根：就是整机
+        Assert.True(vm.IsWholeDeviceScope);
+
+        Select(vm, 1, 1, 1, 1, 1);
+        Assert.False(vm.CanScopeToNode);
+        vm.IsNodeScope = true;
+        Assert.True(vm.IsWholeDeviceScope);
+        Assert.Equal(5, vm.LayoutInputs.Count);
+    }
+
+    [Fact]
+    public async Task NodeScope_SelectingRoot_FallsBackToWholeDevice()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 1));
+        Select(vm, 1);
+        vm.IsNodeScope = true;
+
+        Select(vm);
+
+        Assert.True(vm.IsWholeDeviceScope);
+        Assert.Equal(5, vm.LayoutInputs.Count);
+    }
+
+    [Fact]
+    public async Task NodeScope_SwitchingNode_CancelsPendingGeneration_AndPrefillsNewNode()
+    {
+        var stored = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            Node(1, Node(1, Node(1, Node(1, Node(1)))), Node(2, Node(1, Node(1, Node(1))))),
+            Node(2, Node(1, Node(1, Node(1, Node(1))))),
+        ])).Value;
+        var vm = await AttachedAsync(stored);
+        Select(vm, 1);
+        vm.IsNodeScope = true;
+        vm.LayoutInputs[0].Value = 1;
+        await vm.GenerateCommand.ExecuteAsync();
+        Assert.True(vm.IsLayoutAwaitingConfirmation);
+
+        Select(vm, 2);
+
+        Assert.Equal(TopologySaveState.Idle, vm.State);
+        Assert.Equal("选中：柜体 C02", vm.NodeScopeText);
+        Assert.Equal([1m, 1m, 1m, 1m], LayoutValues(vm));
         Assert.Empty(_repository.Saves);
     }
 
@@ -231,8 +323,9 @@ public sealed class TopologyViewModelTests
 
         Assert.True(vm.HasLoadError);
         Assert.False(vm.IsEditable);
-        Assert.False(vm.IsInputEnabled);
-        Assert.False(vm.SaveCommand.CanExecute(null));
+        Assert.False(vm.IsLayoutInputEnabled);
+        Assert.False(vm.GenerateCommand.CanExecute(null));
+        Assert.False(vm.IsNodeEditable);
         Assert.Contains("已禁止保存", vm.LoadErrorText);
 
         _repository.NextLoadError = null;
@@ -241,43 +334,51 @@ public sealed class TopologyViewModelTests
 
         Assert.False(vm.HasLoadError);
         Assert.True(vm.IsConfigured);
-        Assert.True(vm.SaveCommand.CanExecute(null));
+        Assert.True(vm.GenerateCommand.CanExecute(null));
+        Assert.True(vm.IsNodeEditable);
+        Assert.False(vm.HasSaveMessage);
     }
 
     // ==================== 节点浏览 ====================
 
     [Fact]
-    public async Task Selection_ShowsBothIdentities()
+    public async Task Configured_SelectsRoot()
+    {
+        var stored = FakeTopologyRepository.Layout(2, 3, 4, 1, 2);
+
+        var vm = await AttachedAsync(stored);
+
+        Assert.Same(stored.Root, Assert.Single(vm.Roots).Node);
+        Assert.Same(vm.Roots[0], vm.SelectedItem);
+    }
+
+    [Fact]
+    public async Task Selection_ShowsTitle_WithoutSystemId()
     {
         var stored = FakeTopologyRepository.Layout(1, 1, 1, 1, 2);
         var vm = await AttachedAsync(stored);
 
-        var product = vm.Roots[0].Children[0].Children[0].Children[0].Children[0].Children[1];
-        vm.SelectedItem = product;
+        var product = Select(vm, 1, 1, 1, 1, 2);
 
-        Assert.Equal("产品位", vm.SelectedLevelText);
-        Assert.Equal("C01-L01-S01-F01-P02", vm.SelectedAddressText);
-        Assert.Equal(stored.GetNode(TopologyAddress.Of(1, 1, 1, 1, 2)).Value.Id.ToString(), vm.SelectedIdText);
-        Assert.Equal("启用", vm.SelectedStatusText);
-        Assert.Contains("最底层", vm.SelectedChildrenText);
+        Assert.Equal("产品位 C01-L01-S01-F01-P02", vm.SelectedTitle);
+        Assert.False(vm.IsSelectedDisabled);
         Assert.Equal("产品位 C01-L01-S01-F01-P02", product.Header);
     }
 
     [Fact]
-    public async Task Selection_OfMaskedSubtree_ExplainsWhichAncestorIsDisabled()
+    public async Task Selection_ShowsWhetherDisabledBySelfOrAncestor()
     {
-        TopologyNodeDefinition Node(int ordinal, params TopologyNodeDefinition[] children) => new(TopologyNodeId.New(), ordinal, children);
         var stored = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
             [Node(1, Node(1, Node(1)) with { Enabled = false, Name = "高温层" })])).Value;
         var vm = await AttachedAsync(stored);
 
-        var layer = vm.Roots[0].Children[0].Children[0];
-        vm.SelectedItem = layer.Children[0];
-
-        Assert.True(layer.IsDisabled);
+        var layer = Select(vm, 1, 1);
+        Assert.Equal("停用", vm.SelectedDisabledText);
         Assert.Equal("高温层", layer.Name);
+
+        vm.SelectedItem = layer.Children[0];
         Assert.True(vm.SelectedItem!.IsDisabled);
-        Assert.Contains("层位 C01-L01 已停用", vm.SelectedStatusText);
+        Assert.Equal("上级停用", vm.SelectedDisabledText);
     }
 
     [Fact]
@@ -287,156 +388,5 @@ public sealed class TopologyViewModelTests
 
         Assert.True(vm.Roots[0].IsExpanded);
         Assert.False(vm.Roots[0].Children[0].IsExpanded);
-    }
-
-    // ==================== 节点编辑 ====================
-
-    /// <summary>
-    /// 选中 1 号柜下的层位 C01-L01
-    /// </summary>
-    private static TopologyTreeItemViewModel SelectLayer(TopologyViewModel vm)
-    {
-        var layer = vm.Roots[0].Children[0].Children[0];
-        vm.SelectedItem = layer;
-        return layer;
-    }
-
-    [Fact]
-    public async Task Root_IsNotEditableAsNode()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 1, 1, 1, 1));
-
-        Assert.Same(vm.Roots[0], vm.SelectedItem);
-        Assert.False(vm.IsNodeEditable);
-        Assert.True(vm.HasNodeEditHint);
-        Assert.False(vm.SaveNodeCommand.CanExecute(null));
-    }
-
-    [Fact]
-    public async Task Selecting_ShowsNodeValues_AndSaveNeedsAChange()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 2, 1, 1, 1));
-
-        SelectLayer(vm);
-
-        Assert.True(vm.IsNodeEditable);
-        Assert.Equal("", vm.NodeNameInput);
-        Assert.True(vm.NodeEnabledInput);
-        Assert.False(vm.HasNodeChanges);
-        Assert.False(vm.SaveNodeCommand.CanExecute(null));
-
-        vm.NodeNameInput = "高温层";
-        Assert.True(vm.SaveNodeCommand.CanExecute(null));
-
-        vm.NodeNameInput = "   "; // 空白等同未命名，不算修改
-        Assert.False(vm.HasNodeChanges);
-    }
-
-    [Fact]
-    public async Task Rename_SavesImmediately_KeepsSelectionAndExpansionById()
-    {
-        var stored = FakeTopologyRepository.Layout(1, 2, 1, 1, 1);
-        var vm = await AttachedAsync(stored);
-        var layer = SelectLayer(vm);
-        vm.Roots[0].Children[0].Children[1].IsExpanded = true; // 不在选中路径上的 C01-L02
-
-        vm.NodeNameInput = "  高温层 ";
-        await vm.SaveNodeCommand.ExecuteAsync();
-
-        var saved = Assert.Single(_repository.Saves);
-        Assert.Equal("高温层", saved.GetNode(layer.Node.Id).Value.Name);
-        Assert.Contains("已命名为「高温层」", vm.SaveMessage);
-
-        // 树已按新拓扑重建：选中项与展开状态按 Id 保留，节点输入显示保存后的值
-        Assert.NotSame(layer, vm.SelectedItem);
-        Assert.Equal(layer.Node.Id, vm.SelectedItem!.Node.Id);
-        Assert.Equal("高温层", vm.SelectedItem.Name);
-        Assert.True(vm.Roots[0].Children[0].Children[1].IsExpanded);
-        Assert.Equal("高温层", vm.NodeNameInput);
-        Assert.False(vm.HasNodeChanges);
-    }
-
-    [Fact]
-    public async Task Disable_SavesWithoutConfirmation_AndReportsAffectedPositions()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 2, 1, 1, 3));
-        var layer = SelectLayer(vm);
-
-        vm.NodeEnabledInput = false;
-        await vm.SaveNodeCommand.ExecuteAsync();
-
-        var saved = Assert.Single(_repository.Saves);
-        Assert.False(saved.GetNode(layer.Node.Id).Value.IsEnabled);
-        Assert.Contains("已停用，6 个位置不再接受命令", vm.SaveMessage); // 层位 + 槽位 + 治具位 + 3 个产品位
-        Assert.True(vm.SelectedItem!.IsDisabled);
-        Assert.Contains("已停用", vm.SelectedStatusText);
-    }
-
-    [Fact]
-    public async Task Reenable_RequiresConfirmation_ThenSaves()
-    {
-        TopologyNodeDefinition Node(int ordinal, params TopologyNodeDefinition[] children) => new(TopologyNodeId.New(), ordinal, children);
-        var stored = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
-            [Node(1, Node(1, Node(1, Node(1, Node(1), Node(2)))) with { Enabled = false })])).Value;
-        var vm = await AttachedAsync(stored);
-        SelectLayer(vm);
-
-        vm.NodeEnabledInput = true;
-        await vm.SaveNodeCommand.ExecuteAsync();
-
-        Assert.Equal(TopologySaveState.AwaitingConfirmation, vm.State);
-        Assert.Empty(_repository.Saves);
-        Assert.Contains("重新启用 5 个位置（其中产品位 2 个）：C01-L01", vm.PendingConfirmationText);
-        Assert.Contains("维护已结束", vm.PendingConfirmationText);
-
-        await vm.ConfirmCommand.ExecuteAsync();
-
-        Assert.True(Assert.Single(_repository.Saves).GetNode(TopologyAddress.Of(1, 1)).Value.IsEnabled);
-        Assert.Contains("已启用，5 个位置恢复可用", vm.SaveMessage);
-    }
-
-    [Fact]
-    public async Task SwitchingNode_WhileNodeChangeAwaitsConfirmation_CancelsIt()
-    {
-        TopologyNodeDefinition Node(int ordinal, params TopologyNodeDefinition[] children) => new(TopologyNodeId.New(), ordinal, children);
-        var stored = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
-            [Node(1, Node(1) with { Enabled = false }, Node(2))])).Value;
-        var vm = await AttachedAsync(stored);
-        SelectLayer(vm);
-        vm.NodeEnabledInput = true;
-        await vm.SaveNodeCommand.ExecuteAsync();
-        Assert.Equal(TopologySaveState.AwaitingConfirmation, vm.State);
-
-        vm.SelectedItem = vm.Roots[0].Children[0].Children[1];
-
-        Assert.Equal(TopologySaveState.Idle, vm.State);
-        Assert.Contains("已切换节点", vm.SaveMessage);
-        Assert.Empty(_repository.Saves);
-    }
-
-    [Fact]
-    public async Task BrowsingTree_WhileLayoutDeletionAwaitsConfirmation_DoesNotCancelIt()
-    {
-        var vm = await AttachedAsync(FakeTopologyRepository.Layout(2, 1, 1, 1, 1));
-        vm.CabinetsInput = 1;
-        await vm.SaveCommand.ExecuteAsync();
-        Assert.Equal(TopologySaveState.AwaitingConfirmation, vm.State);
-
-        // 操作员点开树查看要删除的 2 号柜：与布局确认无关，不取消
-        vm.SelectedItem = vm.Roots[0].Children[1];
-
-        Assert.Equal(TopologySaveState.AwaitingConfirmation, vm.State);
-        await vm.ConfirmCommand.ExecuteAsync();
-        Assert.Single(_repository.Saves);
-    }
-
-    [Fact]
-    public async Task NodeSave_AfterLoadError_IsNotPossible()
-    {
-        _repository.NextLoadError = FakeTopologyRepository.CorruptError;
-        var vm = await AttachedAsync();
-
-        Assert.False(vm.IsNodeEditable);
-        Assert.False(vm.SaveNodeCommand.CanExecute(null));
     }
 }

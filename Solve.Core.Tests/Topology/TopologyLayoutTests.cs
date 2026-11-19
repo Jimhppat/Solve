@@ -67,50 +67,6 @@ public sealed class TopologyLayoutTests
     public void MultipleErrors_AreAllReported()
         => Assert.Equal(5, Codes(new TopologyLayout(0, 0, 0, 0, 0)).Count);
 
-    // ---------- 反推布局 ----------
-
-    [Fact]
-    public void TryInfer_UniformTopology_ReturnsItsLayout()
-    {
-        var topology = EquipmentTopology.Create(Standard.ToDefinition("S").Value).Value;
-
-        Assert.True(TopologyLayout.TryInfer(topology, out var layout));
-        Assert.Equal(Standard, layout);
-    }
-
-    [Fact]
-    public void TryInfer_DifferentCabinets_ReturnsMaxCounts()
-    {
-        // 1 号柜 2 层、2 号柜 1 层
-        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
-        [
-            new TopologyNodeDefinition(TopologyNodeId.New(), 1, [Chain(1, 4), Chain(2, 4)]),
-            Chain(2, 5),
-        ])).Value;
-
-        Assert.False(TopologyLayout.TryInfer(topology, out var layout));
-        Assert.Equal(new TopologyLayout(2, 2, 1, 1, 1), layout);
-    }
-
-    [Fact]
-    public void TryInfer_GapInNumbering_IsNotUniform()
-    {
-        // 只有 1 号与 3 号柜：数量一致但编号不连续，按统一布局保存会变成 1、2 号
-        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Chain(1, 5), Chain(3, 5)])).Value;
-
-        Assert.False(TopologyLayout.TryInfer(topology, out var layout));
-        Assert.Equal(new TopologyLayout(2, 1, 1, 1, 1), layout);
-    }
-
-    [Fact]
-    public void TryInfer_MissingLevels_IsNotUniform()
-    {
-        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Chain(1, 2)])).Value;
-
-        Assert.False(TopologyLayout.TryInfer(topology, out var layout));
-        Assert.Equal(new TopologyLayout(1, 1, 0, 0, 0), layout);
-    }
-
     // ---------- 节点身份 ----------
 
     private static IEnumerable<TopologyNode> AllNodes(EquipmentTopology topology)
