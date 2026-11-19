@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using Solve.Core.Application.Drivers;
 using Solve.Core.Domain.Devices;
 using Solve.Core.Domain.Drivers;
+using Solve.Device.Sdk;
 
 namespace Solve.Adapters.DeviceLibrary;
 
@@ -26,6 +27,7 @@ public sealed class DriverCatalog : IDriverCatalog
     ];
 
     private readonly Dictionary<DriverId, DriverDescriptor> _byId;
+    private readonly IReadOnlyDictionary<DriverId, IDeviceDriver> _implementations;
 
     /// <summary>
     /// 只含程序自带的驱动（设备库不可用时使用）
@@ -35,10 +37,12 @@ public sealed class DriverCatalog : IDriverCatalog
     {
     }
 
-    public DriverCatalog(IEnumerable<DriverDescriptor> drivers)
+    /// <param name="implementations">驱动实现（来自驱动包），键必须都在 <paramref name="drivers"/> 中</param>
+    public DriverCatalog(IEnumerable<DriverDescriptor> drivers, IReadOnlyDictionary<DriverId, IDeviceDriver>? implementations = null)
     {
         ArgumentNullException.ThrowIfNull(drivers);
 
+        _implementations = implementations ?? new Dictionary<DriverId, IDeviceDriver>();
         _byId = [];
         foreach (var driver in drivers)
         {
@@ -51,12 +55,21 @@ public sealed class DriverCatalog : IDriverCatalog
             .OrderBy(d => CategoryOrder(d.Category))
             .ThenBy(d => d.Name, StringComparer.CurrentCulture)
             .ToArray();
+
+        foreach (var id in _implementations.Keys)
+        {
+            if (!_byId.ContainsKey(id))
+                throw new InvalidOperationException($"驱动实现 {id} 没有对应的驱动说明。");
+        }
     }
 
     public IReadOnlyList<DriverDescriptor> All { get; }
 
     public bool TryGet(DriverId id, [NotNullWhen(true)] out DriverDescriptor? driver)
         => _byId.TryGetValue(id, out driver);
+
+    public bool TryGetImplementation(DriverId id, [NotNullWhen(true)] out IDeviceDriver? implementation)
+        => _implementations.TryGetValue(id, out implementation);
 
     private static int CategoryOrder(HardwareCategory category)
     {

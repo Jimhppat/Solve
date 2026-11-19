@@ -75,7 +75,10 @@ public sealed class BusDevicesViewModel : ViewModelBase
         _bus = bus;
         _busId = bus.Id;
         _service = service;
-        _allDrivers = service.Drivers.All.Select(d => new DriverItemViewModel(d)).ToList();
+        // 有实现（来自驱动包）的驱动带上参数声明，添加与编辑表单据此生成参数输入项
+        _allDrivers = service.Drivers.All
+            .Select(d => new DriverItemViewModel(d, service.Drivers.TryGetImplementation(d.Id, out var implementation) ? implementation.Info.Parameters : null))
+            .ToList();
         Categories = BuildCategories(_allDrivers);
 
         AddCommand = new AsyncRelayCommand(AddAsync, () => BatchForm.HasDriver);
@@ -298,7 +301,10 @@ public sealed class BusDevicesViewModel : ViewModelBase
         }
 
         PageError = null;
-        Show(listed.Value);
+
+        // 绑定在增删改成功后已由服务重新计算；这里只读取内存中的快照，不触发绑定
+        var bindings = service.Bindings.Get(busId).ToDictionary(b => b.Device.Id);
+        Show(listed.Value, bindings);
     }
 
     private static IReadOnlyList<DriverCategoryItem> BuildCategories(IReadOnlyList<DriverItemViewModel> drivers)
@@ -310,13 +316,15 @@ public sealed class BusDevicesViewModel : ViewModelBase
         return items;
     }
 
-    private void Show(IReadOnlyList<DeviceDescriptor> devices)
+    private void Show(IReadOnlyList<DeviceDescriptor> devices, IReadOnlyDictionary<DeviceId, DriverBinding>? bindings = null)
     {
         Devices.Clear();
         foreach (var device in devices)
         {
+            // 绑定按模块 Id 对应，并要求配置一致：库里的模块刚被改过而绑定尚未刷新时，显示为未绑定而不是旧状态
+            var binding = bindings is not null && bindings.TryGetValue(device.Id, out var found) && found.Device == device ? found : null;
             Devices.Add(new DeviceItemViewModel(
-                device, DriverOf(device), OpenEdit, item => PendingDelete = [item], OnCheckedChanged));
+                device, DriverOf(device), binding, OpenEdit, item => PendingDelete = [item], OnCheckedChanged));
         }
 
         OnPropertyChanged(nameof(IsEmpty));

@@ -11,6 +11,11 @@ namespace Solve.Core.Domain.Devices;
 public sealed record DeviceBatchRequest(BusId BusId, DriverId Driver, string Name, int StartAddress, int Count)
 {
     public string? Remark { get; init; }
+
+    /// <summary>
+    /// 模块参数，同一批的每个模块都使用这组值
+    /// </summary>
+    public ParameterValues Parameters { get; init; } = ParameterValues.Empty;
 }
 
 /// <summary>
@@ -60,7 +65,11 @@ public static class DeviceBatch
         {
             var address = request.StartAddress + i;
             var deviceName = request.Count == 1 ? name : $"{name}-{address:D2}";
-            var device = new DeviceDescriptor(DeviceId.New(), request.BusId, request.Driver, deviceName, address) { Remark = remark };
+            var device = new DeviceDescriptor(DeviceId.New(), request.BusId, request.Driver, deviceName, address)
+            {
+                Remark = remark,
+                Parameters = request.Parameters,
+            };
 
             // 同一批的名称规则相同，名称过长等错误每个模块都会重复报，只报一次
             foreach (var error in device.Validate())

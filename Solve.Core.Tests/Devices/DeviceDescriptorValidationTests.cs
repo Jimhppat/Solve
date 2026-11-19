@@ -78,4 +78,35 @@ public sealed class DeviceDescriptorValidationTests
         Assert.True(DeviceId.TryParse(id.ToString(), out var parsed));
         Assert.Equal(id, parsed);
     }
+
+    // ---------- 模块参数 ----------
+
+    private static ParameterValues Values(params (string Key, string Value)[] values)
+        => new(values.Select(v => new KeyValuePair<string, string>(v.Key, v.Value)));
+
+    [Fact]
+    public void ParameterValues_CompareByContent_RegardlessOfOrder()
+    {
+        var a = Values(("b", "2"), ("a", "1"));
+        var b = Values(("a", "1"), ("b", "2"));
+
+        Assert.Equal(a, b);
+        Assert.Equal(a.GetHashCode(), b.GetHashCode());
+        Assert.NotEqual(a, Values(("a", "1")));
+
+        // 模块描述的相等性随之按参数内容比较（重新读取的模块与原模块相等）
+        var device = Valid() with { Parameters = a };
+        Assert.Equal(device, device with { Parameters = b });
+    }
+
+    [Fact]
+    public void Parameters_BadKeyOrTooLongValue_IsRejected()
+    {
+        AssertSingleError(Valid() with { Parameters = Values(("Bad Key", "1")) }, "Parameters");
+        AssertSingleError(Valid() with { Parameters = Values(("k", new string('v', ParameterValues.MaxValueLength + 1))) }, "Parameters");
+    }
+
+    [Fact]
+    public void Parameters_Null_IsRejected_NotThrown()
+        => AssertSingleError(Valid() with { Parameters = null! }, "Parameters");
 }

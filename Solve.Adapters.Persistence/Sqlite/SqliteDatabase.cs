@@ -126,6 +126,12 @@ public sealed class SqliteDatabase
         CREATE UNIQUE INDEX ux_bus_devices_address
             ON bus_devices (bus_id, address);
         """,
+
+        // v5：模块参数。JSON 对象（参数标识 → 文本值），只存操作员填写过的参数，未填写的在绑定驱动时取驱动默认值。
+        // 只加列、不动既有数据：已有模块的参数为空对象，全部按驱动默认值运行。
+        """
+        ALTER TABLE bus_devices ADD COLUMN parameters TEXT NOT NULL DEFAULT '{}';
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

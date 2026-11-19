@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Solve.UI.ViewModels"
+             xmlns:sdk="using:Solve.Device.Sdk"
              mc:Ignorable="d" d:DesignWidth="1600" d:DesignHeight="900"
              x:Class="Solve.UI.Views.BusDevicesView"
              x:DataType="vm:BusDevicesViewModel">
@@ -12,6 +13,26 @@
     <Design.DataContext>
         <vm:BusDevicesViewModel />
     </Design.DataContext>
+
+    <UserControl.Resources>
+        <!-- 一个模块参数的输入项：整数 / 实数 / 文本用输入框，是 / 否用复选框，选项用下拉框；添加表单与编辑弹窗共用 -->
+        <DataTemplate x:Key="ParameterFieldTemplate" x:DataType="vm:ParameterFieldViewModel">
+            <StackPanel Margin="0,0,12,8" Spacing="4">
+                <TextBlock Text="{Binding Label}" FontSize="12"
+                           Foreground="{DynamicResource SemiColorText1}" />
+                <TextBox IsVisible="{Binding IsTextInput}" Text="{Binding Text}" />
+                <CheckBox IsVisible="{Binding IsBoolean}" IsChecked="{Binding BoolValue}" Content="启用" />
+                <ComboBox IsVisible="{Binding IsChoice}" HorizontalAlignment="Stretch"
+                          ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="sdk:ParameterChoice">
+                            <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </StackPanel>
+        </DataTemplate>
+    </UserControl.Resources>
 
     <UserControl.Styles>
         <StyleInclude Source="avares://Solve.UI/Styles/TableStyles.axaml" />
@@ -229,6 +250,19 @@
                                     </StackPanel>
                                 </Grid>
 
+                                <!-- 模块参数：按所选驱动的声明生成，同一批的模块都使用这组值 -->
+                                <StackPanel Classes="field" IsVisible="{Binding BatchForm.Parameters.HasFields}">
+                                    <TextBlock Classes="field-label" Text="模块参数" />
+                                    <ItemsControl ItemsSource="{Binding BatchForm.Parameters.Fields}"
+                                                  ItemTemplate="{StaticResource ParameterFieldTemplate}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <UniformGrid Columns="2" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                    </ItemsControl>
+                                </StackPanel>
+
                                 <Border Classes="form-error" IsVisible="{Binding BatchForm.HasError}">
                                     <TextBlock Text="{Binding BatchForm.ErrorMessage}" />
                                 </Border>
@@ -258,15 +292,16 @@
 
                             <Grid RowDefinitions="Auto,*">
                                 <Border Grid.Row="0" Classes="head">
-                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,1.6*,100">
+                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,120,1.4*,100">
                                         <CheckBox Grid.Column="0" IsThreeState="True" VerticalAlignment="Center"
                                                   IsChecked="{Binding IsAllChecked}" IsEnabled="{Binding HasDevices}"
                                                   ToolTip.Tip="全选" />
                                         <TextBlock Grid.Column="1" Text="地址" />
                                         <TextBlock Grid.Column="2" Text="名称" />
                                         <TextBlock Grid.Column="3" Text="驱动" />
-                                        <TextBlock Grid.Column="4" Text="备注" />
-                                        <TextBlock Grid.Column="5" Text="操作" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="4" Text="驱动状态" />
+                                        <TextBlock Grid.Column="5" Text="备注" />
+                                        <TextBlock Grid.Column="6" Text="操作" HorizontalAlignment="Right" />
                                     </Grid>
                                 </Border>
 
@@ -286,15 +321,18 @@
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:DeviceItemViewModel">
                                                 <Border Classes="row">
-                                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,1.6*,100">
+                                                    <Grid ColumnDefinitions="40,90,1.4*,1.2*,120,1.4*,100">
                                                         <CheckBox Grid.Column="0" VerticalAlignment="Center"
                                                                   IsChecked="{Binding IsChecked}" />
                                                         <TextBlock Grid.Column="1" Classes="mono" Text="{Binding Address}" />
                                                         <TextBlock Grid.Column="2" Text="{Binding Name}" FontWeight="Medium" />
                                                         <TextBlock Grid.Column="3" Classes="muted" Text="{Binding DriverName}" />
-                                                        <TextBlock Grid.Column="4" Classes="muted" Text="{Binding Remark}"
+                                                        <TextBlock Grid.Column="4" Text="{Binding BindingText}" FontWeight="SemiBold"
+                                                                   Foreground="{Binding BindingColor}"
+                                                                   ToolTip.Tip="{Binding BindingProblem}" />
+                                                        <TextBlock Grid.Column="5" Classes="muted" Text="{Binding Remark}"
                                                                    ToolTip.Tip="{Binding Remark}" />
-                                                        <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6"
+                                                        <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="6"
                                                                     HorizontalAlignment="Right" VerticalAlignment="Center">
                                                             <Button Classes="Small Tertiary" Command="{Binding EditCommand}"
                                                                     ToolTip.Tip="编辑模块">
@@ -382,6 +420,12 @@
                         <StackPanel Classes="field">
                             <TextBlock Classes="field-label" Text="备注" />
                             <TextBox Text="{Binding EditForm.Remark}" MaxLength="200" />
+                        </StackPanel>
+
+                        <StackPanel Classes="field" IsVisible="{Binding EditForm.Parameters.HasFields}">
+                            <TextBlock Classes="field-label" Text="模块参数" />
+                            <ItemsControl ItemsSource="{Binding EditForm.Parameters.Fields}"
+                                          ItemTemplate="{StaticResource ParameterFieldTemplate}" />
                         </StackPanel>
 
                         <Border Classes="form-error" IsVisible="{Binding EditForm.HasError}">

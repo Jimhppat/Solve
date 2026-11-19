@@ -32,8 +32,21 @@ public sealed class DeviceEditViewModel : ViewModelBase
     public DriverItemViewModel? SelectedDriver
     {
         get => _selectedDriver;
-        set => SetProperty(ref _selectedDriver, value);
+        set
+        {
+            if (!SetProperty(ref _selectedDriver, value) || value is null)
+                return;
+
+            // 换驱动后参数按新驱动的声明重新生成；换回原驱动时恢复原来的值
+            var values = _original is not null && value.Driver.Id == _original.Driver ? _original.Parameters : ParameterValues.Empty;
+            Parameters.Load(value.Parameters, values);
+        }
     }
+
+    /// <summary>
+    /// 所选驱动声明的模块参数
+    /// </summary>
+    public ParameterFormViewModel Parameters { get; } = new();
 
     public string Name
     {
@@ -75,6 +88,9 @@ public sealed class DeviceEditViewModel : ViewModelBase
         _original = device;
         Drivers = drivers;
         SelectedDriver = currentDriver;
+
+        // 再次打开同一模块时 SelectedDriver 未变，不会触发重新生成，这里显式载入本模块的参数
+        Parameters.Load(currentDriver.Parameters, device.Parameters);
         Name = device.Name;
         AddressText = device.Address.ToString(CultureInfo.InvariantCulture);
         Remark = device.Remark ?? string.Empty;
@@ -95,6 +111,12 @@ public sealed class DeviceEditViewModel : ViewModelBase
         if (!int.TryParse(AddressText?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var address))
             return Fail(DeviceErrors.InvalidField("Address", "地址必须是整数。"));
 
+        // 驱动未加载（没有参数声明）且没换驱动时，原样保留已保存的参数，不因无法核对而丢失
+        var keepOriginal = _selectedDriver.Driver.Id == _original.Driver && _selectedDriver.Parameters.Count == 0;
+        var parameters = keepOriginal ? Result<ParameterValues>.Success(_original.Parameters) : Parameters.Collect();
+        if (parameters.IsFailure)
+            return Fail(parameters.Error);
+
         var remark = Remark?.Trim();
         var device = _original with
         {
@@ -102,6 +124,7 @@ public sealed class DeviceEditViewModel : ViewModelBase
             Name = Name?.Trim() ?? string.Empty,
             Address = address,
             Remark = string.IsNullOrEmpty(remark) ? null : remark,
+            Parameters = parameters.Value,
         };
 
         var errors = device.Validate();

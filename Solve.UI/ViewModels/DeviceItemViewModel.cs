@@ -1,4 +1,5 @@
 using System;
+using Solve.Core.Application.Devices;
 using Solve.Core.Domain.Devices;
 
 namespace Solve.UI.ViewModels;
@@ -14,6 +15,7 @@ public sealed class DeviceItemViewModel : ViewModelBase
     public DeviceItemViewModel(
         DeviceDescriptor device,
         DriverItemViewModel driver,
+        DriverBinding? binding,
         Action<DeviceItemViewModel> onEdit,
         Action<DeviceItemViewModel> onDelete,
         Action onCheckedChanged)
@@ -27,6 +29,19 @@ public sealed class DeviceItemViewModel : ViewModelBase
         Device = device;
         Driver = driver;
         _onCheckedChanged = onCheckedChanged;
+        BindingProblem = binding?.Problem ?? string.Empty;
+        (BindingText, BindingColor) = binding?.Status switch
+        {
+            DriverBindingStatus.Ready => ("就绪", "#10B981"),
+            DriverBindingStatus.NoProtocol => ("无协议", "#94A3B8"),
+            DriverBindingStatus.DriverNotLoaded => ("驱动未加载", "#EF4444"),
+            DriverBindingStatus.AddressOutOfRange => ("地址越界", "#EF4444"),
+            DriverBindingStatus.InvalidParameters => ("参数无效", "#EF4444"),
+            DriverBindingStatus.SessionFailed => ("会话创建失败", "#EF4444"),
+
+            // 刚保存、尚未重新绑定（极短的窗口），或总线已不在注册表中
+            _ => ("未绑定", "#F59E0B"),
+        };
         EditCommand = new RelayCommand(() => onEdit(this));
         DeleteCommand = new RelayCommand(() => onDelete(this));
     }
@@ -45,6 +60,18 @@ public sealed class DeviceItemViewModel : ViewModelBase
     public string DriverName => Driver.Name;
 
     public string Remark => Device.Remark ?? string.Empty;
+
+    /// <summary>
+    /// 驱动状态：就绪 / 无协议 / 驱动未加载 / 地址越界 / 参数无效 / 会话创建失败
+    /// </summary>
+    public string BindingText { get; }
+
+    public string BindingColor { get; }
+
+    /// <summary>
+    /// 未就绪的原因，悬停显示；就绪时为空串
+    /// </summary>
+    public string BindingProblem { get; }
 
     public bool IsChecked
     {

@@ -318,4 +318,61 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
         Assert.Equal([good], await ListAsync(busId));
         Assert.Equal(2, (await _repository.CountByBusAsync(busId, CancellationToken.None)).Value);
     }
+
+    // ---------- 模块参数 ----------
+
+    private static ParameterValues Values(params (string Key, string Value)[] values)
+        => new(values.Select(v => new KeyValuePair<string, string>(v.Key, v.Value)));
+
+    [Fact]
+    public async Task Parameters_RoundTrip_AndUpdate()
+    {
+        var busId = await SeedBusAsync();
+        var device = Device(busId, 1) with { Parameters = Values(("settle-ms", "500"), ("framing", "tcp")) };
+
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
+        Assert.Equal([device], await ListAsync(busId));
+
+        var changed = device with { Parameters = Values(("settle-ms", "800")) };
+        Assert.True((await _repository.UpdateAsync(changed, CancellationToken.None)).IsSuccess);
+        Assert.Equal([changed], await ListAsync(busId));
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("[1,2]")]
+    [InlineData("{\"settle-ms\": 500}")]
+    [InlineData("{\"settle-ms\": null}")]
+    [InlineData("{\"Bad Key\": \"1\"}")]
+    public async Task CorruptParameters_RowIsSkipped(string parameters)
+    {
+        var busId = await SeedBusAsync();
+        await using (var connection = await _database.OpenConnectionAsync(CancellationToken.None))
+        {
+            await connection.ExecuteAsync(
+                "INSERT INTO bus_devices (id, bus_id, driver_id, address, name, remark, parameters, created_at, updated_at) VALUES (@Id, @BusId, 'generic.module', 1, 'm', NULL, @Parameters, 'x', 'x');",
+                new { Id = Guid.NewGuid().ToString("D"), BusId = busId.Value.ToString("D"), Parameters = parameters });
+        }
+
+        Assert.Empty(await ListAsync(busId));
+    }
+
+    [Fact]
+    public async Task Migration_V4ToV5_AddsEmptyParameters_ToExistingModules()
+    {
+        var busId = await SeedBusAsync();
+        var device = Device(busId, 1);
+        Assert.True((await _repository.AddRangeAsync([device], CancellationToken.None)).IsSuccess);
+
+        // 退回 v4：去掉 parameters 列（SQLite 3.35+ 支持 DROP COLUMN）
+        await using (var connection = await _database.OpenConnectionAsync(CancellationToken.None))
+            await connection.ExecuteAsync("ALTER TABLE bus_devices DROP COLUMN parameters; PRAGMA user_version = 4;");
+        SqliteDatabase.ClearPool(StorageOptions);
+
+        var reopened = await SqliteDatabase.OpenAsync(StorageOptions, NullLogger.Instance, CancellationToken.None);
+
+        Assert.True(reopened.IsSuccess, reopened.ToString());
+        var repository = new SqliteDeviceRepository(reopened.Value, NullLogger.Instance);
+        Assert.Equal([device], (await repository.ListByBusAsync(busId, CancellationToken.None)).Value);
+    }
 }

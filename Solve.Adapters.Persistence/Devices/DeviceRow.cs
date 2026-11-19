@@ -18,6 +18,11 @@ internal sealed class DeviceRow
 
     public string? Remark { get; set; }
 
+    /// <summary>
+    /// 模块参数：JSON 对象（参数标识 → 文本值）
+    /// </summary>
+    public string Parameters { get; set; } = "{}";
+
     public string CreatedAt { get; set; } = "";
 
     public string UpdatedAt { get; set; } = "";

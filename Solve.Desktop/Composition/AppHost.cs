@@ -56,6 +56,7 @@ public sealed class AppHost : IAsyncDisposable
     private BusManagementService? _busService;
     private DeviceService? _devices;
     private DeviceLibraryManager? _deviceLibrary;
+    private DeviceBindingRegistry? _bindings;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
     private bool _disposed;
@@ -266,13 +267,29 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         BusManager? buses;
+        DeviceBindingRegistry? bindings;
         lock (_gate)
         {
             buses = _buses;
+            bindings = _bindings;
             _buses = null;
             _busService = null;
+            _bindings = null;
             _topology = null;
             _twin = null;
+        }
+
+        // 先停绑定监听：总线释放时会发出注销事件，此时不需要再重新绑定
+        if (bindings is not null)
+        {
+            try
+            {
+                await bindings.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "释放模块绑定登记表失败，继续关停");
+            }
         }
 
         if (buses is not null)
@@ -367,16 +384,25 @@ public sealed class AppHost : IAsyncDisposable
                     libraryDirectory, settings, _loggerFactory.CreateLogger<DeviceLibraryManager>(), cancellationToken).ConfigureAwait(false);
             }
 
-            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除
-            var devices = new DeviceService(
-                new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>()),
-                library?.Catalog ?? new DriverCatalog(),
-                _loggerFactory.CreateLogger<DeviceService>());
+            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除。
+            // 绑定登记表为每个模块找驱动、建会话（只绑定、不通信），跟随总线与模块的变化重新绑定
+            var catalog = library?.Catalog ?? new DriverCatalog();
+            var deviceRepository = new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>());
+            var bindings = new DeviceBindingRegistry(
+                deviceRepository,
+                service,
+                new DriverBinder(catalog, _loggerFactory.CreateLogger<DriverBinder>()),
+                _loggerFactory.CreateLogger<DeviceBindingRegistry>());
+            var devices = new DeviceService(deviceRepository, catalog, bindings, _loggerFactory.CreateLogger<DeviceService>());
             lock (_gate)
             {
+                if (_disposed)
+                    return StartupReport.Failed(mode, Cancelled());
+
                 _busService = service;
                 _devices = devices;
                 _deviceLibrary = library;
+                _bindings = bindings;
             }
 
             var snapshot = await repository.LoadAllAsync(cancellationToken).ConfigureAwait(false);
@@ -399,6 +425,9 @@ public sealed class AppHost : IAsyncDisposable
                     _logger.LogError("总线 {BusId} {Name} 注册失败：{Error}", descriptor.Id, descriptor.Name, registered.Error);
                 }
             }
+
+            // 总线注册完成后再绑定：链路类型取自已注册总线的配置
+            await bindings.StartAsync(cancellationToken).ConfigureAwait(false);
 
             var report = new StartupReport(
                 mode,
