@@ -8,7 +8,7 @@
              x:Class="Solve.UI.Views.Twin.TwinBoardView"
              x:DataType="tvm:TwinBoardViewModel"
              x:CompileBindings="True">
-    <!-- 主控台显示区：路径导航 + 图例，下面是当前焦点节点，铺满剩余空间。
+    <!-- 主控台显示区：从系统根开始的六层节点，铺满整个区域。
          六层控件按视图模型类型在这里统一登记，各层控件互不引用，可单独修改 -->
 
     <Design.DataContext>
@@ -36,64 +36,9 @@
         </DataTemplate>
     </UserControl.DataTemplates>
 
+    <!-- 纯展示面板：始终从系统根画起，点击只选中（控制区看详情），没有路径导航与返回按钮；
+         图例在系统标题行的右侧（见 SystemNodeView） -->
     <DockPanel>
-        <!-- 路径导航（左）与图例（右） -->
-        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-            <ItemsControl DockPanel.Dock="Right"
-                          ItemsSource="{x:Static tv:TwinLegend.Items}"
-                          VerticalAlignment="Center">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel ItemSpacing="10" LineSpacing="4" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="tv:TwinLegendItem">
-                        <StackPanel Orientation="Horizontal" Spacing="4">
-                            <Border Width="10" Height="10" CornerRadius="2" Background="{Binding Brush}" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding Text}" FontSize="11" Foreground="{DynamicResource SemiColorText2}" />
-                        </StackPanel>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                <Button Classes="Tertiary"
-                        Padding="6,0"
-                        Height="28"
-                        Command="{Binding FocusParentCommand}"
-                        ToolTip.Tip="返回上一级">
-                    <PathIcon Data="{DynamicResource SemiIconArrowUp}" Width="12" Height="12" />
-                </Button>
-                <ItemsControl ItemsSource="{Binding Breadcrumb}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <!-- 上级可点（按钮）；当前焦点是普通粗体文字，不是灰掉的按钮 -->
-                        <DataTemplate x:DataType="tvm:TwinBreadcrumbItem">
-                            <StackPanel Orientation="Horizontal">
-                                <PathIcon Data="{DynamicResource SemiIconChevronRight}" Width="10" Height="10"
-                                          Foreground="{DynamicResource SemiColorText2}" />
-                                <Button Classes="Tertiary" Padding="6,0" Height="28"
-                                        IsVisible="{Binding IsLink}"
-                                        Content="{Binding Text}"
-                                        Command="{Binding Command}" />
-                                <TextBlock IsVisible="{Binding IsCurrent}"
-                                           Text="{Binding Text}"
-                                           Margin="6,0"
-                                           FontWeight="SemiBold"
-                                           VerticalAlignment="Center"
-                                           Foreground="{DynamicResource SemiColorText0}" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-        </DockPanel>
-
         <!-- 刷新出错：画面已不可信，必须让操作员看到 -->
         <Border DockPanel.Dock="Top"
                 IsVisible="{Binding HasRefreshError}"
@@ -112,7 +57,7 @@
             <ScrollViewer x:Name="Scroller"
                           HorizontalScrollBarVisibility="Auto"
                           VerticalScrollBarVisibility="Auto">
-                <ContentControl Content="{Binding Focus}"
+                <ContentControl Content="{Binding Root}"
                                 MinWidth="{Binding #Scroller.Viewport.Width}"
                                 MinHeight="{Binding #Scroller.Viewport.Height}"
                                 HorizontalContentAlignment="Stretch"

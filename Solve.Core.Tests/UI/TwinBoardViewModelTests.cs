@@ -7,7 +7,8 @@ using Solve.UI.ViewModels.Twin;
 namespace Solve.Core.Tests.UI;
 
 /// <summary>
-/// 主控台显示区：焦点与显示数量上限、逐层进入与返回、选中详情、按变化刷新、拓扑修改后重建
+/// 主控台显示区（纯展示面板）：从系统根按显示数量上限展开、点击只选中不进入下一级、
+/// 选中详情、按变化刷新、拓扑修改后重建
 /// </summary>
 public sealed class TwinBoardViewModelTests
 {
@@ -34,7 +35,7 @@ public sealed class TwinBoardViewModelTests
         Assert.False(board.IsAttached);
         Assert.True(board.ShowEmpty);
         Assert.Contains("配置库", board.EmptyText);
-        Assert.Null(board.Focus);
+        Assert.Null(board.Root);
     }
 
     [Fact]
@@ -53,14 +54,11 @@ public sealed class TwinBoardViewModelTests
 
         var (board, _) = Attached(topology);
 
-        var system = Assert.IsType<SystemNodeViewModel>(board.Focus);
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
         Assert.Equal(25, board.VisibleCount);
         var nodes = Flatten(system).ToList();
         Assert.Equal(16, nodes.OfType<ProductNodeViewModel>().Count());
         Assert.All(nodes.Where(n => n is not ProductNodeViewModel), n => Assert.True(n.IsExpanded));
-        Assert.Equal(["系统 老化房"], board.Breadcrumb.Select(b => b.Text));
-        Assert.True(Assert.Single(board.Breadcrumb).IsCurrent);
-        Assert.False(board.FocusParentCommand.CanExecute(null));
 
         // 等分网格的行列数：柜体 1 个一行；每治具 4 个产品位，一行放满 4 个
         Assert.Equal(1, system.ChildCount);
@@ -72,7 +70,7 @@ public sealed class TwinBoardViewModelTests
     {
         var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 2));
 
-        var fixture = Flatten(board.Focus!).OfType<FixtureNodeViewModel>().Single();
+        var fixture = Flatten(board.Root!).OfType<FixtureNodeViewModel>().Single();
 
         // 只有 2 个产品位时一行 2 列，格子铺满整行，不留两个空位
         Assert.Equal(2, fixture.ProductColumns);
@@ -85,7 +83,7 @@ public sealed class TwinBoardViewModelTests
         var (board, _) = Attached(Twins.Layout(2, 2, 2, 2, 4), budget: 20);
 
         Assert.Equal(15, board.VisibleCount);
-        var nodes = Flatten(board.Focus!).ToList();
+        var nodes = Flatten(board.Root!).ToList();
         var slots = nodes.OfType<SlotNodeViewModel>().ToList();
         Assert.Equal(8, slots.Count);
         Assert.All(slots, slot => Assert.True(slot.IsSummary));
@@ -94,58 +92,47 @@ public sealed class TwinBoardViewModelTests
     }
 
     [Fact]
-    public void TinyBudget_StillShowsTheDirectChildren()
+    public void TinyBudget_StillShowsTheCabinets()
     {
         var (board, _) = Attached(Twins.Layout(3, 2, 2, 2, 4), budget: 1);
 
-        var cabinets = Flatten(board.Focus!).OfType<CabinetNodeViewModel>().ToList();
+        var cabinets = Flatten(board.Root!).OfType<CabinetNodeViewModel>().ToList();
         Assert.Equal(3, cabinets.Count);
         Assert.All(cabinets, cabinet => Assert.True(cabinet.IsSummary));
     }
 
+    // ==================== 点击：只选中，不进入下一级 ====================
+
     [Fact]
-    public void ActivatingContainer_DrillsDown_AndParentCommandGoesBack()
+    public void SelectingContainer_ShowsDetails_WithoutChangingTheView()
     {
-        var topology = Twins.Layout(2, 2, 2, 2, 4);
-        var (board, _) = Attached(topology, budget: 20);
-        var layer = Flatten(board.Focus!).OfType<LayerNodeViewModel>().First(l => l.Node.Address == TopologyAddress.Of(2, 1));
+        var (board, _) = Attached(Twins.Layout(2, 2, 2, 2, 4), budget: 20);
+        var root = board.Root;
+        var layer = Flatten(board.Root!).OfType<LayerNodeViewModel>().First(l => l.Node.Address == TopologyAddress.Of(2, 1));
 
-        layer.Activate();
+        layer.Select();
 
-        Assert.IsType<LayerNodeViewModel>(board.Focus);
-        Assert.Equal(TopologyAddress.Of(2, 1), board.Focus!.Node.Address);
-        Assert.Equal(["系统 老化房", "C02", "C02-L01"], board.Breadcrumb.Select(b => b.Text));
-        Assert.Equal([false, false, true], board.Breadcrumb.Select(b => b.IsCurrent));
+        // 画面不变：根还是系统，可见节点不变，层位仍按原来的上限画到槽位摘要
+        Assert.Same(root, board.Root);
+        Assert.Equal(15, board.VisibleCount);
+        Assert.True(layer.IsSelected);
         Assert.Equal("层位 C02-L01", board.SelectedTitle);
-
-        // 层位下 1 + 2 槽 + 4 治具位 = 7，再加 16 个产品位超过上限 20：治具位为摘要模式
-        Assert.Empty(Flatten(board.Focus).OfType<ProductNodeViewModel>());
-        Assert.All(Flatten(board.Focus).OfType<FixtureNodeViewModel>(), fixture => Assert.True(fixture.IsSummary));
-
-        // 再进入槽位：1 + 2 + 8 = 11，画到产品位
-        Flatten(board.Focus).OfType<SlotNodeViewModel>().First().Activate();
-        Assert.Equal(8, Flatten(board.Focus!).OfType<ProductNodeViewModel>().Count());
-        board.FocusParentCommand.Execute(null);
-
-        board.FocusParentCommand.Execute(null);
-        Assert.Equal(TopologyAddress.Of(2), board.Focus!.Node.Address);
-
-        board.Breadcrumb[0].Command.Execute(null);
-        Assert.IsType<SystemNodeViewModel>(board.Focus);
+        Assert.Equal("无数据 16", board.SelectedSummaryText);
+        Assert.False(board.IsProductSelected);
     }
 
     [Fact]
-    public void ActivatingProduct_SelectsWithoutMovingFocus()
+    public void SelectingProduct_ShowsItsDetails()
     {
         var topology = Twins.Layout(1, 1, 1, 1, 4);
         var (board, store) = Attached(topology);
-        var product = Flatten(board.Focus!).OfType<ProductNodeViewModel>().Last();
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
         store.Report(product.Id, ProductState.Running, "SN-9");
         board.Refresh();
 
-        product.Activate();
+        product.Select();
 
-        Assert.IsType<SystemNodeViewModel>(board.Focus);
+        Assert.IsType<SystemNodeViewModel>(board.Root);
         Assert.True(product.IsSelected);
         Assert.True(board.IsProductSelected);
         Assert.Equal("产品位 C01-L01-S01-F01-P04", board.SelectedTitle);
@@ -156,11 +143,27 @@ public sealed class TwinBoardViewModelTests
     }
 
     [Fact]
+    public void SelectingAnotherNode_MovesTheHighlight()
+    {
+        var (board, _) = Attached(Twins.Layout(2, 1, 1, 1, 1));
+        var cabinets = Flatten(board.Root!).OfType<CabinetNodeViewModel>().ToList();
+
+        cabinets[0].Select();
+        cabinets[1].Select();
+
+        Assert.False(cabinets[0].IsSelected);
+        Assert.True(cabinets[1].IsSelected);
+        Assert.Equal("柜体 C02", board.SelectedTitle);
+    }
+
+    // ==================== 刷新 ====================
+
+    [Fact]
     public void Refresh_UpdatesChangedProducts_AndTheirContainers()
     {
         var topology = Twins.Layout(1, 1, 2, 1, 4);
         var (board, store) = Attached(topology);
-        var nodes = Flatten(board.Focus!).ToList();
+        var nodes = Flatten(board.Root!).ToList();
         var product = nodes.OfType<ProductNodeViewModel>().First();
 
         store.Report(product.Id, ProductState.Fault);
@@ -170,10 +173,26 @@ public sealed class TwinBoardViewModelTests
         var slot = nodes.OfType<SlotNodeViewModel>().First();
         Assert.Equal(ProductState.Fault, slot.Worst);
         Assert.Contains("故障 1", slot.AlarmText);
-        Assert.Equal(ProductState.Fault, board.Focus!.Worst);
+        Assert.Equal(ProductState.Fault, board.Root!.Worst);
 
         // 另一个槽位没有变化
         Assert.Equal(ProductState.Unknown, nodes.OfType<SlotNodeViewModel>().Last().Worst);
+    }
+
+    [Fact]
+    public void Refresh_UpdatesTheSelectedDetails()
+    {
+        var topology = Twins.Layout(1, 1, 1, 1, 1);
+        var (board, store) = Attached(topology);
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Single();
+        product.Select();
+        Assert.Equal("无数据", board.SelectedStateText);
+
+        store.Report(product.Id, ProductState.Passed, "SN-1");
+        board.Refresh();
+
+        Assert.Equal("合格", board.SelectedStateText);
+        Assert.Equal("SN-1", board.SelectedSerialText);
     }
 
     [Fact]
@@ -181,7 +200,7 @@ public sealed class TwinBoardViewModelTests
     {
         var topology = Twins.Layout(1, 1, 1, 1, 2);
         var (board, store) = Attached(topology);
-        var product = Flatten(board.Focus!).OfType<ProductNodeViewModel>().First();
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().First();
         store.Report(product.Id, ProductState.Passed);
         board.Refresh();
         Assert.Equal(ProductState.Passed, product.State);
@@ -193,62 +212,54 @@ public sealed class TwinBoardViewModelTests
         Assert.Equal(ProductState.Unknown, product.State);
     }
 
+    // ==================== 拓扑修改 ====================
+
     [Fact]
-    public void TopologyChange_RebuildsAndKeepsFocusAndSelectionById()
+    public void TopologyChange_RebuildsAndKeepsSelectionById()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, store) = Attached(topology);
-        var cabinet = Flatten(board.Focus!).OfType<CabinetNodeViewModel>().Last();
-        cabinet.Activate();
-        var focusId = board.Focus!.Id;
+        var cabinet = Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last();
+        cabinet.Select();
 
         // 改名：拓扑被替换，节点 Id 不变
-        _topology.Current = topology.WithNodeSettings(focusId, "B 柜", enabled: true).Value;
+        _topology.Current = topology.WithNodeSettings(cabinet.Id, "B 柜", enabled: true).Value;
         board.Refresh();
 
-        Assert.Equal(focusId, board.Focus!.Id);
-        Assert.Equal("B 柜", board.Focus.Name);
-        Assert.True(board.Focus.IsSelected);
+        var rebuilt = Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last();
+        Assert.NotSame(cabinet, rebuilt);
+        Assert.Equal(cabinet.Id, rebuilt.Id);
+        Assert.Equal("B 柜", rebuilt.Name);
+        Assert.True(rebuilt.IsSelected);
         Assert.Equal("B 柜", board.SelectedNameText);
-        Assert.Equal(["系统 老化房", "C02 B 柜"], board.Breadcrumb.Select(b => b.Text));
         Assert.Same(_topology.Current, store.Topology);
     }
 
     [Fact]
-    public void FocusedNodeRemoved_FallsBackToRoot()
+    public void SelectedNodeRemoved_ClearsSelection()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, _) = Attached(topology);
-        Flatten(board.Focus!).OfType<CabinetNodeViewModel>().Last().Activate();
+        Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last().Select();
 
         _topology.Current = Twins.Layout(1, 1, 1, 1, 2, current: topology);
         board.Refresh();
 
-        Assert.IsType<SystemNodeViewModel>(board.Focus);
+        Assert.IsType<SystemNodeViewModel>(board.Root);
         Assert.False(board.HasSelection);
+        Assert.Null(board.SelectedTitle);
     }
 
     [Fact]
-    public void FocusOnProduct_UsesItsFixture()
-    {
-        var topology = Twins.Layout(1, 1, 1, 1, 2);
-        var (board, _) = Attached(topology);
-
-        board.FocusOn(Twins.Id(topology, 1, 1, 1, 1, 2));
-
-        Assert.IsType<FixtureNodeViewModel>(board.Focus);
-    }
-
-    [Fact]
-    public void DisabledSubtree_IsDimmed_AndExcludedFromColors()
+    public void DisabledSubtree_IsDimmedOnce_AndExcludedFromColors()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var masked = topology.WithNodeSettings(Twins.Id(topology, 2), null, enabled: false).Value;
         var (board, _) = Attached(masked);
 
-        var cabinets = Flatten(board.Focus!).OfType<CabinetNodeViewModel>().ToList();
+        var cabinets = Flatten(board.Root!).OfType<CabinetNodeViewModel>().ToList();
         Assert.True(cabinets[1].IsDisabled);
-        Assert.Equal(0.4, cabinets[1].ContentOpacity);
+        Assert.Equal(TwinNodeViewModel.DisabledOpacity, cabinets[1].ContentOpacity);
         Assert.Null(cabinets[1].Worst);
         Assert.False(cabinets[0].IsDisabled);
         Assert.Equal(ProductState.Unknown, cabinets[0].Worst);
@@ -259,20 +270,5 @@ public sealed class TwinBoardViewModelTests
             Assert.True(node.IsDisabled);
             Assert.Equal(1.0, node.ContentOpacity);
         });
-    }
-
-    [Fact]
-    public void FocusInsideDisabledSubtree_DimsTheFocusItself()
-    {
-        var topology = Twins.Layout(1, 1, 1, 1, 2);
-        var masked = topology.WithNodeSettings(Twins.Id(topology, 1), null, enabled: false).Value;
-        var (board, _) = Attached(masked);
-
-        // 进入停用柜体下的层位：上级柜体不在画面上，层位自己承担变淡
-        board.FocusOn(Twins.Id(masked, 1, 1));
-
-        Assert.True(board.Focus!.IsFocusRoot);
-        Assert.Equal(TwinNodeViewModel.DisabledOpacity, board.Focus.ContentOpacity);
-        Assert.All(Flatten(board.Focus).Skip(1), node => Assert.Equal(1.0, node.ContentOpacity));
     }
 }

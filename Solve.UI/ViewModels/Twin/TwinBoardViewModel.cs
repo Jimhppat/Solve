@@ -9,23 +9,15 @@ using Solve.Core.Domain.Twin;
 namespace Solve.UI.ViewModels.Twin;
 
 /// <summary>
-/// 路径导航上的一级
-/// </summary>
-/// <param name="IsCurrent">当前焦点：显示为普通文字，不是可点的按钮</param>
-public sealed record TwinBreadcrumbItem(string Text, RelayCommand Command, bool IsCurrent)
-{
-    public bool IsLink => !IsCurrent;
-}
-
-/// <summary>
-/// 主控台显示区：以一个节点为焦点，按显示数量上限逐层展开，显示六层节点的产品状态。
+/// 主控台显示区：纯展示面板，始终显示整套设备（从系统根开始），按显示数量上限逐层展开六层节点的产品状态。
 /// </summary>
 /// <remarks>
-/// <para>焦点与上限：从焦点往下逐层展开，可见节点超过 <see cref="ElementBudget"/> 时停在上一层，最深一层的容器用摘要模式。
-/// 至少展开一层，所以焦点的直接下级总会画出来。</para>
+/// <para>点击只选中：任何节点被点选后在控制区显示详情，画面不切换、不进入下一级。</para>
+/// <para>显示数量上限：从系统根往下逐层展开，可见节点超过 <see cref="ElementBudget"/> 时停在上一层，
+/// 最深一层的容器用摘要模式（只画状态条）。至少展开一层，所以柜体总会画出来。</para>
 /// <para>刷新：视图以 <see cref="RefreshInterval"/> 周期调用 <see cref="Refresh"/>，只更新状态有变化且当前看得见的节点；
 /// 每秒做一次过期检查。只在显示区可见时刷新，主控台不在前台时不占 UI 线程。</para>
-/// <para>拓扑被修改时整体重建，焦点与选中项按节点 Id 保留。只在 UI 线程上使用。</para>
+/// <para>拓扑被修改时整体重建，选中项按节点 Id 保留；节点已被删除时清除选中。只在 UI 线程上使用。</para>
 /// </remarks>
 public sealed class TwinBoardViewModel : ViewModelBase
 {
@@ -45,10 +37,8 @@ public sealed class TwinBoardViewModel : ViewModelBase
     private readonly Dictionary<TopologyNodeId, TwinNodeViewModel> _visible = [];
     private TwinStateStore? _store;
     private EquipmentTopology? _bound;
-    private TopologyNodeId? _focusId;
     private TopologyNodeId? _selectedId;
-    private TwinNodeViewModel? _focus;
-    private IReadOnlyList<TwinBreadcrumbItem> _breadcrumb = [];
+    private TwinNodeViewModel? _root;
     private string? _refreshError;
     private int _refreshCount;
 
@@ -60,15 +50,9 @@ public sealed class TwinBoardViewModel : ViewModelBase
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(elementBudget, 1);
         ElementBudget = elementBudget;
-        FocusParentCommand = new RelayCommand(FocusParent, () => _focus is { Level: not TopologyLevel.System });
     }
 
     public int ElementBudget { get; }
-
-    /// <summary>
-    /// 返回上一级
-    /// </summary>
-    public RelayCommand FocusParentCommand { get; }
 
     public bool IsAttached => _store is not null;
 
@@ -81,18 +65,12 @@ public sealed class TwinBoardViewModel : ViewModelBase
         : "尚未建档：请先在「设备拓扑」页保存布局";
 
     /// <summary>
-    /// 当前焦点节点（显示区的根）
+    /// 系统根节点（显示区画面的根）；尚未建档时为 null
     /// </summary>
-    public TwinNodeViewModel? Focus
+    public TwinNodeViewModel? Root
     {
-        get => _focus;
-        private set => SetProperty(ref _focus, value);
-    }
-
-    public IReadOnlyList<TwinBreadcrumbItem> Breadcrumb
-    {
-        get => _breadcrumb;
-        private set => SetProperty(ref _breadcrumb, value);
+        get => _root;
+        private set => SetProperty(ref _root, value);
     }
 
     /// <summary>
@@ -111,7 +89,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
     public bool HasRefreshError => _refreshError is not null;
 
     /// <summary>
-    /// 当前画出的节点数（含焦点）
+    /// 当前画出的节点数（含系统根）
     /// </summary>
     public int VisibleCount => _visible.Count;
 
@@ -167,7 +145,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
     private TopologyNode? SelectedNode
         => _selectedId is { } id && _bound is { } topology && topology.TryGetNode(id, out var node) ? node : null;
 
-    // ==================== 接入与刷新 ====================
+    // ==================== 接入、刷新与选中 ====================
 
     /// <summary>
     /// 接入孪生状态库。须在 UI 线程上调用，只能调用一次。
@@ -226,30 +204,8 @@ public sealed class TwinBoardViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 把某个节点设为焦点；产品位不能作焦点，改为它所在的治具位
+    /// 选中一个节点，在控制区显示详情。画面不变：显示区是展示面板，不进入下一级。
     /// </summary>
-    public void FocusOn(TopologyNodeId id)
-    {
-        if (_bound is not { } topology || !topology.TryGetNode(id, out var node))
-            return;
-
-        if (node.Level == TopologyLevel.Product && node.Address.TryGetParent(out var parentAddress)
-            && topology.TryGetNode(parentAddress, out var parent))
-        {
-            node = parent;
-        }
-
-        _focusId = node.Id;
-        BuildVisible();
-    }
-
-    internal void Activate(TwinNodeViewModel node)
-    {
-        Select(node.Id);
-        if (node is not ProductNodeViewModel && node.Id != _focusId)
-            FocusOn(node.Id);
-    }
-
     public void Select(TopologyNodeId id)
     {
         if (_selectedId is { } previous && _visible.TryGetValue(previous, out var oldItem))
@@ -264,70 +220,38 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
     // ==================== 内部 ====================
 
-    private void FocusParent()
-    {
-        if (_focus?.Node.Address.TryGetParent(out var parentAddress) == true
-            && _bound is { } topology && topology.TryGetNode(parentAddress, out var parent))
-        {
-            FocusOn(parent.Id);
-        }
-    }
-
     private void Bind(EquipmentTopology? topology)
     {
         _bound = topology;
         _store?.DrainChanges(); // 重建会读取全部最新值，之前的变化标记作废
+        _visible.Clear();
 
-        if (topology is null)
-        {
-            _visible.Clear();
-            Focus = null;
-            Breadcrumb = [];
-        }
-        else
-        {
-            // 焦点按 Id 保留；节点已被删除时回到系统根
-            if (_focusId is not { } focusId || !topology.TryGetNode(focusId, out _))
-                _focusId = topology.Root.Id;
+        // 选中项按 Id 保留；节点已被删除时清除，详情不再显示一个不存在的位置
+        if (_selectedId is { } selected && (topology is null || !topology.TryGetNode(selected, out _)))
+            _selectedId = null;
 
-            BuildVisible();
-        }
+        Root = topology is null || _store is not { } store ? null : Build(topology.Root, DeepestLevel(topology), store);
 
+        if (_selectedId is { } id && _visible.TryGetValue(id, out var item))
+            item.IsSelected = true;
+
+        OnPropertyChanged(nameof(VisibleCount));
         OnPropertyChanged(nameof(HasTopology));
         OnPropertyChanged(nameof(ShowEmpty));
         RaiseSelectionChanged();
     }
 
-    private void BuildVisible()
-    {
-        if (_bound is not { } topology || _store is not { } store || _focusId is not { } focusId
-            || !topology.TryGetNode(focusId, out var focus))
-            return;
-
-        _visible.Clear();
-        var deepest = DeepestLevel(topology, focus);
-        var root = Build(focus, deepest, store);
-        root.IsFocusRoot = true;
-        Focus = root;
-        Breadcrumb = BuildBreadcrumb(topology, focus);
-        OnPropertyChanged(nameof(VisibleCount));
-        FocusParentCommand.RaiseCanExecuteChanged();
-
-        if (_selectedId is { } selected && _visible.TryGetValue(selected, out var item))
-            item.IsSelected = true;
-    }
-
     /// <summary>
-    /// 从焦点往下逐层累加节点数，超过上限就停在上一层（至少展开一层）
+    /// 从系统根往下逐层累加节点数，超过上限就停在上一层（至少展开到柜体）
     /// </summary>
-    private TopologyLevel DeepestLevel(EquipmentTopology topology, TopologyNode focus)
+    private TopologyLevel DeepestLevel(EquipmentTopology topology)
     {
-        var deepest = focus.Level;
+        var deepest = TopologyLevel.System;
         var total = 1;
-        for (var level = focus.Level + 1; level <= TopologyLevel.Product; level++)
+        for (var level = TopologyLevel.Cabinet; level <= TopologyLevel.Product; level++)
         {
-            var count = topology.GetDescendants(focus.Address, level).Count;
-            if (count == 0 || (deepest != focus.Level && total + count > ElementBudget))
+            var count = topology.CountAt(level);
+            if (count == 0 || (deepest != TopologyLevel.System && total + count > ElementBudget))
                 break;
 
             total += count;
@@ -347,24 +271,6 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
         item.Refresh(store);
         return item;
-    }
-
-    private IReadOnlyList<TwinBreadcrumbItem> BuildBreadcrumb(EquipmentTopology topology, TopologyNode focus)
-    {
-        var items = new List<TwinBreadcrumbItem>();
-        for (var level = TopologyLevel.System; level <= focus.Level; level++)
-        {
-            if (!topology.TryGetNode(focus.Address.AncestorAt(level), out var node))
-                continue;
-
-            var text = level == TopologyLevel.System
-                ? $"系统 {node.DisplayName}"
-                : node.Name is null ? node.Address.ToString() : $"{node.Address} {node.Name}";
-            var id = node.Id;
-            items.Add(new TwinBreadcrumbItem(text, new RelayCommand(() => FocusOn(id), () => id != _focusId), IsCurrent: level == focus.Level));
-        }
-
-        return items;
     }
 
     private void RaiseSelectionChanged()

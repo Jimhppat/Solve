@@ -6,21 +6,39 @@
              x:DataType="tvm:SystemNodeViewModel"
              x:CompileBindings="True"
              Tapped="OnTapped">
-    <!-- 系统：铺满整个显示区。标题行（全部计数），柜体排成一行等分宽度；
+    <!-- 系统：铺满整个显示区。标题行：左侧系统名称与全部计数，右侧图例；柜体排成一行等分宽度。
          不再画全局状态条：每个柜体卡片已有自己的状态条，只有一个柜体时两条完全重复。
          柜体多到放不下最小尺寸时，显示区出现横向滚动条 -->
     <Grid RowDefinitions="Auto,*" RowSpacing="10">
         <DockPanel Grid.Row="0">
-            <TextBlock DockPanel.Dock="Right"
-                       Text="{Binding SummaryText}"
-                       Margin="16,0,0,0"
-                       FontSize="12"
-                       VerticalAlignment="Center"
-                       Foreground="{DynamicResource SemiColorText2}" />
-            <TextBlock Text="{Binding Title}"
-                       FontSize="15"
-                       FontWeight="SemiBold"
-                       Foreground="{DynamicResource SemiColorText0}" />
+            <ItemsControl DockPanel.Dock="Right"
+                          Margin="16,0,0,0"
+                          ItemsSource="{x:Static tv:TwinLegend.Items}"
+                          VerticalAlignment="Center">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel ItemSpacing="10" LineSpacing="4" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="tv:TwinLegendItem">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <Border Width="10" Height="10" CornerRadius="2" Background="{Binding Brush}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding Text}" FontSize="11" Foreground="{DynamicResource SemiColorText2}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Title}"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource SemiColorText0}" />
+                <TextBlock Text="{Binding SummaryText}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource SemiColorText2}" />
+            </StackPanel>
         </DockPanel>
         <!-- 柜体之间的间距由柜体自身左右边距提供，这里左右各收回 6 px，让第一个和最后一个柜体贴齐标题 -->
         <ItemsControl Grid.Row="1" Margin="-6,0" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">

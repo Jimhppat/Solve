@@ -13,7 +13,7 @@
         </StackPanel>
 
         <TextBlock IsVisible="{Binding !HasSelection}"
-                   Text="点选显示区中的节点查看详情；点柜体、层位等容器会进入该节点"
+                   Text="点选显示区中的柜体、层位或产品位，在这里查看详情"
                    FontSize="12"
                    TextWrapping="Wrap"
                    Foreground="{DynamicResource SemiColorText2}" />

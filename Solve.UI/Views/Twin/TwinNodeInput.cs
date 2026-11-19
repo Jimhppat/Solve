@@ -9,14 +9,15 @@ namespace Solve.UI.Views.Twin;
 internal static class TwinNodeInput
 {
     /// <summary>
-    /// 点选节点：选中；容器同时进入。标记已处理，事件不再冒泡到上级容器（否则上级也会被选中）。
+    /// 点选节点：只选中（控制区显示详情），不进入下一级。
+    /// 标记已处理，事件不再冒泡到上级容器（否则点产品位时上级也会被选中）。
     /// </summary>
-    public static void Activate(object? dataContext, RoutedEventArgs e)
+    public static void Select(object? dataContext, RoutedEventArgs e)
     {
         if (dataContext is not TwinNodeViewModel node)
             return;
 
-        node.Activate();
+        node.Select();
         e.Handled = true;
     }
 }
