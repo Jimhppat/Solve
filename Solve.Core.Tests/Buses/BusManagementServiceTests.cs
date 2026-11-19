@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.Hardware.Buses.Simulation;
@@ -43,7 +42,9 @@ public sealed class BusManagementServiceTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _manager.DisposeAsync();
-        SqliteConnection.ClearAllPools();
+
+        // 只清本库的池：进程级 ClearAllPools 会关掉并行测试类正在打开的连接（见 SqliteDatabase.ClearPool）
+        SqliteDatabase.ClearPool(new SqliteStorageOptions(DatabasePath));
         if (Directory.Exists(_directory))
             Directory.Delete(_directory, recursive: true);
     }
