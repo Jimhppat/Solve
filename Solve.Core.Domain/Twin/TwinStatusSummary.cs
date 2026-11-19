@@ -44,6 +44,24 @@ public sealed class TwinStatusSummary
     public int Total => Active + Disabled;
 
     /// <summary>
+    /// 告警类（故障、报警、不合格）的产品位数，用于柜体切换胶囊上的红色计数
+    /// </summary>
+    public int AlarmCount
+    {
+        get
+        {
+            var count = 0;
+            foreach (var state in ProductStates.BySeverity)
+            {
+                if (state.IsAlarm())
+                    count += _counts[(int)state];
+            }
+
+            return count;
+        }
+    }
+
+    /// <summary>
     /// 最严重的状态。没有启用的产品位时为 null（全部停用或没有产品位），界面按"停用 / 空"显示，而不是任何状态色。
     /// </summary>
     public ProductState? Worst

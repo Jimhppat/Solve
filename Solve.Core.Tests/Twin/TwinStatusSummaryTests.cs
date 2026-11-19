@@ -56,6 +56,18 @@ public sealed class TwinStatusSummaryTests
     }
 
     [Fact]
+    public void AlarmCount_SumsFaultAlarmAndFailed_Only()
+    {
+        var summary = Summary(4, (ProductState.Fault, 1), (ProductState.Alarm, 2), (ProductState.Failed, 3),
+            (ProductState.Unknown, 7), (ProductState.Running, 9));
+
+        // 无数据、测试中、停用都不算告警
+        Assert.Equal(6, summary.AlarmCount);
+        Assert.Equal(0, Summary(2, (ProductState.Unknown, 5)).AlarmCount);
+        Assert.Equal(0, TwinStatusSummary.None.AlarmCount);
+    }
+
+    [Fact]
     public void SameAs_ComparesValues()
     {
         Assert.True(Summary(1, (ProductState.Passed, 2)).SameAs(Summary(1, (ProductState.Passed, 2))));

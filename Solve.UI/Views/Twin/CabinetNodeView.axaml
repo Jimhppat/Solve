@@ -4,9 +4,8 @@
              xmlns:tv="using:Solve.UI.Views.Twin"
              x:Class="Solve.UI.Views.Twin.CabinetNodeView"
              x:DataType="tvm:CabinetNodeViewModel"
-             x:CompileBindings="True"
-             Margin="6,0">
-    <!-- 柜体（只展示，不可选中）：铺满系统中分到的一列。标题行（编号、名称、告警红字），
+             x:CompileBindings="True">
+    <!-- 柜体（只展示，不可选中）：系统一次只画一个柜体，铺满标题行以下的显示区。标题行（编号、名称、告警红字），
          层位上下等分高度（层位 1 在最上面，与实物一致）；边框颜色 = 柜内最严重的状态。
          不画状态比例条：标题与边框已表达状态，整条灰色的比例条容易被误认为进度条；
          只在摘要模式（柜内画不出内容）时显示比例条，此时它是唯一的状态分布信息 -->

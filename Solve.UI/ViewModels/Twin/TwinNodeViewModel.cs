@@ -11,7 +11,8 @@ namespace Solve.UI.ViewModels.Twin;
 /// 主控台上一个六层节点的视图模型基类。容器节点显示其下产品位的汇总，产品位显示自身状态。
 /// </summary>
 /// <remarks>
-/// <para>只为当前画出的节点创建：显示区从系统根按显示数量上限决定画到哪一层，最深一层的容器用摘要模式（只画状态条）。</para>
+/// <para>只为当前画出的节点创建：系统与全部柜体（切换胶囊）总会创建，当前柜体按显示数量上限决定画到哪一层，
+/// 最深一层的容器用摘要模式（只画状态条）。</para>
 /// <para>容器（系统、柜体、层位、槽位、治具位）只做展示，不能被选中；只有 <see cref="ProductNodeViewModel"/> 可选中。</para>
 /// <para>系统用 <see cref="Id"/> 对应状态库中的数据，界面显示位置编码与名称。只在 UI 线程上使用。</para>
 /// </remarks>
@@ -66,7 +67,7 @@ public abstract class TwinNodeViewModel : ViewModelBase
 
     /// <summary>
     /// 停用的节点整体变淡。透明度会逐层相乘，所以只在"自身被停用"的节点上变淡，下级随上级一起淡
-    /// （显示区总是从系统根画起，停用节点的上级都在画面上）。
+    /// （显示区总是从系统根画起、当前柜体画在系统里面，停用节点的上级都在画面上）。
     /// </summary>
     public double ContentOpacity => Node.IsEnabled ? 1.0 : DisabledOpacity;
 
@@ -108,14 +109,44 @@ public abstract class TwinNodeViewModel : ViewModelBase
     public bool HasAlarm => AlarmText.Length > 0;
 
     /// <summary>
+    /// 告警类产品位数（柜体切换胶囊上的红色计数）
+    /// </summary>
+    public int AlarmCount => _summary.AlarmCount;
+
+    /// <summary>
     /// 全部计数（悬停提示）
     /// </summary>
     public string SummaryText => _summary.Total == 0 ? "没有产品位" : _summary.DescribeAll();
 
+    /// <summary>
+    /// 画出下级。柜体在切换时会反复展开、收起，所以要发通知
+    /// </summary>
     internal void Expand(IReadOnlyList<TwinNodeViewModel> children)
     {
         IsExpanded = true;
         Children = children;
+        RaiseExpansionChanged();
+    }
+
+    /// <summary>
+    /// 收起为摘要模式，放掉下级的视图模型（切走的柜体不再占用显示数量与内存）
+    /// </summary>
+    internal void Collapse()
+    {
+        if (!IsExpanded)
+            return;
+
+        IsExpanded = false;
+        Children = [];
+        RaiseExpansionChanged();
+    }
+
+    private void RaiseExpansionChanged()
+    {
+        OnPropertyChanged(nameof(IsExpanded));
+        OnPropertyChanged(nameof(IsSummary));
+        OnPropertyChanged(nameof(Children));
+        OnPropertyChanged(nameof(ChildCount));
     }
 
     /// <summary>
@@ -131,12 +162,13 @@ public abstract class TwinNodeViewModel : ViewModelBase
         OnPropertyChanged(nameof(Worst));
         OnPropertyChanged(nameof(AlarmText));
         OnPropertyChanged(nameof(HasAlarm));
+        OnPropertyChanged(nameof(AlarmCount));
         OnPropertyChanged(nameof(SummaryText));
     }
 
     internal static TwinNodeViewModel Create(TopologyNode node, TwinBoardViewModel board) => node.Level switch
     {
-        TopologyLevel.System => new SystemNodeViewModel(node),
+        TopologyLevel.System => new SystemNodeViewModel(node, board),
         TopologyLevel.Cabinet => new CabinetNodeViewModel(node),
         TopologyLevel.Layer => new LayerNodeViewModel(node),
         TopologyLevel.Slot => new SlotNodeViewModel(node),
@@ -146,12 +178,39 @@ public abstract class TwinNodeViewModel : ViewModelBase
 }
 
 /// <summary>
-/// 系统：柜体排成一行，等分宽度
+/// 系统：一次只画一个柜体（<see cref="CurrentCabinet"/>），用标题行的柜体切换胶囊选择。
+/// <see cref="TwinNodeViewModel.Children"/> 是全部柜体（胶囊），只有当前柜体是展开的。
 /// </summary>
-public sealed class SystemNodeViewModel(TopologyNode node) : TwinNodeViewModel(node);
+public sealed class SystemNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node)
+{
+    private TwinNodeViewModel? _currentCabinet;
+
+    /// <summary>
+    /// 显示区上画出的柜体；也是切换胶囊的选中项（双向绑定）。
+    /// 设置时交给显示区切换：收起旧柜体、展开新柜体；传入 null 或不是本系统的柜体时忽略
+    /// （切换胶囊在重建过程中可能短暂回传 null，不能因此把画面清空）。
+    /// </summary>
+    public TwinNodeViewModel? CurrentCabinet
+    {
+        get => _currentCabinet;
+        set
+        {
+            if (value is not null)
+                board.ShowCabinet(value.Id);
+        }
+    }
+
+    /// <summary>
+    /// 只有一个柜体时不显示切换胶囊：只有一个选项的切换没有意义，柜体卡片自己的标题已写明柜号
+    /// </summary>
+    public bool HasCabinetChoice => ChildCount > 1;
+
+    internal void SetCurrentCabinet(TwinNodeViewModel? cabinet)
+        => SetProperty(ref _currentCabinet, cabinet, nameof(CurrentCabinet));
+}
 
 /// <summary>
-/// 柜体：层位上下堆叠、等分高度，层位 1 在最上面
+/// 柜体：层位上下堆叠、等分高度，层位 1 在最上面。没有被选中显示时只用作切换胶囊（摘要模式）
 /// </summary>
 public sealed class CabinetNodeViewModel(TopologyNode node) : TwinNodeViewModel(node);
 

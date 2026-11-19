@@ -36,8 +36,8 @@
         </DataTemplate>
     </UserControl.DataTemplates>
 
-    <!-- 纯展示面板：始终从系统根画起，点击只选中（控制区看详情），没有路径导航与返回按钮；
-         图例在系统标题行的右侧（见 SystemNodeView） -->
+    <!-- 纯展示面板：始终从系统根画起、一次画一个柜体，点击只选中（控制区看详情），没有路径导航与返回按钮；
+         柜体切换胶囊与图例在系统标题行上（见 SystemNodeView） -->
     <DockPanel>
         <!-- 刷新出错：画面已不可信，必须让操作员看到 -->
         <Border DockPanel.Dock="Top"

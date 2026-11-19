@@ -9,16 +9,19 @@ using Solve.Core.Domain.Twin;
 namespace Solve.UI.ViewModels.Twin;
 
 /// <summary>
-/// 主控台显示区：纯展示面板，始终显示整套设备（从系统根开始），按显示数量上限逐层展开六层节点的产品状态。
+/// 主控台显示区：纯展示面板，从系统根开始，一次只画一个柜体（用切换胶囊选择），按显示数量上限逐层展开它的产品状态。
 /// </summary>
 /// <remarks>
+/// <para>柜体切换：系统下的全部柜体都有视图模型，作为切换胶囊显示各自最严重的状态与告警数，看不见的柜体出了故障也能发现；
+/// 只有当前柜体展开到下级。切换时收起旧柜体、放掉它下级的视图模型，再展开新柜体。默认显示第一个柜体。</para>
 /// <para>只有产品位可以被点选：选中后在控制区显示产品信息，画面不切换、不进入下一级；
-/// 柜体、层位等容器只做展示。</para>
-/// <para>显示数量上限：从系统根往下逐层展开，可见节点超过 <see cref="ElementBudget"/> 时停在上一层，
-/// 最深一层的容器用摘要模式（只画状态条）。至少展开一层，所以柜体总会画出来。</para>
+/// 柜体、层位等容器只做展示。切到别的柜体时选中保留，控制区继续显示那个产品位，切回来时仍高亮。</para>
+/// <para>显示数量上限：只计算当前柜体（加上系统与全部柜体胶囊），往下逐层展开，超过 <see cref="ElementBudget"/> 时停在上一层，
+/// 最深一层的容器用摘要模式（只画状态条）。当前柜体至少展开到层位。</para>
 /// <para>刷新：视图以 <see cref="RefreshInterval"/> 周期调用 <see cref="Refresh"/>，只更新状态有变化且当前看得见的节点；
 /// 每秒做一次过期检查。只在显示区可见时刷新，主控台不在前台时不占 UI 线程。</para>
-/// <para>拓扑被修改时整体重建，选中项按节点 Id 保留；节点已被删除时清除选中。只在 UI 线程上使用。</para>
+/// <para>拓扑被修改时整体重建，选中的产品位与当前柜体都按节点 Id 保留；产品位已被删除时清除选中，
+/// 当前柜体已被删除时回到第一个柜体。只在 UI 线程上使用。</para>
 /// </remarks>
 public sealed class TwinBoardViewModel : ViewModelBase
 {
@@ -39,6 +42,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
     private TwinStateStore? _store;
     private EquipmentTopology? _bound;
     private TopologyNodeId? _selectedId;
+    private TopologyNodeId? _cabinetId;
     private TwinNodeViewModel? _root;
     private string? _refreshError;
     private int _refreshCount;
@@ -90,9 +94,14 @@ public sealed class TwinBoardViewModel : ViewModelBase
     public bool HasRefreshError => _refreshError is not null;
 
     /// <summary>
-    /// 当前画出的节点数（含系统根）
+    /// 当前画出的节点数（含系统根与全部柜体胶囊）
     /// </summary>
     public int VisibleCount => _visible.Count;
+
+    /// <summary>
+    /// 当前显示的柜体；尚未建档或系统下没有柜体时为 null
+    /// </summary>
+    public TwinNodeViewModel? CurrentCabinet => (Root as SystemNodeViewModel)?.CurrentCabinet;
 
     // ==================== 选中产品位的信息（主控台控制区） ====================
     // 只有产品位能被选中；柜体、层位等容器的情况在显示区上已经看得到（边框颜色、圆点、告警红字），不单独显示
@@ -220,6 +229,41 @@ public sealed class TwinBoardViewModel : ViewModelBase
         RaiseSelectionChanged();
     }
 
+    /// <summary>
+    /// 切换显示的柜体（切换胶囊）。收起当前柜体、展开指定柜体；选中的产品位不变。
+    /// 只接受本系统的柜体：传入其他层级或不存在的 Id、或已经是当前柜体时忽略。
+    /// </summary>
+    public void ShowCabinet(TopologyNodeId cabinetId)
+    {
+        if (Root is not SystemNodeViewModel system || _store is not { } store || system.CurrentCabinet?.Id == cabinetId)
+            return;
+
+        var target = system.Children.FirstOrDefault(cabinet => cabinet.Id == cabinetId);
+        if (target is null)
+            return;
+
+        try
+        {
+            if (system.CurrentCabinet is { } previous)
+            {
+                Release(previous);
+                previous.Collapse();
+            }
+
+            ExpandCabinet(target, store);
+            _cabinetId = cabinetId;
+            system.SetCurrentCabinet(target);
+            OnPropertyChanged(nameof(CurrentCabinet));
+            OnPropertyChanged(nameof(VisibleCount));
+            RefreshError = null;
+        }
+        catch (Exception ex)
+        {
+            // 由切换胶囊的绑定在 UI 线程上调用：与周期刷新一样，不让异常逃逸，但必须明确告诉操作员画面已不可信
+            RefreshError = $"切换柜体失败，画面可能不完整：{ex.GetType().Name}：{ex.Message}";
+        }
+    }
+
     // ==================== 内部 ====================
 
     private void Bind(EquipmentTopology? topology)
@@ -232,11 +276,9 @@ public sealed class TwinBoardViewModel : ViewModelBase
         if (_selectedId is { } selected && (topology is null || !topology.TryGetNode(selected, out _)))
             _selectedId = null;
 
-        Root = topology is null || _store is not { } store ? null : Build(topology.Root, DeepestLevel(topology), store);
+        Root = topology is null || _store is not { } store ? null : BuildSystem(topology.Root, store);
 
-        if (_selectedId is { } id && _visible.TryGetValue(id, out var item) && item is ProductNodeViewModel product)
-            product.IsSelected = true;
-
+        OnPropertyChanged(nameof(CurrentCabinet));
         OnPropertyChanged(nameof(VisibleCount));
         OnPropertyChanged(nameof(HasTopology));
         OnPropertyChanged(nameof(ShowEmpty));
@@ -244,16 +286,49 @@ public sealed class TwinBoardViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 从系统根往下逐层累加节点数，超过上限就停在上一层（至少展开到柜体）
+    /// 系统与全部柜体（胶囊，摘要模式），再展开当前柜体：按 Id 保留上次显示的柜体，它已被删除时回到第一个
     /// </summary>
-    private TopologyLevel DeepestLevel(EquipmentTopology topology)
+    private SystemNodeViewModel BuildSystem(TopologyNode root, TwinStateStore store)
     {
-        var deepest = TopologyLevel.System;
-        var total = 1;
-        for (var level = TopologyLevel.Cabinet; level <= TopologyLevel.Product; level++)
+        var system = (SystemNodeViewModel)Register(root, store);
+        var cabinets = root.Children.Select(cabinet => Register(cabinet, store)).ToArray();
+        system.Expand(cabinets);
+
+        var current = cabinets.FirstOrDefault(cabinet => cabinet.Id == _cabinetId) ?? cabinets.FirstOrDefault();
+        _cabinetId = current?.Id;
+        if (current is not null)
+            ExpandCabinet(current, store);
+
+        system.SetCurrentCabinet(current);
+        return system;
+    }
+
+    private void ExpandCabinet(TwinNodeViewModel cabinet, TwinStateStore store)
+    {
+        if (cabinet.Node.Children.Count == 0)
+            return;
+
+        var deepest = DeepestLevel(cabinet.Node);
+        cabinet.Expand(cabinet.Node.Children.Select(child => Build(child, deepest, store)).ToArray());
+
+        if (_selectedId is { } id && _visible.TryGetValue(id, out var item) && item is ProductNodeViewModel product)
+            product.IsSelected = true;
+    }
+
+    /// <summary>
+    /// 只算当前柜体：系统与全部柜体胶囊已经画出，从层位往下逐层累加节点数，超过上限就停在上一层（至少展开到层位）
+    /// </summary>
+    private TopologyLevel DeepestLevel(TopologyNode cabinet)
+    {
+        Span<int> counts = stackalloc int[(int)TopologyLevel.Product + 1];
+        CountDescendants(cabinet, counts);
+
+        var deepest = TopologyLevel.Cabinet;
+        var total = _visible.Count;
+        for (var level = TopologyLevel.Layer; level <= TopologyLevel.Product; level++)
         {
-            var count = topology.CountAt(level);
-            if (count == 0 || (deepest != TopologyLevel.System && total + count > ElementBudget))
+            var count = counts[(int)level];
+            if (count == 0 || (deepest != TopologyLevel.Cabinet && total + count > ElementBudget))
                 break;
 
             total += count;
@@ -263,16 +338,42 @@ public sealed class TwinBoardViewModel : ViewModelBase
         return deepest;
     }
 
+    private static void CountDescendants(TopologyNode node, Span<int> counts)
+    {
+        foreach (var child in node.Children)
+        {
+            counts[(int)child.Level]++;
+            CountDescendants(child, counts);
+        }
+    }
+
     private TwinNodeViewModel Build(TopologyNode node, TopologyLevel deepest, TwinStateStore store)
     {
-        var item = TwinNodeViewModel.Create(node, this);
-        _visible[node.Id] = item;
-
+        var item = Register(node, store);
         if (node.Level < deepest && node.Children.Count > 0)
             item.Expand(node.Children.Select(child => Build(child, deepest, store)).ToArray());
 
+        return item;
+    }
+
+    private TwinNodeViewModel Register(TopologyNode node, TwinStateStore store)
+    {
+        var item = TwinNodeViewModel.Create(node, this);
+        _visible[node.Id] = item;
         item.Refresh(store);
         return item;
+    }
+
+    /// <summary>
+    /// 切走的柜体：它下级的视图模型不再刷新（柜体自身仍是胶囊，保留）
+    /// </summary>
+    private void Release(TwinNodeViewModel node)
+    {
+        foreach (var child in node.Children)
+        {
+            _visible.Remove(child.Id);
+            Release(child);
+        }
     }
 
     private void RaiseSelectionChanged()

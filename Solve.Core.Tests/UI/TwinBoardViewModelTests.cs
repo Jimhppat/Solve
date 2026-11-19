@@ -7,7 +7,7 @@ using Solve.UI.ViewModels.Twin;
 namespace Solve.Core.Tests.UI;
 
 /// <summary>
-/// 主控台显示区（纯展示面板）：从系统根按显示数量上限展开、点击只选中不进入下一级、
+/// 主控台显示区（纯展示面板）：一次画一个柜体并按显示数量上限展开、柜体切换、点击只选中不进入下一级、
 /// 选中详情、按变化刷新、拓扑修改后重建
 /// </summary>
 public sealed class TwinBoardViewModelTests
@@ -77,28 +77,179 @@ public sealed class TwinBoardViewModelTests
     }
 
     [Fact]
-    public void LargeTopology_StopsAtBudget_DeepestLevelInSummaryMode()
+    public void LargeCabinet_StopsAtBudget_DeepestLevelInSummaryMode()
     {
-        // 逐层：柜 2、层 4、槽 8、治具位 16、产品位 64；上限 20 时画到槽位（1 + 2 + 4 + 8 = 15）
+        // 只算当前柜体：系统 1 + 柜体胶囊 2 = 3；C01 逐层：层 2、槽 4、治具位 8、产品位 32；
+        // 上限 20 时画到治具位（3 + 2 + 4 + 8 = 17）
         var (board, _) = Attached(Twins.Layout(2, 2, 2, 2, 4), budget: 20);
 
-        Assert.Equal(15, board.VisibleCount);
+        Assert.Equal(17, board.VisibleCount);
         var nodes = Flatten(board.Root!).ToList();
-        var slots = nodes.OfType<SlotNodeViewModel>().ToList();
-        Assert.Equal(8, slots.Count);
-        Assert.All(slots, slot => Assert.True(slot.IsSummary));
-        Assert.All(nodes.OfType<LayerNodeViewModel>(), layer => Assert.True(layer.IsExpanded));
-        Assert.Empty(nodes.OfType<FixtureNodeViewModel>());
+        var fixtures = nodes.OfType<FixtureNodeViewModel>().ToList();
+        Assert.Equal(8, fixtures.Count);
+        Assert.All(fixtures, fixture => Assert.True(fixture.IsSummary));
+        Assert.All(nodes.OfType<SlotNodeViewModel>(), slot => Assert.True(slot.IsExpanded));
+        Assert.Empty(nodes.OfType<ProductNodeViewModel>());
     }
 
     [Fact]
-    public void TinyBudget_StillShowsTheCabinets()
+    public void Budget_CountsOnlyTheShownCabinet()
+    {
+        // 整套设备 1 + 4 + 4 + 4 + 4 + 16 = 33 个节点超过上限 15；只画一个柜体时 5 + 1 + 1 + 1 + 4 = 12，能画到产品位
+        var (board, _) = Attached(Twins.Layout(4, 1, 1, 1, 4), budget: 15);
+
+        Assert.Equal(12, board.VisibleCount);
+        Assert.Equal(4, Flatten(board.Root!).OfType<ProductNodeViewModel>().Count());
+    }
+
+    [Fact]
+    public void TinyBudget_StillShowsTheCabinetsAndLayers()
     {
         var (board, _) = Attached(Twins.Layout(3, 2, 2, 2, 4), budget: 1);
 
-        var cabinets = Flatten(board.Root!).OfType<CabinetNodeViewModel>().ToList();
-        Assert.Equal(3, cabinets.Count);
-        Assert.All(cabinets, cabinet => Assert.True(cabinet.IsSummary));
+        // 全部柜体都有胶囊；当前柜体至少展开到层位，层位用摘要模式
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
+        Assert.Equal(3, system.ChildCount);
+        var current = Assert.IsType<CabinetNodeViewModel>(board.CurrentCabinet);
+        Assert.Same(system.Children[0], current);
+        Assert.Equal(2, current.ChildCount);
+        Assert.All(current.Children, layer => Assert.True(layer.IsSummary));
+        Assert.All(system.Children.Skip(1), cabinet => Assert.True(cabinet.IsSummary));
+    }
+
+    // ==================== 柜体切换 ====================
+
+    [Fact]
+    public void MultipleCabinets_ShowTheFirstCabinetOnly()
+    {
+        var (board, _) = Attached(Twins.Layout(3, 1, 1, 1, 2));
+
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
+        Assert.True(system.HasCabinetChoice);
+        Assert.Equal(["C01", "C02", "C03"], system.Children.Select(cabinet => cabinet.ShortCode));
+        Assert.Same(system.Children[0], system.CurrentCabinet);
+        Assert.Same(system.CurrentCabinet, board.CurrentCabinet);
+        Assert.Equal([true, false, false], system.Children.Select(cabinet => cabinet.IsExpanded));
+
+        var products = Flatten(system).OfType<ProductNodeViewModel>().ToList();
+        Assert.Equal(2, products.Count);
+        Assert.All(products, product => Assert.StartsWith("C01-", product.Node.Address.ToString()));
+    }
+
+    [Fact]
+    public void SingleCabinet_HidesTheSwitcher()
+    {
+        var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 1));
+
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
+        Assert.False(system.HasCabinetChoice);
+        Assert.NotNull(board.CurrentCabinet);
+    }
+
+    [Fact]
+    public void ShowCabinet_SwitchesTheDisplay_AndReleasesTheOldCabinet()
+    {
+        var topology = Twins.Layout(3, 1, 1, 1, 2);
+        var (board, _) = Attached(topology);
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
+        var before = board.VisibleCount; // 1 + 3 + 1 + 1 + 1 + 2 = 9
+
+        board.ShowCabinet(Twins.Id(topology, 2));
+
+        // 不重建整个画面：系统与胶囊是同一批实例，只换当前柜体
+        Assert.Same(system, board.Root);
+        Assert.Same(system.Children[1], board.CurrentCabinet);
+        Assert.True(system.Children[0].IsSummary);
+        Assert.Empty(system.Children[0].Children);
+        Assert.Equal(9, before);
+        Assert.Equal(before, board.VisibleCount);
+        Assert.All(Flatten(system).OfType<ProductNodeViewModel>(),
+            product => Assert.StartsWith("C02-", product.Node.Address.ToString()));
+    }
+
+    [Fact]
+    public void Switcher_SetsTheCurrentCabinet_AndNullIsIgnored()
+    {
+        var (board, _) = Attached(Twins.Layout(3, 1, 1, 1, 1));
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
+
+        // 切换胶囊双向绑定 CurrentCabinet
+        system.CurrentCabinet = system.Children[2];
+        Assert.Same(system.Children[2], board.CurrentCabinet);
+
+        // 胶囊在重建过程中可能短暂回传 null：不能因此清空画面
+        system.CurrentCabinet = null;
+        Assert.Same(system.Children[2], board.CurrentCabinet);
+    }
+
+    [Fact]
+    public void ShowCabinet_IgnoresOtherLevelsAndUnknownIds()
+    {
+        var topology = Twins.Layout(2, 1, 1, 1, 1);
+        var (board, _) = Attached(topology);
+        var current = board.CurrentCabinet;
+
+        board.ShowCabinet(Twins.Id(topology, 2, 1));       // C02 的层位
+        board.ShowCabinet(Twins.Id(topology, 2, 1, 1, 1, 1)); // C02 的产品位
+        board.ShowCabinet(TopologyNodeId.New());
+
+        Assert.Same(current, board.CurrentCabinet);
+        Assert.False(board.HasRefreshError);
+    }
+
+    [Fact]
+    public void HiddenCabinet_KeepsItsSwitcherStatusUpToDate()
+    {
+        var topology = Twins.Layout(2, 1, 1, 1, 2);
+        var (board, store) = Attached(topology);
+        var system = Assert.IsType<SystemNodeViewModel>(board.Root);
+
+        // C02 没在显示，它的产品位出了故障：胶囊上的圆点与红色计数照样更新
+        store.Report(Twins.Id(topology, 2, 1, 1, 1, 1), ProductState.Fault);
+        store.Report(Twins.Id(topology, 2, 1, 1, 1, 2), ProductState.Failed);
+        board.Refresh();
+
+        var hidden = system.Children[1];
+        Assert.Equal(ProductState.Fault, hidden.Worst);
+        Assert.Equal(2, hidden.AlarmCount);
+        Assert.True(hidden.HasAlarm);
+        Assert.Equal(0, system.Children[0].AlarmCount);
+        Assert.Equal(ProductState.Fault, system.Worst);
+    }
+
+    [Fact]
+    public void Selection_SurvivesSwitching_AndIsHighlightedAgainOnReturn()
+    {
+        var topology = Twins.Layout(2, 1, 1, 1, 2);
+        var (board, _) = Attached(topology);
+        Flatten(board.Root!).OfType<ProductNodeViewModel>().First().Select();
+
+        board.ShowCabinet(Twins.Id(topology, 2));
+
+        // 控制区继续显示 C01 的产品位；C02 画面上没有高亮
+        Assert.True(board.HasSelection);
+        Assert.Equal("C01-L01-S01-F01-P01", board.SelectedAddressText);
+        Assert.DoesNotContain(Flatten(board.Root!).OfType<ProductNodeViewModel>(), product => product.IsSelected);
+
+        board.ShowCabinet(Twins.Id(topology, 1));
+
+        Assert.True(Flatten(board.Root!).OfType<ProductNodeViewModel>().First().IsSelected);
+    }
+
+    [Fact]
+    public void TopologyChange_KeepsTheShownCabinet()
+    {
+        var topology = Twins.Layout(3, 1, 1, 1, 1);
+        var (board, _) = Attached(topology);
+        var root = board.Root;
+        board.ShowCabinet(Twins.Id(topology, 3));
+
+        _topology.Current = topology.WithNodeSettings(Twins.Id(topology, 1), "A 柜", enabled: true).Value;
+        board.Refresh();
+
+        Assert.NotSame(root, board.Root);
+        Assert.Equal(Twins.Id(topology, 3), board.CurrentCabinet!.Id);
+        Assert.True(board.CurrentCabinet.IsExpanded);
     }
 
     // ==================== 点击：只有产品位可选中，画面不变 ====================
@@ -146,7 +297,7 @@ public sealed class TwinBoardViewModelTests
     [Fact]
     public void SelectingAnotherProduct_MovesTheHighlight()
     {
-        var (board, _) = Attached(Twins.Layout(2, 1, 1, 1, 1));
+        var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 2));
         var products = Flatten(board.Root!).OfType<ProductNodeViewModel>().ToList();
 
         products[0].Select();
@@ -154,7 +305,7 @@ public sealed class TwinBoardViewModelTests
 
         Assert.False(products[0].IsSelected);
         Assert.True(products[1].IsSelected);
-        Assert.Equal("C02-L01-S01-F01-P01", board.SelectedAddressText);
+        Assert.Equal("C01-L01-S01-F01-P02", board.SelectedAddressText);
     }
 
     [Fact]
@@ -233,10 +384,11 @@ public sealed class TwinBoardViewModelTests
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, store) = Attached(topology);
+        board.ShowCabinet(Twins.Id(topology, 2));
         var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
         product.Select();
 
-        // 给所在柜体改名：拓扑被替换，产品位 Id 不变
+        // 给所在柜体改名：拓扑被替换，产品位 Id 不变；重建后仍显示 C02
         _topology.Current = topology.WithNodeSettings(Twins.Id(topology, 2), "B 柜", enabled: true).Value;
         board.Refresh();
 
@@ -250,16 +402,20 @@ public sealed class TwinBoardViewModelTests
     }
 
     [Fact]
-    public void SelectedProductRemoved_ClearsSelection()
+    public void ShownCabinetRemoved_FallsBackToTheFirst_AndClearsItsSelection()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, _) = Attached(topology);
+        board.ShowCabinet(Twins.Id(topology, 2));
         Flatten(board.Root!).OfType<ProductNodeViewModel>().Last().Select();
 
+        // 删掉 C02（选中的产品位随之被删）
         _topology.Current = Twins.Layout(1, 1, 1, 1, 2, current: topology);
         board.Refresh();
 
         Assert.IsType<SystemNodeViewModel>(board.Root);
+        Assert.Equal(Twins.Id(topology, 1), board.CurrentCabinet!.Id);
+        Assert.True(board.CurrentCabinet.IsExpanded);
         Assert.False(board.HasSelection);
         Assert.Null(board.SelectedAddressText);
     }
@@ -278,7 +434,10 @@ public sealed class TwinBoardViewModelTests
         Assert.False(cabinets[0].IsDisabled);
         Assert.Equal(ProductState.Unknown, cabinets[0].Worst);
 
-        // 透明度逐层相乘：停用柜体下的节点不再各自变淡，否则 0.4⁵ 几乎看不见
+        // 停用的柜体也能切过去查看；透明度逐层相乘：停用柜体下的节点不再各自变淡，否则 0.4⁵ 几乎看不见
+        board.ShowCabinet(cabinets[1].Id);
+        Assert.Same(cabinets[1], board.CurrentCabinet);
+        Assert.NotEmpty(Flatten(cabinets[1]).Skip(1));
         Assert.All(Flatten(cabinets[1]).Skip(1), node =>
         {
             Assert.True(node.IsDisabled);

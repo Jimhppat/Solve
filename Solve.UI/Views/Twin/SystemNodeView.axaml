@@ -5,18 +5,131 @@
              x:Class="Solve.UI.Views.Twin.SystemNodeView"
              x:DataType="tvm:SystemNodeViewModel"
              x:CompileBindings="True">
-    <!-- 系统：铺满整个显示区。标题行：左侧系统名称与全部计数，右侧图例；柜体排成一行等分宽度。
-         不再画全局状态条：每个柜体卡片已有自己的状态条，只有一个柜体时两条完全重复。
-         柜体多到放不下最小尺寸时，显示区出现横向滚动条 -->
+    <UserControl.Resources>
+        <!-- 柜体切换胶囊：灰色圆角轨道，选中的柜体是轨道上浮起的白色胶囊。
+             Semi 自带的按钮式单选组在白色卡片上没有可见的轨道，看不出是一组可切换的选项，所以这里自绘 -->
+        <ControlTheme x:Key="CabinetCapsuleItem" TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="Padding" Value="12,4" />
+            <Setter Property="CornerRadius" Value="13" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Name="PART_Capsule"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            MinHeight="{TemplateBinding MinHeight}"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Name="PART_ContentPresenter"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+            </Style>
+            <Style Selector="^:selected">
+                <Setter Property="Background" Value="{DynamicResource SemiColorBackground0}" />
+                <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+            </Style>
+            <Style Selector="^:selected /template/ Border#PART_Capsule">
+                <Setter Property="BoxShadow" Value="0 1 3 0 #33000000" />
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="CabinetCapsules" TargetType="ListBox">
+            <Setter Property="ItemContainerTheme" Value="{StaticResource CabinetCapsuleItem}" />
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="2" />
+                </ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{DynamicResource SemiColorFill1}" CornerRadius="16" Padding="3">
+                        <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" />
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+    </UserControl.Resources>
+
+    <!-- 系统：铺满整个显示区，一次只画一个柜体。
+         标题行：系统名称、柜体切换胶囊、右侧图例。全部计数不再写在标题旁（悬停系统名称可看），
+         告警由每个胶囊上的红色计数提示：没在显示的柜体出了故障也看得见 -->
     <Grid RowDefinitions="Auto,*" RowSpacing="10">
-        <DockPanel Grid.Row="0">
-            <ItemsControl DockPanel.Dock="Right"
-                          Margin="16,0,0,0"
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+            <TextBlock Grid.Column="0"
+                       Text="{Binding Title}"
+                       ToolTip.Tip="{Binding SummaryText}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource SemiColorText0}" />
+
+            <!-- 柜体切换胶囊：单选且始终有一个选中；柜体多到一行放不下时横向滚动，不把图例挤走 -->
+            <ScrollViewer Grid.Column="1"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled"
+                          IsVisible="{Binding HasCabinetChoice}">
+                <ListBox Theme="{StaticResource CabinetCapsules}"
+                         HorizontalAlignment="Left"
+                         SelectionMode="Single,AlwaysSelected"
+                         AutomationProperties.Name="柜体切换"
+                         ItemsSource="{Binding Children}"
+                         SelectedItem="{Binding CurrentCabinet, Mode=TwoWay}">
+                    <ListBox.Styles>
+                        <!-- 自动化与读屏：每个胶囊以柜号命名，否则只会读出视图模型的类型名 -->
+                        <Style Selector="ListBoxItem" x:DataType="tvm:TwinNodeViewModel">
+                            <Setter Property="AutomationProperties.Name" Value="{Binding ShortCode}" />
+                        </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="tvm:TwinNodeViewModel">
+                            <!-- 圆点 = 柜内最严重的状态；红色数字 = 告警类产品位数（故障、报警、不合格） -->
+                            <StackPanel Orientation="Horizontal"
+                                        Spacing="6"
+                                        Opacity="{Binding ContentOpacity}"
+                                        ToolTip.Tip="{Binding SummaryText}">
+                                <Ellipse Width="8" Height="8"
+                                         VerticalAlignment="Center"
+                                         Fill="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}" />
+                                <TextBlock Text="{Binding ShortCode}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Name}"
+                                           IsVisible="{Binding HasName}"
+                                           MaxWidth="120"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                                <Border IsVisible="{Binding HasAlarm}"
+                                        MinWidth="18" Height="16"
+                                        Padding="5,0"
+                                        CornerRadius="8"
+                                        VerticalAlignment="Center"
+                                        Background="{DynamicResource SemiColorDanger}">
+                                    <TextBlock Text="{Binding AlarmCount}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Foreground="White" />
+                                </Border>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </ScrollViewer>
+
+            <ItemsControl Grid.Column="2"
                           ItemsSource="{x:Static tv:TwinLegend.Items}"
                           VerticalAlignment="Center">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel ItemSpacing="10" LineSpacing="4" />
+                        <StackPanel Orientation="Horizontal" Spacing="10" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
@@ -28,24 +141,12 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
-            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                <TextBlock Text="{Binding Title}"
-                           FontSize="15"
-                           FontWeight="SemiBold"
-                           Foreground="{DynamicResource SemiColorText0}" />
-                <TextBlock Text="{Binding SummaryText}"
-                           FontSize="12"
-                           VerticalAlignment="Center"
-                           Foreground="{DynamicResource SemiColorText2}" />
-            </StackPanel>
-        </DockPanel>
-        <!-- 柜体之间的间距由柜体自身左右边距提供，这里左右各收回 6 px，让第一个和最后一个柜体贴齐标题 -->
-        <ItemsControl Grid.Row="1" Margin="-6,0" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <UniformGrid Rows="1" />
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-        </ItemsControl>
+        </Grid>
+
+        <!-- 当前柜体：铺满标题行以下的全部区域（柜体控件按视图模型类型由显示区统一登记） -->
+        <ContentControl Grid.Row="1"
+                        Content="{Binding CurrentCabinet}"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch" />
     </Grid>
 </UserControl>
