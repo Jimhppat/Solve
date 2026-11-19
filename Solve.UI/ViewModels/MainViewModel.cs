@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Solve.Core.Application.Buses;
+using Solve.Core.Application.Devices;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
@@ -133,6 +134,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 接入设备拓扑服务（拓扑页：建档、扩缩容、节点浏览）。须在 UI 线程上调用，只能调用一次。
     /// </summary>
     public void AttachTopology(ITopologyService topology) => Topology.Attach(topology);
+
+    /// <summary>
+    /// 接入总线挂载设备服务（总线页的设备页）。须在 UI 线程上调用。
+    /// </summary>
+    public void AttachDevices(IDeviceService devices) => BusConsole.AttachDevices(devices);
 
     /// <summary>
     /// 接入孪生状态库（主控台显示区）。须在 UI 线程上调用，只能调用一次。

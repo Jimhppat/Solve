@@ -7,11 +7,13 @@ using Serilog.Extensions.Logging;
 using Solve.Adapters.Hardware.Buses;
 using Solve.Adapters.Hardware.Buses.Simulation;
 using Solve.Adapters.Persistence.Buses;
+using Solve.Adapters.Persistence.Devices;
 using Solve.Adapters.Persistence.Settings;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Adapters.Persistence.Topology;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
+using Solve.Core.Application.Devices;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
@@ -50,6 +52,7 @@ public sealed class AppHost : IAsyncDisposable
     private Task<StartupReport>? _startup;
     private BusManager? _buses;
     private BusManagementService? _busService;
+    private DeviceService? _devices;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
     private bool _disposed;
@@ -147,6 +150,20 @@ public sealed class AppHost : IAsyncDisposable
             lock (_gate)
             {
                 return _busService;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 总线挂载设备用例服务；启动完成前或配置库不可用时为 null
+    /// </summary>
+    public IDeviceService? Devices
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _devices;
             }
         }
     }
@@ -323,9 +340,15 @@ public sealed class AppHost : IAsyncDisposable
 
             var service = new BusManagementService(
                 manager, repository, _loggerFactory.CreateLogger<BusManagementService>());
+
+            // 挂载设备只是配置，不访问硬件；与总线共用配置库，删除总线时其下设备由库级联删除
+            var devices = new DeviceService(
+                new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>()),
+                _loggerFactory.CreateLogger<DeviceService>());
             lock (_gate)
             {
                 _busService = service;
+                _devices = devices;
             }
 
             var snapshot = await repository.LoadAllAsync(cancellationToken).ConfigureAwait(false);

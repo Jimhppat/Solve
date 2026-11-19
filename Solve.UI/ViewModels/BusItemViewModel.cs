@@ -15,6 +15,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
     private readonly BusRuntime? _runtime;
     private readonly Action<BusItemViewModel>? _onEdit;
     private readonly Action<BusItemViewModel>? _onDelete;
+    private readonly Action<BusItemViewModel>? _onOpenModules;
     private readonly EventSubscription<BusStateChanged>? _stateSubscription;
 
     private BusState _state;
@@ -41,11 +42,13 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
     public BusItemViewModel(
         BusRuntime runtime,
         Action<BusItemViewModel> onEdit,
-        Action<BusItemViewModel> onDelete)
+        Action<BusItemViewModel> onDelete,
+        Action<BusItemViewModel> onOpenModules)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _onEdit = onEdit;
         _onDelete = onDelete;
+        _onOpenModules = onOpenModules;
 
         RefreshDescriptor(runtime.Descriptor);
 
@@ -69,6 +72,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
 
         EditCommand = new RelayCommand(() => _onEdit?.Invoke(this));
         DeleteCommand = new RelayCommand(() => _onDelete?.Invoke(this));
+        ModulesCommand = new RelayCommand(() => _onOpenModules?.Invoke(this));
 
         _ = Task.Run(() => ListenStateChangesAsync(_stateSubscription.Reader));
     }
@@ -156,6 +160,7 @@ public sealed class BusItemViewModel : ViewModelBase, IDisposable
     public RelayCommand? ResetCommand { get; }
     public RelayCommand? EditCommand { get; }
     public RelayCommand? DeleteCommand { get; }
+    public RelayCommand? ModulesCommand { get; }
 
     public void RefreshDescriptor(BusDescriptor descriptor)
     {

@@ -71,6 +71,10 @@ public partial class App : Application
                     if (_host.Twin is { } twin)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachTwin(twin));
 
+                    // 设备页入口在总线行上：先于总线列表接入，列表一出现设备入口即可用
+                    if (_host.Devices is { } devices)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDevices(devices));
+
                     if (_host.BusService is not null)
                     {
                         var isHardware = report.Mode?.Mode == TransportMode.Hardware;
