@@ -5,45 +5,33 @@
              x:Class="Solve.UI.Views.Twin.FixtureNodeView"
              x:DataType="tvm:FixtureNodeViewModel"
              x:CompileBindings="True"
-             Margin="1.5"
+             Margin="3"
              Cursor="Hand"
              Tapped="OnTapped">
-    <!-- 治具位：铺满槽位中分到的一格，产品位按网格铺满（每行最多 4 个）；摘要模式画状态条。
-         外框 = 选中标记，内框颜色 = 其下最严重的状态 -->
-    <Border CornerRadius="7"
+    <!-- 治具位：只是放产品的容器——不画边框、不显示编号，产品格按网格铺满（每行最多 4 个）。
+         同槽治具之间的空隙（6 px）大于产品格之间（2 px），靠间距看出分组。
+         摘要模式才显示小号编号与状态条。选中时加外框 -->
+    <Border CornerRadius="4"
+            Background="Transparent"
             BorderBrush="{DynamicResource SemiColorText0}"
-            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}">
-        <Border CornerRadius="6" Padding="3" BorderThickness="1"
-                BorderBrush="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}"
-                Background="{DynamicResource SemiColorBackground1}"
-                Opacity="{Binding ContentOpacity}">
-            <Grid RowDefinitions="Auto,*" RowSpacing="3">
-                <DockPanel Grid.Row="0" ToolTip.Tip="{Binding SummaryText}">
-                    <TextBlock DockPanel.Dock="Right"
-                               Text="{Binding AlarmText}"
-                               IsVisible="{Binding HasAlarm}"
-                               Margin="6,0,0,0"
-                               FontSize="10"
-                               TextTrimming="CharacterEllipsis"
-                               Foreground="{DynamicResource SemiColorDanger}" />
-                    <TextBlock Text="{Binding ShortCode}"
-                               FontSize="11"
-                               Foreground="{DynamicResource SemiColorText2}" />
-                </DockPanel>
-                <ItemsControl Grid.Row="1" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <UniformGrid Columns="{Binding ProductColumns}" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                </ItemsControl>
-                <tv:TwinStatusBar Grid.Row="1"
-                                  Summary="{Binding Summary}"
-                                  Height="8"
-                                  MinWidth="40"
-                                  VerticalAlignment="Center"
-                                  IsVisible="{Binding IsSummary}" />
-            </Grid>
-        </Border>
+            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
+            Opacity="{Binding ContentOpacity}">
+        <Panel>
+            <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Columns="{Binding ProductColumns}" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <StackPanel IsVisible="{Binding IsSummary}"
+                        Margin="3"
+                        Spacing="3"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="{Binding SummaryText}">
+                <TextBlock Text="{Binding ShortCode}" FontSize="10" Foreground="{DynamicResource SemiColorText2}" />
+                <tv:TwinStatusBar Summary="{Binding Summary}" Height="8" MinWidth="32" />
+            </StackPanel>
+        </Panel>
     </Border>
 </UserControl>

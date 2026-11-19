@@ -306,7 +306,9 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
         _visible.Clear();
         var deepest = DeepestLevel(topology, focus);
-        Focus = Build(focus, deepest, store);
+        var root = Build(focus, deepest, store);
+        root.IsFocusRoot = true;
+        Focus = root;
         Breadcrumb = BuildBreadcrumb(topology, focus);
         OnPropertyChanged(nameof(VisibleCount));
         FocusParentCommand.RaiseCanExecuteChanged();

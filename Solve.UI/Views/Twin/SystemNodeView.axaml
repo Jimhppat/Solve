@@ -6,9 +6,10 @@
              x:DataType="tvm:SystemNodeViewModel"
              x:CompileBindings="True"
              Tapped="OnTapped">
-    <!-- 系统：铺满整个显示区。标题行（全部计数）+ 全局状态条，柜体排成一行等分宽度；
+    <!-- 系统：铺满整个显示区。标题行（全部计数），柜体排成一行等分宽度；
+         不再画全局状态条：每个柜体卡片已有自己的状态条，只有一个柜体时两条完全重复。
          柜体多到放不下最小尺寸时，显示区出现横向滚动条 -->
-    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+    <Grid RowDefinitions="Auto,*" RowSpacing="10">
         <DockPanel Grid.Row="0">
             <TextBlock DockPanel.Dock="Right"
                        Text="{Binding SummaryText}"
@@ -21,9 +22,8 @@
                        FontWeight="SemiBold"
                        Foreground="{DynamicResource SemiColorText0}" />
         </DockPanel>
-        <tv:TwinStatusBar Grid.Row="1" Summary="{Binding Summary}" Height="8" />
         <!-- 柜体之间的间距由柜体自身左右边距提供，这里左右各收回 6 px，让第一个和最后一个柜体贴齐标题 -->
-        <ItemsControl Grid.Row="2" Margin="-6,0" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+        <ItemsControl Grid.Row="1" Margin="-6,0" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                     <UniformGrid Rows="1" />

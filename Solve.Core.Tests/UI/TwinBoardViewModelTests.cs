@@ -252,5 +252,27 @@ public sealed class TwinBoardViewModelTests
         Assert.Null(cabinets[1].Worst);
         Assert.False(cabinets[0].IsDisabled);
         Assert.Equal(ProductState.Unknown, cabinets[0].Worst);
+
+        // 透明度逐层相乘：停用柜体下的节点不再各自变淡，否则 0.4⁵ 几乎看不见
+        Assert.All(Flatten(cabinets[1]).Skip(1), node =>
+        {
+            Assert.True(node.IsDisabled);
+            Assert.Equal(1.0, node.ContentOpacity);
+        });
+    }
+
+    [Fact]
+    public void FocusInsideDisabledSubtree_DimsTheFocusItself()
+    {
+        var topology = Twins.Layout(1, 1, 1, 1, 2);
+        var masked = topology.WithNodeSettings(Twins.Id(topology, 1), null, enabled: false).Value;
+        var (board, _) = Attached(masked);
+
+        // 进入停用柜体下的层位：上级柜体不在画面上，层位自己承担变淡
+        board.FocusOn(Twins.Id(masked, 1, 1));
+
+        Assert.True(board.Focus!.IsFocusRoot);
+        Assert.Equal(TwinNodeViewModel.DisabledOpacity, board.Focus.ContentOpacity);
+        Assert.All(Flatten(board.Focus).Skip(1), node => Assert.Equal(1.0, node.ContentOpacity));
     }
 }

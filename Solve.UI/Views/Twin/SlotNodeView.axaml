@@ -5,53 +5,33 @@
              x:Class="Solve.UI.Views.Twin.SlotNodeView"
              x:DataType="tvm:SlotNodeViewModel"
              x:CompileBindings="True"
-             Margin="2"
+             Margin="5"
              Cursor="Hand"
              Tapped="OnTapped">
-    <!-- 槽位：铺满层位中分到的一格，治具位上下等分高度；摘要模式画状态条与告警计数。
-         外框 = 选中标记，内框颜色 = 最严重的状态 -->
-    <Border CornerRadius="7"
+    <!-- 槽位：只是放产品的容器——不画边框、不显示编号，只用一块淡底色把同槽的治具位归在一起，
+         槽与槽之间的空隙（10 px）大于治具之间（6 px）。
+         摘要模式（画不到产品位）时没有别的标识，才显示小号编号与状态条。选中时加外框 -->
+    <Border CornerRadius="6" Padding="3"
+            Background="{DynamicResource SemiColorFill0}"
             BorderBrush="{DynamicResource SemiColorText0}"
-            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}">
-        <Border CornerRadius="6" Padding="4" BorderThickness="1"
-                BorderBrush="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}"
-                Background="{DynamicResource SemiColorFill0}"
-                Opacity="{Binding ContentOpacity}">
-            <Grid RowDefinitions="Auto,*" RowSpacing="4">
-                <DockPanel Grid.Row="0" ToolTip.Tip="{Binding SummaryText}">
-                    <TextBlock DockPanel.Dock="Right"
-                               Text="{Binding AlarmText}"
-                               IsVisible="{Binding HasAlarm}"
-                               Margin="6,0,0,0"
-                               FontSize="10"
-                               TextTrimming="CharacterEllipsis"
-                               Foreground="{DynamicResource SemiColorDanger}" />
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="{Binding ShortCode}"
-                                   FontSize="11"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource SemiColorText1}" />
-                        <TextBlock Text="{Binding Name}"
-                                   IsVisible="{Binding HasName}"
-                                   FontSize="11"
-                                   TextTrimming="CharacterEllipsis"
-                                   Foreground="{DynamicResource SemiColorText2}" />
-                    </StackPanel>
-                </DockPanel>
-                <ItemsControl Grid.Row="1" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <UniformGrid Columns="1" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                </ItemsControl>
-                <tv:TwinStatusBar Grid.Row="1"
-                                  Summary="{Binding Summary}"
-                                  Height="8"
-                                  MinWidth="40"
-                                  VerticalAlignment="Center"
-                                  IsVisible="{Binding IsSummary}" />
-            </Grid>
-        </Border>
+            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
+            Opacity="{Binding ContentOpacity}">
+        <Panel>
+            <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Columns="1" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <StackPanel IsVisible="{Binding IsSummary}"
+                        Margin="3"
+                        Spacing="3"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="{Binding SummaryText}">
+                <TextBlock Text="{Binding ShortCode}" FontSize="10" Foreground="{DynamicResource SemiColorText2}" />
+                <tv:TwinStatusBar Summary="{Binding Summary}" Height="8" MinWidth="40" />
+            </StackPanel>
+        </Panel>
     </Border>
 </UserControl>

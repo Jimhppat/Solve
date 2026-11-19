@@ -66,9 +66,17 @@ public abstract class TwinNodeViewModel : ViewModelBase
     public bool IsDisabled => !Node.IsEffectivelyEnabled;
 
     /// <summary>
-    /// 停用的节点整体变淡
+    /// 停用的节点整体变淡。透明度会逐层相乘，所以只在"自身被停用"的节点上变淡，下级随上级一起淡；
+    /// 若因上级停用而停用、但上级没有画出来（自己是显示区焦点），才由自己变淡。
     /// </summary>
-    public double ContentOpacity => IsDisabled ? 0.4 : 1.0;
+    public double ContentOpacity => IsDisabled && (!Node.IsEnabled || IsFocusRoot) ? DisabledOpacity : 1.0;
+
+    public const double DisabledOpacity = 0.4;
+
+    /// <summary>
+    /// 是否为显示区当前焦点（画面的根）
+    /// </summary>
+    public bool IsFocusRoot { get; internal set; }
 
     /// <summary>
     /// 展开模式：画出下级；否则为摘要模式，只画状态条
