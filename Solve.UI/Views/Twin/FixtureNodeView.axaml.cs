@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
@@ -21,12 +22,13 @@ namespace Solve.UI.Views.Twin;
 /// 一个治具一个元素后，产品位不再产生任何控件。</para>
 /// <para>状态变化：挂到界面上时订阅本治具及其产品位视图模型的属性通知，产品状态或选中变化时只重画本治具；
 /// 离开界面即退订，切走的柜体不会因为事件订阅留在内存里。</para>
-/// <para>点选：按点击位置换算出产品格，交给视图模型选中。只在 UI 线程上使用。</para>
+/// <para>点选：按点击位置换算出产品格，冒泡 <see cref="ProductTappedEvent"/>（带格子区域），由显示区把产品信息卡片挂在格子旁并选中。
+/// 只在 UI 线程上使用。</para>
 /// </remarks>
 public partial class FixtureNodeView : Control
 {
     // 产品格：圆角 3、选中时 2 px 外框。格子里只画序号（11 号半粗），状态只用格子颜色表示：
-    // 状态名在小格子里放不下，大小格子显示的内容不一致反而难认；具体状态名点选后在控制区查看
+    // 状态名在小格子里放不下，大小格子显示的内容不一致反而难认；具体状态名点选后在产品信息卡片里查看
     private const double CellCornerRadius = 3;
     private const double SelectionThickness = 2;
     private const double OrdinalFontSize = 11;
@@ -279,6 +281,18 @@ public partial class FixtureNodeView : Control
             InvalidateVisual();
     }
 
+    /// <summary>
+    /// 点（本元素坐标）所在的产品格对应的产品位；摘要模式、点在区域外或末行空位上时为 null
+    /// </summary>
+    public ProductNodeViewModel? ProductAt(Point point)
+    {
+        if (_fixture is not { IsExpanded: true } fixture)
+            return null;
+
+        var index = ProductGridLayout.IndexAt(Bounds.Size, fixture.ChildCount, fixture.ProductColumns, point);
+        return index >= 0 ? fixture.Children[index] as ProductNodeViewModel : null;
+    }
+
     private void OnTapped(object? sender, TappedEventArgs e)
     {
         if (_fixture is not { IsExpanded: true } fixture)
@@ -288,7 +302,35 @@ public partial class FixtureNodeView : Control
         if (index < 0 || fixture.Children[index] is not ProductNodeViewModel product)
             return;
 
-        product.Select();
+        // 先让上级（显示区）知道点的是哪一格、格子在哪里，好把产品信息卡片挂在这一格旁边；没有上级处理时直接选中
+        var cell = ProductGridLayout.CellRect(Bounds.Size, fixture.ChildCount, fixture.ProductColumns, index, LayoutHelper.GetLayoutScale(this));
+        var tapped = new ProductTappedEventArgs(ProductTappedEvent, product, cell);
+        RaiseEvent(tapped);
+        if (!tapped.Handled)
+            product.Select();
+
         e.Handled = true;
     }
+
+    /// <summary>
+    /// 点选了一个产品格（冒泡）。<see cref="ProductTappedEventArgs.Cell"/> 是格子在本元素中的区域
+    /// </summary>
+    public static readonly RoutedEvent<ProductTappedEventArgs> ProductTappedEvent =
+        RoutedEvent.Register<FixtureNodeView, ProductTappedEventArgs>(nameof(ProductTapped), RoutingStrategies.Bubble);
+
+    public event EventHandler<ProductTappedEventArgs>? ProductTapped
+    {
+        add => AddHandler(ProductTappedEvent, value);
+        remove => RemoveHandler(ProductTappedEvent, value);
+    }
+}
+
+/// <summary>
+/// 点选产品格：哪个产品位、格子在治具元素中的区域（用于把产品信息卡片挂在格子旁边）
+/// </summary>
+public sealed class ProductTappedEventArgs(RoutedEvent routedEvent, ProductNodeViewModel product, Rect cell) : RoutedEventArgs(routedEvent)
+{
+    public ProductNodeViewModel Product { get; } = product;
+
+    public Rect Cell { get; } = cell;
 }

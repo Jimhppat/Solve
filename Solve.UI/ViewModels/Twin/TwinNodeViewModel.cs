@@ -241,7 +241,7 @@ public sealed class FixtureNodeViewModel(TopologyNode node) : TwinNodeViewModel(
 }
 
 /// <summary>
-/// 产品位：叶子，格子只显示序号，状态用格子颜色表示（状态名在选中后的控制区查看）；显示区中唯一可选中的节点
+/// 产品位：叶子，格子只显示序号，状态用格子颜色表示（状态名在点选后弹出的产品信息卡片里查看）；显示区中唯一可选中的节点
 /// </summary>
 public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node)
 {
@@ -270,7 +270,7 @@ public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel b
     }
 
     /// <summary>
-    /// 点选：选中这个产品位，在控制区显示产品信息
+    /// 点选：选中这个产品位，产品信息卡片显示它的信息
     /// </summary>
     public void Select() => board.Select(Id);
 

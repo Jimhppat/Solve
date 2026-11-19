@@ -34,7 +34,7 @@
         </DataTemplate>
     </UserControl.DataTemplates>
 
-    <!-- 纯展示面板：始终从系统根画起、一次画一个柜体，点击只选中（控制区看详情），没有路径导航与返回按钮；
+    <!-- 纯展示面板：始终从系统根画起、一次画一个柜体，点击产品格只选中并弹出产品信息卡片，没有路径导航与返回按钮；
          柜体切换胶囊与图例在系统标题行上（见 SystemNodeView） -->
     <DockPanel>
         <!-- 刷新出错：画面已不可信，必须让操作员看到 -->
@@ -68,6 +68,18 @@
                        VerticalAlignment="Center"
                        FontSize="13"
                        Foreground="{DynamicResource SemiColorText2}" />
+
+            <!-- 产品信息卡片：点选产品格时挂在那一格右侧，靠窗口边缘放不下时自动翻到左侧或上下平移。
+                 不用弹出层自带的"点外面就关"：它会把点在原产品格上的那一下也当成外面而收起，点另一格还要多点一次；
+                 打开与收起由代码后置按"点在哪里"决定。外观借用浮层的 FlyoutPresenter，深浅主题与其他浮层一致 -->
+            <Popup x:Name="ProductCard"
+                   Placement="RightEdgeAlignedTop"
+                   HorizontalOffset="6"
+                   IsLightDismissEnabled="False">
+                <FlyoutPresenter AutomationProperties.Name="产品信息卡片">
+                    <tv:TwinSelectionPanel />
+                </FlyoutPresenter>
+            </Popup>
         </Grid>
     </DockPanel>
 </UserControl>

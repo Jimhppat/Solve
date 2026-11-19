@@ -14,14 +14,14 @@ namespace Solve.UI.ViewModels.Twin;
 /// <remarks>
 /// <para>柜体切换：系统下的全部柜体都有视图模型，作为切换胶囊显示各自最严重的状态与告警数，看不见的柜体出了故障也能发现；
 /// 只有当前柜体展开到下级。切换时收起旧柜体、放掉它下级的视图模型，再展开新柜体。默认显示第一个柜体。</para>
-/// <para>只有产品位可以被点选：选中后在控制区显示产品信息，画面不切换、不进入下一级；
-/// 柜体、层位等容器只做展示。切到别的柜体时选中保留，控制区继续显示那个产品位，切回来时仍高亮。</para>
+/// <para>只有产品位可以被点选：选中后在那个产品格旁弹出产品信息卡片，画面不切换、不进入下一级；
+/// 柜体、层位等容器只做展示。选中与卡片同生同灭：卡片收起（<see cref="ClearSelection"/>）即取消选中；
+/// 切换柜体、拓扑重建时卡片所指的产品格已不在画面上，同样取消选中。</para>
 /// <para>显示数量上限：只计算当前柜体（加上系统与全部柜体胶囊），往下逐层展开，超过 <see cref="ElementBudget"/> 时停在上一层，
 /// 最深一层的容器用摘要模式（只画状态条）。当前柜体至少展开到层位。</para>
 /// <para>刷新：视图以 <see cref="RefreshInterval"/> 周期调用 <see cref="Refresh"/>，只更新状态有变化且当前看得见的节点；
 /// 只在显示区可见时刷新，主控台不在前台时不占 UI 线程。暂不做超时判断，状态保持最后一次上报的值。</para>
-/// <para>拓扑被修改时整体重建，选中的产品位与当前柜体都按节点 Id 保留；产品位已被删除时清除选中，
-/// 当前柜体已被删除时回到第一个柜体。只在 UI 线程上使用。</para>
+/// <para>拓扑被修改时整体重建，当前柜体按节点 Id 保留，已被删除时回到第一个柜体。只在 UI 线程上使用。</para>
 /// </remarks>
 public sealed class TwinBoardViewModel : ViewModelBase
 {
@@ -99,8 +99,9 @@ public sealed class TwinBoardViewModel : ViewModelBase
     /// </summary>
     public TwinNodeViewModel? CurrentCabinet => (Root as SystemNodeViewModel)?.CurrentCabinet;
 
-    // ==================== 选中产品位的信息（主控台控制区） ====================
-    // 只有产品位能被选中；柜体、层位等容器的情况在显示区上已经看得到（边框颜色、圆点、告警红字），不单独显示
+    // ==================== 选中产品位的信息（产品信息卡片） ====================
+    // 只有产品位能被选中；柜体、层位等容器的情况在显示区上已经看得到（边框颜色、圆点、告警红字），不单独显示。
+    // 节点 Id 是给程序用的，不显示
 
     public bool HasSelection => SelectedProduct is not null;
 
@@ -115,11 +116,6 @@ public sealed class TwinBoardViewModel : ViewModelBase
     public string? SelectedNameText => SelectedProduct?.Name;
 
     public bool HasSelectedName => SelectedNameText is not null;
-
-    /// <summary>
-    /// 节点 Id（系统用）
-    /// </summary>
-    public string? SelectedIdText => SelectedProduct?.Id.ToString();
 
     public string? SelectedStateText
     {
@@ -204,26 +200,35 @@ public sealed class TwinBoardViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 选中一个产品位，在控制区显示产品信息。画面不变：显示区是展示面板，不进入下一级。
-    /// 只接受产品位：传入容器或不存在的 Id 时忽略，当前选中保持不变。
+    /// 选中一个产品位，产品信息卡片显示它的信息。画面不变：显示区是展示面板，不进入下一级。
+    /// 只接受当前画出的产品位：传入容器、不存在或不在画面上的 Id 时忽略，当前选中保持不变。
     /// </summary>
     public void Select(TopologyNodeId productId)
     {
-        if (_bound is not { } topology || !topology.TryGetNode(productId, out var node) || node.Level != TopologyLevel.Product)
+        if (!_visible.TryGetValue(productId, out var item) || item is not ProductNodeViewModel product)
             return;
 
-        if (_selectedId is { } previous && _visible.TryGetValue(previous, out var oldItem) && oldItem is ProductNodeViewModel oldProduct)
-            oldProduct.IsSelected = false;
-
+        DeselectCurrent();
         _selectedId = productId;
-        if (_visible.TryGetValue(productId, out var newItem) && newItem is ProductNodeViewModel newProduct)
-            newProduct.IsSelected = true;
-
+        product.IsSelected = true;
         RaiseSelectionChanged();
     }
 
     /// <summary>
-    /// 切换显示的柜体（切换胶囊）。收起当前柜体、展开指定柜体；选中的产品位不变。
+    /// 取消选中（产品信息卡片收起）。没有选中时什么也不做。
+    /// </summary>
+    public void ClearSelection()
+    {
+        if (_selectedId is null)
+            return;
+
+        DeselectCurrent();
+        _selectedId = null;
+        RaiseSelectionChanged();
+    }
+
+    /// <summary>
+    /// 切换显示的柜体（切换胶囊）。收起当前柜体、展开指定柜体，并取消选中（卡片所指的产品格已不在画面上）。
     /// 只接受本系统的柜体：传入其他层级或不存在的 Id、或已经是当前柜体时忽略。
     /// </summary>
     public void ShowCabinet(TopologyNodeId cabinetId)
@@ -237,6 +242,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
         try
         {
+            ClearSelection();
             if (system.CurrentCabinet is { } previous)
             {
                 Release(previous);
@@ -265,11 +271,10 @@ public sealed class TwinBoardViewModel : ViewModelBase
         _store?.DrainChanges(); // 重建会读取全部最新值，之前的变化标记作废
         _visible.Clear();
 
-        // 选中项按 Id 保留；节点已被删除时清除，详情不再显示一个不存在的位置
-        if (_selectedId is { } selected && (topology is null || !topology.TryGetNode(selected, out _)))
-            _selectedId = null;
+        // 重建后全部产品格都是新的，卡片所指的产品格已不在画面上：取消选中（卡片随之收起）
+        _selectedId = null;
 
-        Root = topology is null || _store is not { } store ? null : BuildSystem(topology.Root, store);
+        Root =topology is null || _store is not { } store ? null : BuildSystem(topology.Root, store);
 
         OnPropertyChanged(nameof(CurrentCabinet));
         OnPropertyChanged(nameof(VisibleCount));
@@ -303,9 +308,6 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
         var deepest = DeepestLevel(cabinet.Node);
         cabinet.Expand(cabinet.Node.Children.Select(child => Build(child, deepest, store)).ToArray());
-
-        if (_selectedId is { } id && _visible.TryGetValue(id, out var item) && item is ProductNodeViewModel product)
-            product.IsSelected = true;
     }
 
     /// <summary>
@@ -369,13 +371,18 @@ public sealed class TwinBoardViewModel : ViewModelBase
         }
     }
 
+    private void DeselectCurrent()
+    {
+        if (_selectedId is { } current && _visible.TryGetValue(current, out var item) && item is ProductNodeViewModel product)
+            product.IsSelected = false;
+    }
+
     private void RaiseSelectionChanged()
     {
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(SelectedAddressText));
         OnPropertyChanged(nameof(SelectedNameText));
         OnPropertyChanged(nameof(HasSelectedName));
-        OnPropertyChanged(nameof(SelectedIdText));
         OnPropertyChanged(nameof(SelectedStateText));
         OnPropertyChanged(nameof(SelectedSerialText));
         OnPropertyChanged(nameof(SelectedUpdatedText));

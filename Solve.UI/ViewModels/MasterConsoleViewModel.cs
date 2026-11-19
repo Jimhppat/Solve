@@ -34,7 +34,7 @@ public sealed class MasterConsoleViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 显示区：六层节点的产品状态；控制区的节点详情也绑定它。由组合根接入孪生状态库
+    /// 显示区：六层节点的产品状态与点选产品格后弹出的产品信息卡片。由组合根接入孪生状态库
     /// </summary>
     public TwinBoardViewModel Twin { get; } = new();
 

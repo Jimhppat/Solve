@@ -218,22 +218,52 @@ public sealed class TwinBoardViewModelTests
     }
 
     [Fact]
-    public void Selection_SurvivesSwitching_AndIsHighlightedAgainOnReturn()
+    public void SwitchingCabinet_ClearsTheSelection()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, _) = Attached(topology);
-        Flatten(board.Root!).OfType<ProductNodeViewModel>().First().Select();
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().First();
+        product.Select();
 
         board.ShowCabinet(Twins.Id(topology, 2));
 
-        // 控制区继续显示 C01 的产品位；C02 画面上没有高亮
-        Assert.True(board.HasSelection);
-        Assert.Equal("C01-L01-S01-F01-P01", board.SelectedAddressText);
-        Assert.DoesNotContain(Flatten(board.Root!).OfType<ProductNodeViewModel>(), product => product.IsSelected);
+        // 卡片所指的产品格已不在画面上：取消选中，卡片随之收起；切回来也不再高亮
+        Assert.False(product.IsSelected);
+        Assert.False(board.HasSelection);
+        Assert.Null(board.SelectedAddressText);
 
         board.ShowCabinet(Twins.Id(topology, 1));
 
-        Assert.True(Flatten(board.Root!).OfType<ProductNodeViewModel>().First().IsSelected);
+        Assert.DoesNotContain(Flatten(board.Root!).OfType<ProductNodeViewModel>(), node => node.IsSelected);
+        Assert.False(board.HasSelection);
+    }
+
+    [Fact]
+    public void ClearSelection_RemovesTheHighlightAndTheInfo()
+    {
+        var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 2));
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().First();
+        product.Select();
+        var raised = new List<string?>();
+        board.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        board.ClearSelection();
+
+        Assert.False(product.IsSelected);
+        Assert.False(board.HasSelection);
+        Assert.Null(board.SelectedAddressText);
+        Assert.Null(board.SelectedStateText);
+        Assert.Contains(nameof(TwinBoardViewModel.HasSelection), raised);
+
+        // 没有选中时再取消：什么也不发生
+        raised.Clear();
+        board.ClearSelection();
+        Assert.Empty(raised);
+
+        // 之后仍可再选
+        product.Select();
+        Assert.True(product.IsSelected);
+        Assert.True(board.HasSelection);
     }
 
     [Fact]
@@ -272,7 +302,6 @@ public sealed class TwinBoardViewModelTests
         Assert.Equal("C01-L01-S01-F01-P04", board.SelectedAddressText);
         Assert.Equal("待机", board.SelectedStateText);
         Assert.Equal("SN-9", board.SelectedSerialText);
-        Assert.Equal(product.Id.ToString(), board.SelectedIdText);
         Assert.NotEqual("从未收到", board.SelectedUpdatedText);
         Assert.False(board.HasSelectedName);
     }
@@ -291,7 +320,7 @@ public sealed class TwinBoardViewModelTests
         board.Select(TopologyNodeId.New());
 
         Assert.True(product.IsSelected);
-        Assert.Equal(product.Id.ToString(), board.SelectedIdText);
+        Assert.Equal("C01-L01-S01-F01-P01", board.SelectedAddressText);
     }
 
     [Fact]
@@ -397,7 +426,7 @@ public sealed class TwinBoardViewModelTests
     // ==================== 拓扑修改 ====================
 
     [Fact]
-    public void TopologyChange_RebuildsAndKeepsSelectionById()
+    public void TopologyChange_Rebuilds_AndClearsTheSelection()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, store) = Attached(topology);
@@ -405,17 +434,30 @@ public sealed class TwinBoardViewModelTests
         var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
         product.Select();
 
-        // 给所在柜体改名：拓扑被替换，产品位 Id 不变；重建后仍显示 C02
+        // 给所在柜体改名：拓扑被替换，产品位 Id 不变；重建后仍显示 C02，但全部产品格都是新的，卡片收起
         _topology.Current = topology.WithNodeSettings(Twins.Id(topology, 2), "B 柜", enabled: true).Value;
         board.Refresh();
 
         var rebuilt = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
         Assert.NotSame(product, rebuilt);
         Assert.Equal(product.Id, rebuilt.Id);
-        Assert.True(rebuilt.IsSelected);
-        Assert.Equal("C02-L01-S01-F01-P02", board.SelectedAddressText);
+        Assert.False(rebuilt.IsSelected);
+        Assert.False(board.HasSelection);
+        Assert.Equal(Twins.Id(topology, 2), board.CurrentCabinet!.Id);
         Assert.Equal("B 柜", Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last().Name);
         Assert.Same(_topology.Current, store.Topology);
+    }
+
+    [Fact]
+    public void ProductNotOnScreen_CannotBeSelected()
+    {
+        var topology = Twins.Layout(2, 1, 1, 1, 2);
+        var (board, _) = Attached(topology);
+
+        // C02 的产品位没有画出来（当前显示 C01）：卡片没有可挂的格子，忽略
+        board.Select(Twins.Id(topology, 2, 1, 1, 1, 1));
+
+        Assert.False(board.HasSelection);
     }
 
     [Fact]
