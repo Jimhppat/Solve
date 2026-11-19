@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -43,15 +44,17 @@ public enum TopologySaveState
 }
 
 /// <summary>
-/// 设备拓扑页：按统一布局建档 / 扩容 / 缩容，单个节点改名与停用，并浏览每个节点的两套身份（系统用 Id，人看位置编码与名称）。
+/// 设备拓扑页：按统一布局首次建档；建档后选中节点逐个新增下级、修改序号、复制、删除（各节点的下级可以各不相同），
+/// 改名与停用，并浏览每个节点的两套身份（系统用 Id，人看位置编码与名称）。
 /// </summary>
 /// <remarks>
-/// <para>两处修改共用一个保存流程：先计算变更；会删除位置或解除停用时停在 <see cref="TopologySaveState.AwaitingConfirmation"/>，
-/// 列出受影响的位置，确认后才写库；取消或改动对应的输入则什么都不改。</para>
+/// <para>所有修改共用一个保存流程：先计算变更；会删除位置、解除停用、新增即启用或改变位置编码时停在
+/// <see cref="TopologySaveState.AwaitingConfirmation"/>，列出受影响的位置，确认后才写库；取消或改动对应的输入则什么都不改。</para>
+/// <para>建档后不再提供整机统一布局：它会把规格不同的节点补齐成一样，悄悄加回有意删掉的缺位。</para>
 /// <para>保存后整棵树按新拓扑重建，选中项与展开状态按节点 Id 保留。</para>
 /// <para>只能在 UI 线程上使用；变更计算与磁盘 I/O 在线程池上完成。</para>
 /// </remarks>
-public sealed class TopologyViewModel : ViewModelBase
+public sealed partial class TopologyViewModel : ViewModelBase
 {
     private const string DefaultSystemName = "设备";
 
@@ -71,14 +74,17 @@ public sealed class TopologyViewModel : ViewModelBase
     private bool _nodeEnabledInput = true;
     private string? _saveMessage;
     private bool _isSaveError;
-    private bool _isNonUniform;
     private IReadOnlyList<TopologyTreeItemViewModel> _roots = [];
     private TopologyTreeItemViewModel? _selectedItem;
 
     public TopologyViewModel()
     {
-        SaveCommand = new AsyncRelayCommand(SaveLayoutAsync, () => IsEditable && _state == TopologySaveState.Idle);
+        SaveCommand = new AsyncRelayCommand(SaveLayoutAsync, () => IsEditable && !IsConfigured && _state == TopologySaveState.Idle);
         SaveNodeCommand = new AsyncRelayCommand(SaveNodeAsync, () => IsNodeEditable && HasNodeChanges && _state == TopologySaveState.Idle);
+        AddChildrenCommand = new AsyncRelayCommand(AddChildrenAsync, () => CanAddChildren && _state == TopologySaveState.Idle);
+        RenumberCommand = new AsyncRelayCommand(RenumberAsync, () => CanEditPosition && HasOrdinalChange && _state == TopologySaveState.Idle);
+        CopyCommand = new AsyncRelayCommand(CopyAsync, () => CanEditPosition && _state == TopologySaveState.Idle);
+        RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => CanEditPosition && _state == TopologySaveState.Idle);
         ConfirmCommand = new AsyncRelayCommand(ConfirmAsync, () => _state == TopologySaveState.AwaitingConfirmation);
         CancelCommand = new RelayCommand(Cancel, () => _state == TopologySaveState.AwaitingConfirmation);
         ReloadCommand = new AsyncRelayCommand(ReloadAsync, () => _service is not null && _state == TopologySaveState.Idle);
@@ -87,7 +93,7 @@ public sealed class TopologyViewModel : ViewModelBase
     public string PageTitle => "设备拓扑";
 
     /// <summary>
-    /// 按页面上的布局保存
+    /// 按页面上的布局首次建档（建档后不可用，结构改为按节点编辑）
     /// </summary>
     public AsyncRelayCommand SaveCommand { get; }
 
@@ -97,7 +103,7 @@ public sealed class TopologyViewModel : ViewModelBase
     public AsyncRelayCommand SaveNodeCommand { get; }
 
     /// <summary>
-    /// 确认列出的删除 / 重新启用并保存
+    /// 确认列出的删除 / 启用 / 位置编码变化并保存
     /// </summary>
     public AsyncRelayCommand ConfirmCommand { get; }
 
@@ -156,15 +162,6 @@ public sealed class TopologyViewModel : ViewModelBase
     /// 系统根节点的 Id
     /// </summary>
     public string? SystemIdText => Current?.Root.Id.ToString();
-
-    /// <summary>
-    /// 当前拓扑不是统一布局（柜体规格不同或有缺位）：输入框预填的是各层最大数量，保存会改成统一布局
-    /// </summary>
-    public bool IsNonUniform
-    {
-        get => _isNonUniform;
-        private set => SetProperty(ref _isNonUniform, value);
-    }
 
     // ==================== 布局输入 ====================
 
@@ -281,9 +278,11 @@ public sealed class TopologyViewModel : ViewModelBase
             if (!SetProperty(ref _selectedItem, value))
                 return;
 
-            // 换了节点：节点输入框改为显示新节点的值；正在等待确认的节点修改已不是眼前这个节点，取消
+            // 换了节点：节点输入框改为显示新节点的值；正在等待确认的节点修改与结构编辑已不是眼前这个节点，取消
             CancelPending(PendingOrigin.Node, "已切换节点，修改未保存");
+            CancelPending(PendingOrigin.Structure, "已切换节点，结构未修改");
             ShowNodeInputs();
+            ShowStructureInputs();
             RaiseSelectionChanged();
         }
     }
@@ -323,23 +322,32 @@ public sealed class TopologyViewModel : ViewModelBase
     // ==================== 节点编辑 ====================
 
     /// <summary>
-    /// 选中的节点可以改名与停用（系统根除外：名称在设备布局中修改，且不可停用）
+    /// 选中的节点可以改名与停用。系统根的名称即系统名称（不能为空），且不可停用
     /// </summary>
-    public bool IsNodeEditable => IsEditable && _selectedItem is { Node.Level: not TopologyLevel.System };
+    public bool IsNodeEditable => IsEditable && _selectedItem is not null;
 
     public bool IsNodeInputEnabled => IsNodeEditable && IsInputPhase;
 
     /// <summary>
+    /// 启用勾选框是否可用：系统根不可停用
+    /// </summary>
+    public bool IsNodeEnabledInputEnabled => IsNodeInputEnabled && !IsRootSelected;
+
+    /// <summary>
     /// 选中系统根时的说明
     /// </summary>
-    public string? NodeEditHint => _selectedItem is { Node.Level: TopologyLevel.System }
-        ? "系统名称请在上方「设备布局」中修改；系统根不可停用，需要整机停止时请使用紧急停止"
+    public string? NodeEditHint => IsRootSelected
+        ? "这里的名称就是系统名称，不能为空；系统根不可停用，需要整机停止时请使用紧急停止"
         : null;
 
     public bool HasNodeEditHint => NodeEditHint is not null;
 
+    public string NodeNamePlaceholder => IsRootSelected ? "系统名称，如 老化房 1#" : "留空则显示位置编码，如 A 柜、高温层";
+
+    private bool IsRootSelected => _selectedItem is { Node.Level: TopologyLevel.System };
+
     /// <summary>
-    /// 选中节点的显示名；留空表示不命名，界面显示位置编码
+    /// 选中节点的显示名；留空表示不命名，界面显示位置编码（系统根除外）
     /// </summary>
     public string NodeNameInput
     {
@@ -388,7 +396,8 @@ public sealed class TopologyViewModel : ViewModelBase
 
     private async Task SaveLayoutAsync()
     {
-        if (_service is not { } service || !IsEditable || _state != TopologySaveState.Idle)
+        // 只用于首次建档：建档后按统一布局保存会把规格不同的节点补齐成一样，把有意删掉的缺位悄悄加回来
+        if (_service is not { } service || !IsEditable || IsConfigured || _state != TopologySaveState.Idle)
             return;
 
         var layout = ReadLayout();
@@ -409,15 +418,8 @@ public sealed class TopologyViewModel : ViewModelBase
         if (plan is null)
             return;
 
-        if (!plan.HasChanges)
-        {
-            SaveMessage = "布局与系统名称都没有变化，无需保存";
-            return;
-        }
-
-        var successMessage = plan.IsFirstCreation
-            ? $"已建档：生成 {Format(plan.Candidate.NodeCount)} 个节点，每个节点都已分配 Id"
-            : $"已保存：新增 {Format(plan.AddedCount)}、修改 {Format(plan.ChangedCount)}、删除 {Format(plan.RemovedCount)} 个节点";
+        var successMessage = $"已建档：生成 {Format(plan.Candidate.NodeCount)} 个节点，每个节点都已分配 Id。" +
+                             "之后在下方节点浏览中选中节点，按需新增、删除下级";
         await SaveOrAwaitConfirmationAsync(service, new PendingSave(plan, PendingOrigin.Layout, successMessage));
     }
 
@@ -429,7 +431,12 @@ public sealed class TopologyViewModel : ViewModelBase
 
         var node = item.Node;
         var name = NormalizeName(_nodeNameInput);
-        var enabled = _nodeEnabledInput;
+        var enabled = node.Level == TopologyLevel.System || _nodeEnabledInput;
+        if (node.Level == TopologyLevel.System && name is null)
+        {
+            ReportError("系统名称不能为空");
+            return;
+        }
 
         var plan = await PlanAsync(() => service.PlanNodeSettings(node.Id, name, enabled));
         if (plan is null)
@@ -522,7 +529,11 @@ public sealed class TopologyViewModel : ViewModelBase
                 return;
             }
 
-            ShowCurrent();
+            // 新增下级后展开上级，新位置直接可见
+            if (pending.Expand is { } expand)
+                _expanded.Add(expand);
+
+            ShowCurrent(pending.Select);
             SaveMessage = pending.SuccessMessage;
         }
         finally
@@ -570,22 +581,14 @@ public sealed class TopologyViewModel : ViewModelBase
     private bool IsInputPhase => _state is TopologySaveState.Idle or TopologySaveState.AwaitingConfirmation;
 
     /// <summary>
-    /// 显示当前生效的拓扑并重建树。选中项按节点 Id 保留（节点已不存在时回到系统根），展开状态见 <see cref="_expanded"/>。
-    /// 输入框直接写字段：这是程序回填，不算用户改动，不能触发取消确认。
+    /// 显示当前生效的拓扑并重建树。选中 <paramref name="select"/>，未指定时按 Id 保留原选中项（节点已不存在时回到系统根），
+    /// 展开状态见 <see cref="_expanded"/>。
     /// </summary>
-    private void ShowCurrent()
+    private void ShowCurrent(TopologyNodeId? select = null)
     {
-        var keep = _selectedItem?.Node.Id;
+        var keep = select ?? _selectedItem?.Node.Id;
         if (Current is { } topology)
         {
-            IsNonUniform = !TopologyLayout.TryInfer(topology, out var layout);
-            _systemNameInput = topology.Name;
-            _cabinetsInput = Math.Max(1, layout.Cabinets);
-            _layersInput = Math.Max(1, layout.LayersPerCabinet);
-            _slotsInput = Math.Max(1, layout.SlotsPerLayer);
-            _fixturesInput = Math.Max(1, layout.FixturesPerSlot);
-            _productsInput = Math.Max(1, layout.ProductsPerFixture);
-
             // 第一次显示时展开系统根，直接看到全部柜体
             if (_expanded.Count == 0)
                 _expanded.Add(topology.Root.Id);
@@ -596,17 +599,10 @@ public sealed class TopologyViewModel : ViewModelBase
         }
         else
         {
-            IsNonUniform = false;
             Roots = [];
             SelectedItem = null;
         }
 
-        OnPropertyChanged(nameof(SystemNameInput));
-        OnPropertyChanged(nameof(CabinetsInput));
-        OnPropertyChanged(nameof(LayersPerCabinetInput));
-        OnPropertyChanged(nameof(SlotsPerLayerInput));
-        OnPropertyChanged(nameof(FixturesPerSlotInput));
-        OnPropertyChanged(nameof(ProductsPerFixtureInput));
         OnPropertyChanged(nameof(IsEditable));
         OnPropertyChanged(nameof(IsInputEnabled));
         OnPropertyChanged(nameof(LoadErrorText));
@@ -614,11 +610,12 @@ public sealed class TopologyViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsConfigured));
         OnPropertyChanged(nameof(SummaryText));
         OnPropertyChanged(nameof(SystemIdText));
-        RaiseLayoutPreviewChanged();
 
-        // 选中的还是同一个节点时 SelectedItem 不会触发变更，这里统一刷新节点详情与输入
+        // 选中的还是同一个节点时 SelectedItem 不会触发变更，这里统一刷新节点详情与输入（节点内容可能已变）
         ShowNodeInputs();
+        ShowStructureInputs();
         RaiseSelectionChanged();
+        RaiseCommandsChanged();
     }
 
     /// <summary>
@@ -695,17 +692,8 @@ public sealed class TopologyViewModel : ViewModelBase
         for (var i = 0; i < counts.Length; i++)
         {
             var (value, label) = counts[i];
-            if (value is not { } number)
-                return Result<TopologyLayout>.Failure(new Error(TopologyErrors.InvalidLayoutCode, $"请填写{label}"));
-
-            // 先在 decimal 上判断范围与是否为整数，再转 int：手输的超大数直接转换会溢出
-            if (number != decimal.Truncate(number) || number < MinCount || number > MaxCount)
-            {
-                return Result<TopologyLayout>.Failure(new Error(TopologyErrors.InvalidLayoutCode,
-                    $"{label}必须是 {MinCount:0}～{MaxCount:0} 之间的整数"));
-            }
-
-            values[i] = (int)number;
+            if (!TryReadCount(value, label, out values[i], out var error))
+                return Result<TopologyLayout>.Failure(new Error(TopologyErrors.InvalidLayoutCode, error));
         }
 
         var layout = new TopologyLayout(values[0], values[1], values[2], values[3], values[4]);
@@ -713,6 +701,30 @@ public sealed class TopologyViewModel : ViewModelBase
         return errors.Count == 0
             ? Result<TopologyLayout>.Success(layout)
             : Result<TopologyLayout>.Failure(errors[0]);
+    }
+
+    /// <summary>
+    /// 读取数量 / 序号输入框：必须填写，且是 [<see cref="MinCount"/>, <see cref="MaxCount"/>] 之间的整数
+    /// </summary>
+    private bool TryReadCount(decimal? value, string label, out int count, [NotNullWhen(false)] out string? error)
+    {
+        count = 0;
+        if (value is not { } number)
+        {
+            error = $"请填写{label}";
+            return false;
+        }
+
+        // 先在 decimal 上判断范围与是否为整数，再转 int：手输的超大数直接转换会溢出
+        if (number != decimal.Truncate(number) || number < MinCount || number > MaxCount)
+        {
+            error = $"{label}必须是 {MinCount:0}～{MaxCount:0} 之间的整数";
+            return false;
+        }
+
+        count = (int)number;
+        error = null;
+        return true;
     }
 
     private void ReportError(string message)
@@ -735,6 +747,8 @@ public sealed class TopologyViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasPageNotice));
         OnPropertyChanged(nameof(IsInputEnabled));
         OnPropertyChanged(nameof(IsNodeInputEnabled));
+        OnPropertyChanged(nameof(IsNodeEnabledInputEnabled));
+        OnPropertyChanged(nameof(IsStructureInputEnabled));
         OnPropertyChanged(nameof(PendingConfirmationText));
         RaiseCommandsChanged();
     }
@@ -743,6 +757,10 @@ public sealed class TopologyViewModel : ViewModelBase
     {
         SaveCommand.RaiseCanExecuteChanged();
         SaveNodeCommand.RaiseCanExecuteChanged();
+        AddChildrenCommand.RaiseCanExecuteChanged();
+        RenumberCommand.RaiseCanExecuteChanged();
+        CopyCommand.RaiseCanExecuteChanged();
+        RemoveCommand.RaiseCanExecuteChanged();
         ConfirmCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
         ReloadCommand.RaiseCanExecuteChanged();
@@ -764,8 +782,11 @@ public sealed class TopologyViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedChildrenText));
         OnPropertyChanged(nameof(IsNodeEditable));
         OnPropertyChanged(nameof(IsNodeInputEnabled));
+        OnPropertyChanged(nameof(IsNodeEnabledInputEnabled));
         OnPropertyChanged(nameof(NodeEditHint));
         OnPropertyChanged(nameof(HasNodeEditHint));
+        OnPropertyChanged(nameof(NodeNamePlaceholder));
+        RaiseStructureSelectionChanged();
     }
 
     private static string? NormalizeName(string input)
@@ -776,6 +797,10 @@ public sealed class TopologyViewModel : ViewModelBase
 
     private static string DescribeNodeSave(TopologyNode node, string? name, bool enabled, TopologyChangePlan plan)
     {
+        // 系统根只能改名（不可停用、名称不能为空）
+        if (node.Level == TopologyLevel.System)
+            return $"系统名称已改为「{name}」";
+
         var parts = new List<string>();
         if (name != node.Name)
             parts.Add(name is null ? "已清除名称" : $"已命名为「{name}」");
@@ -832,7 +857,15 @@ public sealed class TopologyViewModel : ViewModelBase
     {
         Layout,
         Node,
+        Structure,
     }
 
-    private sealed record PendingSave(TopologyChangePlan Plan, PendingOrigin Origin, string SuccessMessage);
+    /// <param name="Select">保存后选中的节点；为 null 时按 Id 保留原选中项</param>
+    /// <param name="Expand">保存后展开的节点（新增下级后展开其上级）</param>
+    private sealed record PendingSave(
+        TopologyChangePlan Plan,
+        PendingOrigin Origin,
+        string SuccessMessage,
+        TopologyNodeId? Select = null,
+        TopologyNodeId? Expand = null);
 }

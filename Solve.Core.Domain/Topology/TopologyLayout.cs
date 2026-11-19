@@ -3,8 +3,8 @@ using Solve.Core.Domain.Common;
 namespace Solve.Core.Domain.Topology;
 
 /// <summary>
-/// 统一布局模板：每个柜体的层数相同、每层的槽数相同……适用于标准化设备，按数量一次生成整棵树。
-/// 柜体之间规格不同时，直接构造 <see cref="TopologyDefinition"/>。
+/// 统一布局模板：每个柜体的层数相同、每层的槽数相同……按数量一次生成整棵树，用于首次建档。
+/// 建档后各节点的下级可以各不相同，用 <see cref="EquipmentTopology"/> 的结构编辑方法逐个增删改。
 /// </summary>
 /// <param name="Cabinets">柜体数</param>
 /// <param name="LayersPerCabinet">每柜层位数</param>
@@ -43,48 +43,6 @@ public sealed record TopologyLayout(
     /// </summary>
     public long ProductCount
         => Counts().Aggregate(1L, (product, count) => product * Math.Clamp(count, 0, TopologyAddress.MaxOrdinal));
-
-    /// <summary>
-    /// 从现有拓扑反推统一布局：每一层的所有节点下级数相同，且序号都是从 1 开始的连续编号。
-    /// 柜体规格不一致或有缺位时返回 false，此时 <paramref name="layout"/> 为各层最大下级数，供界面预填。
-    /// </summary>
-    public static bool TryInfer(EquipmentTopology topology, out TopologyLayout layout)
-    {
-        ArgumentNullException.ThrowIfNull(topology);
-
-        Span<int> counts = stackalloc int[TopologyLevels.Count - 1];
-        var uniform = true;
-        for (var level = TopologyLevel.System; level < TopologyLevel.Product; level++)
-        {
-            var parents = topology.GetNodes(level);
-            var index = (int)level - 1;
-            counts[index] = parents.Count == 0 ? 0 : parents[0].Children.Count;
-
-            foreach (var parent in parents)
-            {
-                counts[index] = Math.Max(counts[index], parent.Children.Count);
-                if (!IsContiguous(parent.Children) || parent.Children.Count != parents[0].Children.Count)
-                    uniform = false;
-            }
-
-            if (counts[index] == 0)
-                uniform = false;
-        }
-
-        layout = new TopologyLayout(counts[0], counts[1], counts[2], counts[3], counts[4]);
-        return uniform;
-
-        static bool IsContiguous(IReadOnlyList<TopologyNode> children)
-        {
-            for (var i = 0; i < children.Count; i++)
-            {
-                if (children[i].Ordinal != i + 1)
-                    return false;
-            }
-
-            return true;
-        }
-    }
 
     /// <summary>
     /// 校验全部字段并一次性返回所有错误。空列表表示有效。
