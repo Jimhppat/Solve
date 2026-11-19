@@ -1,4 +1,5 @@
 using System;
+using Solve.UI.ViewModels.Twin;
 
 namespace Solve.UI.ViewModels;
 
@@ -31,6 +32,11 @@ public sealed class MasterConsoleViewModel : ViewModelBase, IDisposable
         RecentLog = new RuntimeLogViewModel(RecentLogCapacity, LogCategories.Operational);
         OpenRuntimeLogCommand = new RelayCommand(() => openRuntimeLog?.Invoke(), () => openRuntimeLog is not null);
     }
+
+    /// <summary>
+    /// 显示区：六层节点的产品状态与点选产品格后弹出的产品信息卡片。由组合根接入孪生状态库
+    /// </summary>
+    public TwinBoardViewModel Twin { get; } = new();
 
     /// <summary>
     /// 页面标题

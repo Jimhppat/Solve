@@ -70,6 +70,41 @@ public sealed class SqliteDatabase
             updated_at  TEXT NOT NULL   -- ISO 8601 UTC
         ) STRICT;
         """,
+
+        // v3：设备六层拓扑（系统 / 柜体 / 层位 / 槽位 / 治具位 / 产品位），每行一个节点（邻接表）。只新增表，不改动既有数据。
+        // id 是节点的系统身份（UUID），首次建档生成后终身不变；address 是人用位置编码（C01-L02-…），
+        // 冗余存储便于直接查库，加载时与按树重算的结果核对。整棵树在单事务内以快照方式整体替换。
+        // 将来引用本表的外键必须使用默认的 NO ACTION（不得 CASCADE / RESTRICT）：
+        // 保存时 defer_foreign_keys 把检查推迟到提交，仍被引用的节点无法被删除，快照替换也不会误删引用方。
+        """
+        CREATE TABLE topology_nodes (
+            id          TEXT    NOT NULL PRIMARY KEY CHECK (length(id) = 36),
+            parent_id   TEXT    NULL REFERENCES topology_nodes (id),
+            level       INTEGER NOT NULL CHECK (level BETWEEN 1 AND 6),
+            ordinal     INTEGER NOT NULL,
+            address     TEXT    NOT NULL,
+            name        TEXT    NULL,
+            enabled     INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            created_at  TEXT    NOT NULL,  -- ISO 8601 UTC
+            updated_at  TEXT    NOT NULL,  -- ISO 8601 UTC
+            -- 系统根（level 1）是唯一没有上级的节点
+            CHECK ((level = 1) = (parent_id IS NULL))
+        ) STRICT;
+
+        -- 只允许一个系统根
+        CREATE UNIQUE INDEX ux_topology_nodes_root
+            ON topology_nodes (level)
+            WHERE parent_id IS NULL;
+
+        -- 同一上级下序号唯一；兼作外键子表索引
+        CREATE UNIQUE INDEX ux_topology_nodes_sibling
+            ON topology_nodes (parent_id, ordinal)
+            WHERE parent_id IS NOT NULL;
+
+        -- 人用位置编码唯一，支持按编码直接查库
+        CREATE UNIQUE INDEX ux_topology_nodes_address
+            ON topology_nodes (address);
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

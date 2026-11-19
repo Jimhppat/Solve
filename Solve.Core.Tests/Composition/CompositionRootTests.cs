@@ -3,8 +3,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.Persistence.Buses;
 using Solve.Adapters.Persistence.Settings;
 using Solve.Adapters.Persistence.Sqlite;
+using Solve.Adapters.Persistence.Topology;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
+using Solve.Core.Domain.Topology;
 using Solve.Core.Tests.Logging.TestSupport;
 using Solve.Desktop.Composition;
 using Solve.Desktop.Logging;
@@ -176,11 +178,11 @@ public sealed class CompositionRootTests : IAsyncLifetime
         var descriptor = Tcp();
         await SeedAsync(null, descriptor);
 
-        // 把库退回 v1 形态
+        // 把库退回 v1 形态（去掉 v2 及之后新增的表）
         var database = await OpenSeedDatabaseAsync();
         await using (var connection = await database.OpenConnectionAsync(CancellationToken.None))
         {
-            await connection.ExecuteAsync("DROP TABLE app_settings; PRAGMA user_version = 1;");
+            await connection.ExecuteAsync("DROP TABLE topology_nodes; DROP TABLE app_settings; PRAGMA user_version = 1;");
         }
         SqliteDatabase.ClearPool(StorageOptions);
 
@@ -189,7 +191,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         Assert.True(reopened.IsSuccess, reopened.ToString());
         await using (var connection = await reopened.Value.OpenConnectionAsync(CancellationToken.None))
         {
-            Assert.Equal(2L, await connection.ExecuteScalarAsync<long>("PRAGMA user_version;"));
+            Assert.Equal(SqliteDatabase.LatestSchemaVersion, await connection.ExecuteScalarAsync<long>("PRAGMA user_version;"));
         }
 
         var store = new SqliteAppSettingsStore(reopened.Value, NullLogger.Instance);
@@ -214,6 +216,73 @@ public sealed class CompositionRootTests : IAsyncLifetime
         Assert.Equal(0, report.RegisteredCount);
         Assert.NotNull(host.Buses);
         Assert.True(File.Exists(DatabasePath));
+
+        // 尚未建档：拓扑服务可用、没有拓扑、没有错误
+        Assert.NotNull(host.Topology);
+        Assert.Null(host.Topology.Current);
+        Assert.Null(host.Topology.LoadError);
+    }
+
+    [Fact]
+    public async Task Start_LoadsSavedTopology_WithItsIds()
+    {
+        var saved = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 2, 2).ToDefinition("老化房").Value).Value;
+        Assert.True((await new SqliteTopologyRepository(await OpenSeedDatabaseAsync(), NullLogger.Instance)
+            .SaveAsync(saved, CancellationToken.None)).IsSuccess);
+        SqliteConnection.ClearAllPools();
+        var host = CreateHost();
+
+        var report = await host.Start();
+
+        Assert.True(report.Succeeded);
+        var loaded = host.Topology!.Current!;
+        Assert.Equal(saved.Root.Id, loaded.Root.Id);
+        Assert.Equal(saved.GetNode(TopologyAddress.Of(1, 1, 1, 2, 2)).Value.Id,
+            loaded.GetNode(TopologyAddress.Of(1, 1, 1, 2, 2)).Value.Id);
+    }
+
+    [Fact]
+    public async Task Start_TwinFollowsTopology_AndShowsNoDataWithoutASource()
+    {
+        var saved = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 1, 4).ToDefinition("老化房").Value).Value;
+        Assert.True((await new SqliteTopologyRepository(await OpenSeedDatabaseAsync(), NullLogger.Instance)
+            .SaveAsync(saved, CancellationToken.None)).IsSuccess);
+        SqliteConnection.ClearAllPools();
+        var host = CreateHost();
+
+        var report = await host.Start();
+
+        Assert.Equal(TransportMode.Simulation, report.Mode!.Mode);
+        var twin = host.Twin!;
+        Assert.Equal(saved.Root.Id, twin.Topology!.Root.Id);
+        Assert.Equal(4, twin.ProductIds.Count);
+
+        // 不运行任何假数据：等过一个仿真周期（250 ms）的时长，产品位仍全部是默认的空闲、从未收到上报
+        await Task.Delay(600);
+        Assert.Equal(4, twin.GetSummary(saved.Root.Id)[Core.Domain.Twin.ProductState.Idle]);
+        Assert.All(twin.ProductIds, id => Assert.True(twin.TryGetProduct(id, out var product) && product.UpdatedAt is null));
+    }
+
+    [Fact]
+    public async Task Start_CorruptTopology_DisablesTopology_ButBusesStillStart()
+    {
+        await SeedAsync(null, Tcp("A", 50_511));
+        var database = await OpenSeedDatabaseAsync();
+        var topology = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 1, 1).ToDefinition("老化房").Value).Value;
+        Assert.True((await new SqliteTopologyRepository(database, NullLogger.Instance).SaveAsync(topology, CancellationToken.None)).IsSuccess);
+        await using (var connection = await database.OpenConnectionAsync(CancellationToken.None))
+        {
+            await connection.ExecuteAsync("UPDATE topology_nodes SET address = 'C09' WHERE address = 'C01';");
+        }
+        SqliteConnection.ClearAllPools();
+        var host = CreateHost();
+
+        var report = await host.Start();
+
+        Assert.True(report.Succeeded);
+        Assert.Equal(1, report.RegisteredCount);
+        Assert.Null(host.Topology!.Current);
+        Assert.Equal(TopologyErrors.StorageCorruptCode, host.Topology.LoadError!.Code);
     }
 
     [Fact]

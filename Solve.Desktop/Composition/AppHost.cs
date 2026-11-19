@@ -9,9 +9,12 @@ using Solve.Adapters.Hardware.Buses.Simulation;
 using Solve.Adapters.Persistence.Buses;
 using Solve.Adapters.Persistence.Settings;
 using Solve.Adapters.Persistence.Sqlite;
+using Solve.Adapters.Persistence.Topology;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Application.Logging;
+using Solve.Core.Application.Topology;
+using Solve.Core.Application.Twin;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Desktop.Logging;
@@ -24,9 +27,11 @@ namespace Solve.Desktop.Composition;
 /// </summary>
 /// <remarks>
 /// <para>启动（<see cref="Start"/>，线程池执行，不阻塞 UI）：
-/// 打开配置库 → 读取 bus.hardware_enabled → 双重确认决定仿真/实机 → 创建 BusManager → 加载并注册总线。
-/// 不自动连接任何总线。</para>
-/// <para>故障安全：配置库打不开时不创建任何总线；进程级未处理异常先对全部总线安全跳闸再刷写日志。</para>
+/// 打开配置库 → 读取设备拓扑并创建孪生状态库 → 读取 bus.hardware_enabled → 双重确认决定仿真/实机
+/// → 创建 BusManager → 加载并注册总线。
+/// 不自动连接任何总线；拓扑读取失败只让拓扑功能不可用，不阻止总线启动。</para>
+/// <para>故障安全：配置库打不开时不创建任何总线；产品状态暂未接入数据源（仿真与实机模式都不提供假数据），
+/// 产品位保持默认的空闲；进程级未处理异常先对全部总线安全跳闸再刷写日志。</para>
 /// <para>退出（<see cref="DisposeAsync"/>）：取消启动 → 释放 BusManager（关闭全部物理通道）→ 刷写并关闭日志。</para>
 /// </remarks>
 public sealed class AppHost : IAsyncDisposable
@@ -45,6 +50,8 @@ public sealed class AppHost : IAsyncDisposable
     private Task<StartupReport>? _startup;
     private BusManager? _buses;
     private BusManagementService? _busService;
+    private TopologyService? _topology;
+    private TwinStateStore? _twin;
     private bool _disposed;
 
     private AppHost(DesktopOptions options)
@@ -145,6 +152,34 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// 设备拓扑用例服务；启动读取完成前或配置库不可用时为 null。读取失败时不为 null，失败原因见其 LoadError
+    /// </summary>
+    public ITopologyService? Topology
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _topology;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 数字孪生状态库（主控台显示产品状态）；配置库不可用时为 null。跟随拓扑服务的当前拓扑
+    /// </summary>
+    public TwinStateStore? Twin
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _twin;
+            }
+        }
+    }
+
+    /// <summary>
     /// 在线程池上启动总线系统，幂等。返回的任务不会以异常结束，结果见 <see cref="StartupReport"/>。
     /// </summary>
     public Task<StartupReport> Start()
@@ -202,6 +237,8 @@ public sealed class AppHost : IAsyncDisposable
             buses = _buses;
             _buses = null;
             _busService = null;
+            _topology = null;
+            _twin = null;
         }
 
         if (buses is not null)
@@ -246,10 +283,29 @@ public sealed class AppHost : IAsyncDisposable
                 return StartupReport.Failed(null, database.Error);
             }
 
+            // 设备拓扑先于总线读取：将来总线通道要映射到拓扑节点。读取失败已由服务记录并禁止保存，这里继续启动总线
+            var topology = new TopologyService(
+                new SqliteTopologyRepository(database.Value, _loggerFactory.CreateLogger<SqliteTopologyRepository>()),
+                _loggerFactory.CreateLogger<TopologyService>());
+            await topology.LoadAsync(cancellationToken).ConfigureAwait(false);
+            // 孪生状态库跟随拓扑服务：之后的扩缩容、改名、停用都自动生效，产品位状态按 Id 保留
+            var twin = new TwinStateStore(topology, _loggerFactory.CreateLogger<TwinStateStore>());
+            lock (_gate)
+            {
+                if (!_disposed)
+                {
+                    _topology = topology;
+                    _twin = twin;
+                }
+            }
+
             var settings = new SqliteAppSettingsStore(database.Value, _loggerFactory.CreateLogger<SqliteAppSettingsStore>());
             var stored = await settings.GetAsync(TransportModePolicy.HardwareEnabledKey, cancellationToken).ConfigureAwait(false);
             mode = TransportModePolicy.Decide(Options.HardwareRequested, stored);
             LogMode(mode);
+
+            // 产品状态数据源尚未接入：不运行任何假数据，产品位保持默认的空闲
+            _logger.LogInformation("产品状态暂未接入数据源，主控台的产品位保持默认的空闲");
 
             var manager = new BusManager(
                 CreateTransportFactory(mode.Mode),

@@ -1,0 +1,47 @@
+using Solve.Core.Domain.Common;
+using Solve.Core.Domain.Topology;
+
+namespace Solve.Core.Application.Topology;
+
+/// <summary>
+/// 设备拓扑用例服务：持有当前生效的拓扑，负责启动加载、按布局预览变更与保存。
+/// </summary>
+/// <remarks>
+/// <para>保存分两步：<see cref="PlanLayout"/> 生成预览（会删除哪些位置）→ 操作员确认后 <see cref="SaveAsync"/>。
+/// 预览期间拓扑若被其他保存改动，保存会以 Topology.StalePlan 拒绝，避免基于过期预览覆盖。</para>
+/// <para>读取失败（库损坏或存储故障）后禁止保存，防止用新拓扑覆盖待人工修复的数据，同时丢失节点的原有 Id。</para>
+/// </remarks>
+public interface ITopologyService
+{
+    /// <summary>
+    /// 当前生效的拓扑；尚未建档或读取失败时为 null。可在任意线程读取。
+    /// </summary>
+    EquipmentTopology? Current { get; }
+
+    /// <summary>
+    /// 最近一次读取失败的原因；读取成功（含尚未建档）时为 null
+    /// </summary>
+    Error? LoadError { get; }
+
+    /// <summary>
+    /// 从配置库读取拓扑（启动时调用，读取失败后也可再次调用重试）。磁盘 I/O 在线程池上执行。
+    /// </summary>
+    Task<Result> LoadAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 按统一布局生成变更预览：同一位置编码沿用现有节点的 Id、名称与启用状态。纯计算，不写库；
+    /// 大型拓扑（十万级节点）耗时数百毫秒，界面应在线程池上调用。
+    /// </summary>
+    Result<TopologyChangePlan> PlanLayout(string systemName, TopologyLayout layout);
+
+    /// <summary>
+    /// 修改单个节点的显示名与启用状态，生成变更预览（重新启用会要求确认）。纯计算，不写库；
+    /// 需要重建整棵拓扑，大型拓扑耗时数百毫秒，界面应在线程池上调用。
+    /// </summary>
+    Result<TopologyChangePlan> PlanNodeSettings(TopologyNodeId id, string? name, bool enabled);
+
+    /// <summary>
+    /// 保存预览中的拓扑并使其生效。多次调用串行执行；磁盘 I/O 在线程池上执行。
+    /// </summary>
+    Task<Result> SaveAsync(TopologyChangePlan plan, CancellationToken cancellationToken);
+}

@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             xmlns:tv="using:Solve.UI.Views.Twin"
+             x:Class="Solve.UI.Views.Twin.SlotNodeView"
+             x:DataType="tvm:SlotNodeViewModel"
+             x:CompileBindings="True"
+             Margin="5">
+    <!-- 槽位（只展示，不可选中）：只是放产品的容器——不画边框、不显示编号，只用一块淡底色把同槽的治具位归在一起，
+         槽与槽之间的空隙（10 px）大于治具之间（6 px）。
+         摘要模式（画不到产品位）时没有别的标识，才显示小号编号与状态条 -->
+    <Border CornerRadius="6" Padding="3"
+            Background="{DynamicResource SemiColorFill0}"
+            Opacity="{Binding ContentOpacity}">
+        <Panel>
+            <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Columns="1" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <StackPanel IsVisible="{Binding IsSummary}"
+                        Margin="3"
+                        Spacing="3"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="{Binding SummaryText}">
+                <TextBlock Text="{Binding ShortCode}" FontSize="10" Foreground="{DynamicResource SemiColorText2}" />
+                <tv:TwinStatusBar Summary="{Binding Summary}" Height="8" MinWidth="40" />
+            </StackPanel>
+        </Panel>
+    </Border>
+</UserControl>

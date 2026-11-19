@@ -1,0 +1,85 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             xmlns:tv="using:Solve.UI.Views.Twin"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+             x:Class="Solve.UI.Views.Twin.TwinBoardView"
+             x:DataType="tvm:TwinBoardViewModel"
+             x:CompileBindings="True">
+    <!-- 主控台显示区：从系统根开始的六层节点，铺满整个区域。
+         各层控件按视图模型类型在这里统一登记，互不引用，可单独修改 -->
+
+    <Design.DataContext>
+        <tvm:TwinBoardViewModel />
+    </Design.DataContext>
+
+    <UserControl.DataTemplates>
+        <DataTemplate DataType="tvm:SystemNodeViewModel">
+            <tv:SystemNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:CabinetNodeViewModel">
+            <tv:CabinetNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:LayerNodeViewModel">
+            <tv:LayerNodeView />
+        </DataTemplate>
+        <DataTemplate DataType="tvm:SlotNodeViewModel">
+            <tv:SlotNodeView />
+        </DataTemplate>
+        <!-- 产品位没有自己的控件：由治具位一个元素画出全部产品格（见 FixtureNodeView） -->
+        <DataTemplate DataType="tvm:FixtureNodeViewModel">
+            <tv:FixtureNodeView />
+        </DataTemplate>
+    </UserControl.DataTemplates>
+
+    <!-- 纯展示面板：始终从系统根画起、一次画一个柜体，点击产品格只选中并弹出产品信息卡片，没有路径导航与返回按钮；
+         柜体切换胶囊与图例在系统标题行上（见 SystemNodeView） -->
+    <DockPanel>
+        <!-- 刷新出错：画面已不可信，必须让操作员看到 -->
+        <Border DockPanel.Dock="Top"
+                IsVisible="{Binding HasRefreshError}"
+                Margin="0,0,0,12"
+                Padding="12,8"
+                CornerRadius="{DynamicResource SemiBorderRadiusMedium}"
+                Background="{DynamicResource SemiColorDangerLight}"
+                BorderBrush="{DynamicResource SemiColorDanger}"
+                BorderThickness="1">
+            <TextBlock Text="{Binding RefreshError}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+        </Border>
+
+        <Grid>
+            <!-- 铺满：可滚动区域给内容的可用空间是无限大，内容自己不知道该多大；
+                 把内容的最小尺寸绑到可见区域尺寸，节点少时正好铺满，节点多到低于各层最小尺寸时才出现滚动条 -->
+            <ScrollViewer x:Name="Scroller"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <ContentControl Content="{Binding Root}"
+                                MinWidth="{Binding #Scroller.Viewport.Width}"
+                                MinHeight="{Binding #Scroller.Viewport.Height}"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+            </ScrollViewer>
+
+            <TextBlock IsVisible="{Binding ShowEmpty}"
+                       Text="{Binding EmptyText}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       FontSize="13"
+                       Foreground="{DynamicResource SemiColorText2}" />
+
+            <!-- 产品信息卡片：点选产品格时挂在那一格右侧，靠窗口边缘放不下时自动翻到左侧或上下平移。
+                 不用弹出层自带的"点外面就关"：它会把点在原产品格上的那一下也当成外面而收起，点另一格还要多点一次；
+                 打开与收起由代码后置按"点在哪里"决定。外观借用浮层的 FlyoutPresenter，深浅主题与其他浮层一致 -->
+            <Popup x:Name="ProductCard"
+                   Placement="RightEdgeAlignedTop"
+                   HorizontalOffset="6"
+                   IsLightDismissEnabled="False">
+                <FlyoutPresenter AutomationProperties.Name="产品信息卡片">
+                    <tv:TwinSelectionPanel />
+                </FlyoutPresenter>
+            </Popup>
+        </Grid>
+    </DockPanel>
+</UserControl>

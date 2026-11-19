@@ -1,0 +1,8 @@
+<Control xmlns="https://github.com/avaloniaui"
+         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+         x:Class="Solve.UI.Views.Twin.FixtureNodeView"
+         Margin="3">
+    <!-- 治具位（只展示，不可选中）：只是放产品的容器——不画边框、不显示编号。
+         整个治具位是一个自绘元素（见代码后置）：展开模式画出全部产品格（每行最多 4 个，格间 2 px，点选产品格），
+         摘要模式画小号编号与状态条。同槽治具之间的空隙（6 px）大于产品格之间（2 px），靠间距看出分组 -->
+</Control>

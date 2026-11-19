@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tvm="using:Solve.UI.ViewModels.Twin"
+             x:Class="Solve.UI.Views.Twin.TwinSelectionPanel"
+             x:DataType="tvm:TwinBoardViewModel"
+             x:CompileBindings="True"
+             MinWidth="220">
+    <!-- 产品信息卡片的内容：选中产品位的信息（只有产品位可选中），打开期间随状态刷新。
+         只给人看的信息：产品位编码、名称（配置过才显示）、状态、SN、更新时间；节点 Id 是给程序用的，不显示 -->
+    <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14"
+                      Foreground="{DynamicResource SemiColorPrimary}" />
+            <TextBlock Text="产品信息" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource SemiColorText0}" />
+        </StackPanel>
+
+        <!-- 每行一个小网格、标签列固定宽度：没有名称时整行隐藏且不占行距（同一个网格里隐藏的行仍会多出一道行距） -->
+        <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="52,*" ColumnSpacing="8">
+                <TextBlock Text="产品位" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                <TextBlock Grid.Column="1" Text="{Binding SelectedAddressText}" FontFamily="Consolas, monospace"
+                           Foreground="{DynamicResource SemiColorText0}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="52,*" ColumnSpacing="8" IsVisible="{Binding HasSelectedName}">
+                <TextBlock Text="名称" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                <TextBlock Grid.Column="1" Text="{Binding SelectedNameText}" TextWrapping="Wrap" MaxWidth="240"
+                           Foreground="{DynamicResource SemiColorText0}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="52,*" ColumnSpacing="8">
+                <TextBlock Text="状态" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                <TextBlock Grid.Column="1" Text="{Binding SelectedStateText}" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SemiColorText0}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="52,*" ColumnSpacing="8">
+                <TextBlock Text="SN" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                <TextBlock Grid.Column="1" Text="{Binding SelectedSerialText}" FontFamily="Consolas, monospace"
+                           Foreground="{DynamicResource SemiColorText0}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="52,*" ColumnSpacing="8">
+                <TextBlock Text="更新于" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                <TextBlock Grid.Column="1" Text="{Binding SelectedUpdatedText}" Foreground="{DynamicResource SemiColorText0}" />
+            </Grid>
+        </StackPanel>
+    </StackPanel>
+</UserControl>
