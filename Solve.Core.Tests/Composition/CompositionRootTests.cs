@@ -229,7 +229,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         var saved = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 2, 2).ToDefinition("老化房").Value).Value;
         Assert.True((await new SqliteTopologyRepository(await OpenSeedDatabaseAsync(), NullLogger.Instance)
             .SaveAsync(saved, CancellationToken.None)).IsSuccess);
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
         var host = CreateHost();
 
         var report = await host.Start();
@@ -247,7 +247,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         var saved = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 1, 4).ToDefinition("老化房").Value).Value;
         Assert.True((await new SqliteTopologyRepository(await OpenSeedDatabaseAsync(), NullLogger.Instance)
             .SaveAsync(saved, CancellationToken.None)).IsSuccess);
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
         var host = CreateHost();
 
         var report = await host.Start();
@@ -274,7 +274,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         {
             await connection.ExecuteAsync("UPDATE topology_nodes SET address = 'C09' WHERE address = 'C01';");
         }
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
         var host = CreateHost();
 
         var report = await host.Start();

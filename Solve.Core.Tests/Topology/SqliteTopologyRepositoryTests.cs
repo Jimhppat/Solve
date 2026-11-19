@@ -37,8 +37,8 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        // 连接池会保持文件句柄，删除临时文件前必须清空
-        SqliteConnection.ClearAllPools();
+        // 连接池会保持文件句柄，删除临时文件前必须清空；只清本库的池，进程级 ClearAllPools 会波及并行测试类（见 SqliteDatabase.ClearPool）
+        SqliteDatabase.ClearPool(new SqliteStorageOptions(DatabasePath));
         if (Directory.Exists(_directory))
             Directory.Delete(_directory, recursive: true);
         return Task.CompletedTask;
@@ -120,7 +120,7 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
     public async Task Migration_V2ToV3_AddsTopologyTable()
     {
         await ExecuteRawAsync("DROP TABLE topology_nodes; PRAGMA user_version = 2;");
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(new SqliteStorageOptions(DatabasePath));
 
         var reopened = await OpenDatabaseAsync();
 
