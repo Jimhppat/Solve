@@ -13,12 +13,23 @@ public sealed class TwinStatusSummaryTests
     }
 
     [Fact]
-    public void Default_IsUnknown_AndSeverityOrderIsFixed()
+    public void Default_IsIdle_AndOnlyFourStatesExist()
     {
-        Assert.Equal(ProductState.Unknown, default(ProductState));
+        // 产品位默认空闲：枚举的 default 就是空闲，状态库新建的产品位不需要额外初始化
+        Assert.Equal(ProductState.Idle, default(ProductState));
+        Assert.Equal(4, ProductStates.Count);
+        Assert.Equal([ProductState.Idle, ProductState.Standby, ProductState.Good, ProductState.Defective], ProductStates.All);
+        Assert.Equal(["空闲", "待机", "良品", "不良品"], ProductStates.All.Select(state => state.DisplayName()));
+        Assert.All(ProductStates.All, state => Assert.True(state.IsDefined()));
+        Assert.False(((ProductState)4).IsDefined());
+        Assert.False(((ProductState)(-1)).IsDefined());
+    }
+
+    [Fact]
+    public void SeverityOrder_IsDefectiveStandbyGoodIdle()
+    {
         Assert.Equal(
-            [ProductState.Fault, ProductState.Alarm, ProductState.Failed, ProductState.Unknown,
-             ProductState.Running, ProductState.Ready, ProductState.Passed, ProductState.Empty],
+            [ProductState.Defective, ProductState.Standby, ProductState.Good, ProductState.Idle],
             ProductStates.BySeverity);
         Assert.Equal(ProductStates.Count, ProductStates.BySeverity.Distinct().Count());
         Assert.All(ProductStates.BySeverity.Zip(ProductStates.BySeverity.Skip(1)),
@@ -26,19 +37,17 @@ public sealed class TwinStatusSummaryTests
     }
 
     [Fact]
-    public void Alarms_AreFaultAlarmAndFailed_NotUnknown()
+    public void Alarms_AreDefectiveOnly()
     {
-        // 无数据不进红字：没接数据源时它会遍布全屏
-        Assert.Equal(
-            [ProductState.Fault, ProductState.Alarm, ProductState.Failed],
-            ProductStates.BySeverity.Where(state => state.IsAlarm()));
+        Assert.Equal([ProductState.Defective], ProductStates.All.Where(state => state.IsAlarm()));
     }
 
     [Fact]
     public void Worst_IsMostSevereNonZero_OrNullWhenNothingActive()
     {
-        Assert.Equal(ProductState.Alarm, Summary(0, (ProductState.Passed, 9), (ProductState.Alarm, 1)).Worst);
-        Assert.Equal(ProductState.Running, Summary(0, (ProductState.Passed, 9), (ProductState.Running, 1)).Worst);
+        Assert.Equal(ProductState.Defective, Summary(0, (ProductState.Good, 9), (ProductState.Defective, 1)).Worst);
+        Assert.Equal(ProductState.Standby, Summary(0, (ProductState.Good, 9), (ProductState.Standby, 1)).Worst);
+        Assert.Equal(ProductState.Idle, Summary(0, (ProductState.Idle, 3)).Worst);
         Assert.Null(Summary(disabled: 5).Worst);
         Assert.Null(TwinStatusSummary.None.Worst);
     }
@@ -46,33 +55,33 @@ public sealed class TwinStatusSummaryTests
     [Fact]
     public void Describe_ListsBySeverity()
     {
-        var summary = Summary(3, (ProductState.Passed, 5), (ProductState.Fault, 1), (ProductState.Running, 30),
-            (ProductState.Alarm, 2), (ProductState.Unknown, 4));
+        var summary = Summary(3, (ProductState.Good, 5), (ProductState.Defective, 1), (ProductState.Standby, 30),
+            (ProductState.Idle, 4));
 
-        Assert.Equal("故障 1 · 报警 2", summary.DescribeAlarms());
-        Assert.Equal("故障 1 · 报警 2 · 无数据 4 · 测试中 30 · 合格 5 · 停用 3", summary.DescribeAll());
-        Assert.Equal(42, summary.Active);
-        Assert.Equal(45, summary.Total);
+        Assert.Equal("不良品 1", summary.DescribeAlarms());
+        Assert.Equal("不良品 1 · 待机 30 · 良品 5 · 空闲 4 · 停用 3", summary.DescribeAll());
+        Assert.Equal(40, summary.Active);
+        Assert.Equal(43, summary.Total);
     }
 
     [Fact]
-    public void AlarmCount_SumsFaultAlarmAndFailed_Only()
+    public void AlarmCount_CountsDefectiveOnly()
     {
-        var summary = Summary(4, (ProductState.Fault, 1), (ProductState.Alarm, 2), (ProductState.Failed, 3),
-            (ProductState.Unknown, 7), (ProductState.Running, 9));
+        var summary = Summary(4, (ProductState.Defective, 3), (ProductState.Idle, 7), (ProductState.Standby, 9),
+            (ProductState.Good, 2));
 
-        // 无数据、测试中、停用都不算告警
-        Assert.Equal(6, summary.AlarmCount);
-        Assert.Equal(0, Summary(2, (ProductState.Unknown, 5)).AlarmCount);
+        // 空闲、待机、良品、停用都不算告警
+        Assert.Equal(3, summary.AlarmCount);
+        Assert.Equal(0, Summary(2, (ProductState.Idle, 5)).AlarmCount);
         Assert.Equal(0, TwinStatusSummary.None.AlarmCount);
     }
 
     [Fact]
     public void SameAs_ComparesValues()
     {
-        Assert.True(Summary(1, (ProductState.Passed, 2)).SameAs(Summary(1, (ProductState.Passed, 2))));
-        Assert.False(Summary(1, (ProductState.Passed, 2)).SameAs(Summary(0, (ProductState.Passed, 2))));
-        Assert.False(Summary(0, (ProductState.Passed, 2)).SameAs(Summary(0, (ProductState.Failed, 2))));
+        Assert.True(Summary(1, (ProductState.Good, 2)).SameAs(Summary(1, (ProductState.Good, 2))));
+        Assert.False(Summary(1, (ProductState.Good, 2)).SameAs(Summary(0, (ProductState.Good, 2))));
+        Assert.False(Summary(0, (ProductState.Good, 2)).SameAs(Summary(0, (ProductState.Defective, 2))));
     }
 
     [Fact]

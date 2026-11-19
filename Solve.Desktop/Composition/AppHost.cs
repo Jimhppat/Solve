@@ -31,7 +31,7 @@ namespace Solve.Desktop.Composition;
 /// → 创建 BusManager → 加载并注册总线。
 /// 不自动连接任何总线；拓扑读取失败只让拓扑功能不可用，不阻止总线启动。</para>
 /// <para>故障安全：配置库打不开时不创建任何总线；产品状态暂未接入数据源（仿真与实机模式都不提供假数据），
-/// 产品位一律显示"无数据"；进程级未处理异常先对全部总线安全跳闸再刷写日志。</para>
+/// 产品位保持默认的空闲；进程级未处理异常先对全部总线安全跳闸再刷写日志。</para>
 /// <para>退出（<see cref="DisposeAsync"/>）：取消启动 → 释放 BusManager（关闭全部物理通道）→ 刷写并关闭日志。</para>
 /// </remarks>
 public sealed class AppHost : IAsyncDisposable
@@ -304,8 +304,8 @@ public sealed class AppHost : IAsyncDisposable
             mode = TransportModePolicy.Decide(Options.HardwareRequested, stored);
             LogMode(mode);
 
-            // 产品状态数据源尚未接入：不运行任何假数据，主控台如实显示"无数据"
-            _logger.LogInformation("产品状态暂未接入数据源，主控台的产品位显示为无数据");
+            // 产品状态数据源尚未接入：不运行任何假数据，产品位保持默认的空闲
+            _logger.LogInformation("产品状态暂未接入数据源，主控台的产品位保持默认的空闲");
 
             var manager = new BusManager(
                 CreateTransportFactory(mode.Mode),

@@ -10,20 +10,17 @@ namespace Solve.UI.Views.Twin;
 
 /// <summary>
 /// 产品状态配色。状态色是现场约定的语义色，深浅主题下保持一致，操作员不用重新记忆。
-/// 只靠颜色色弱者分不清，故障与报警在容器上另有文字计数。
+/// 只靠颜色色弱者分不清：格子里另有状态名，不良品在容器上另有红字计数。
 /// </summary>
 public static class TwinPalette
 {
+    // 按 ProductState 的数值排列
     private static readonly IBrush[] StateBrushes =
     [
-        Brush("#8A8F98"), // 无数据：灰
-        Brush("#DDE1E6"), // 空位：浅灰
-        Brush("#9CC3F5"), // 待测：浅蓝
-        Brush("#2F7CF6"), // 测试中：蓝
-        Brush("#2DB55D"), // 合格：绿
-        Brush("#E5484D"), // 不合格：红
-        Brush("#F5A623"), // 报警：琥珀
-        Brush("#8E44AD"), // 故障：紫
+        Brush("#DDE1E6"), // 空闲：浅灰（默认状态，整屏都是它时也不刺眼）
+        Brush("#2F7CF6"), // 待机：蓝
+        Brush("#2DB55D"), // 良品：绿
+        Brush("#E5484D"), // 不良品：红
     ];
 
     // 浅色底上用深字，深色底上用白字
@@ -40,11 +37,29 @@ public static class TwinPalette
     /// </summary>
     public static IBrush Track { get; } = Brush("#33888780");
 
+    /// <summary>
+    /// 容器（柜体边框、层位与胶囊的圆点）在"全部空闲"时用的中性灰：空闲格子的浅灰画成边框和圆点几乎看不见
+    /// </summary>
+    public static IBrush IdleOutline { get; } = Brush("#9AA0A8");
+
+    /// <summary>
+    /// 未定义的数值（数据源映射有误）按停用色画，不冒充任何一种状态
+    /// </summary>
     public static IBrush For(ProductState state)
-        => state.IsDefined() ? StateBrushes[(int)state] : StateBrushes[(int)ProductState.Unknown];
+        => state.IsDefined() ? StateBrushes[(int)state] : Disabled;
+
+    /// <summary>
+    /// 容器的颜色：最严重的状态；全部空闲时为中性灰；没有启用的产品位时为停用色
+    /// </summary>
+    public static IBrush ForContainer(ProductState? worst) => worst switch
+    {
+        null => Disabled,
+        ProductState.Idle => IdleOutline,
+        { } state => For(state),
+    };
 
     public static IBrush TextOn(ProductState state)
-        => state is ProductState.Empty or ProductState.Ready or ProductState.Alarm ? DarkText : LightText;
+        => state is ProductState.Idle || !state.IsDefined() ? DarkText : LightText;
 
     private static IBrush Brush(string color) => new ImmutableSolidColorBrush(Color.Parse(color));
 }
@@ -57,11 +72,11 @@ public sealed record TwinLegendItem(string Text, IBrush Brush);
 public static class TwinLegend
 {
     /// <summary>
-    /// 按严重度从高到低，最后是停用
+    /// 空闲、待机、良品、不良品，最后是停用
     /// </summary>
     public static IReadOnlyList<TwinLegendItem> Items { get; } =
     [
-        .. ProductStates.BySeverity.Select(state => new TwinLegendItem(state.DisplayName(), TwinPalette.For(state))),
+        .. ProductStates.All.Select(state => new TwinLegendItem(state.DisplayName(), TwinPalette.For(state))),
         new TwinLegendItem("停用", TwinPalette.Disabled),
     ];
 }
@@ -78,10 +93,10 @@ public static class TwinConverters
         new FuncValueConverter<ProductState, IBrush>(TwinPalette.TextOn);
 
     /// <summary>
-    /// 容器边框：最严重的状态；没有启用的产品位时为停用色
+    /// 容器边框与圆点：最严重的状态；全部空闲时为中性灰；没有启用的产品位时为停用色
     /// </summary>
     public static readonly IValueConverter WorstBrush =
-        new FuncValueConverter<ProductState?, IBrush>(state => state is { } value ? TwinPalette.For(value) : TwinPalette.Disabled);
+        new FuncValueConverter<ProductState?, IBrush>(TwinPalette.ForContainer);
 
     /// <summary>
     /// 选中时加 2 px 外框

@@ -9,11 +9,11 @@ namespace Solve.Adapters.Hardware.Twin;
 /// 仿真产品状态源：为主控台提供会变化的假产品状态，用于压测显示区性能、演示界面。不访问任何设备。
 /// </summary>
 /// <remarks>
-/// <para>目前没有接入启动流程：正式运行时不显示任何假数据，产品位如实显示"无数据"，直到接入真实数据源。
+/// <para>目前没有接入启动流程：正式运行时不显示任何假数据，产品位保持默认的空闲，直到接入真实数据源。
 /// 需要压测时在组合根里创建并 <see cref="Start"/>。</para>
 /// <para>每个周期做两件事：按轮转对一部分产品位重发当前状态（心跳，保证每个产品位在
-/// <see cref="HeartbeatRounds"/> 个周期内至少上报一次，不会被状态库判为过期）；再随机推进少量产品位的状态。</para>
-/// <para>状态推进只是演示用的近似流程（空位 → 待测 → 测试中 → 合格 / 不合格 → 空位，偶发报警与故障），不代表真实测试规则。</para>
+/// <see cref="HeartbeatRounds"/> 个周期内至少上报一次，更新时间不会停住，将来加超时判断时可直接压测）；再随机推进少量产品位的状态。</para>
+/// <para>状态推进只是演示用的近似流程（空闲 → 待机 → 良品 / 不良品 → 空闲），不代表真实测试规则。</para>
 /// <para>在线程池上运行，由 <see cref="PeriodicTimer"/> 驱动；单个周期出错只记录、不终止循环。</para>
 /// </remarks>
 public sealed class SimulatedProductStatusFeed : IAsyncDisposable
@@ -21,7 +21,7 @@ public sealed class SimulatedProductStatusFeed : IAsyncDisposable
     public static readonly TimeSpan DefaultInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// 心跳轮转的周期数：250 ms × 16 = 4 s，明显短于状态库默认的 10 s 超时
+    /// 心跳轮转的周期数：250 ms × 16 = 4 s 内每个产品位至少上报一次
     /// </summary>
     public const int HeartbeatRounds = 16;
 
@@ -122,7 +122,7 @@ public sealed class SimulatedProductStatusFeed : IAsyncDisposable
         {
             var id = products[_heartbeatCursor++ % products.Count];
             if (_store.TryGetProduct(id, out var current))
-                _store.Report(id, current.State == ProductState.Unknown ? ProductState.Empty : current.State, current.SerialNumber);
+                _store.Report(id, current.State, current.SerialNumber);
         }
 
         _heartbeatCursor %= products.Count;
@@ -138,8 +138,8 @@ public sealed class SimulatedProductStatusFeed : IAsyncDisposable
             var next = Next(current.State);
             var serial = next switch
             {
-                ProductState.Empty or ProductState.Unknown => null,
-                ProductState.Ready => $"SIM{Interlocked.Increment(ref _serialSequence):D8}",
+                ProductState.Idle => null,
+                ProductState.Standby => $"SIM{Interlocked.Increment(ref _serialSequence):D8}",
                 _ => current.SerialNumber,
             };
             _store.Report(id, next, serial);
@@ -175,20 +175,15 @@ public sealed class SimulatedProductStatusFeed : IAsyncDisposable
         var roll = _random.NextDouble();
         return state switch
         {
-            ProductState.Unknown or ProductState.Empty => ProductState.Ready,
-            ProductState.Ready => ProductState.Running,
-            ProductState.Running => roll switch
+            ProductState.Idle => ProductState.Standby,
+            // 待机的产品约一半在下一次被挑中时出结果，约 1/10 为不良品
+            ProductState.Standby => roll switch
             {
-                < 0.02 => ProductState.Fault,
-                < 0.08 => ProductState.Alarm,
-                < 0.18 => ProductState.Failed,
-                < 0.60 => ProductState.Passed,
-                _ => ProductState.Running,
+                < 0.05 => ProductState.Defective,
+                < 0.50 => ProductState.Good,
+                _ => ProductState.Standby,
             },
-            ProductState.Alarm => roll < 0.7 ? ProductState.Running : ProductState.Failed,
-            ProductState.Fault => roll < 0.3 ? ProductState.Empty : ProductState.Fault,
-            ProductState.Passed or ProductState.Failed => ProductState.Empty,
-            _ => ProductState.Unknown,
+            _ => ProductState.Idle,
         };
     }
 }

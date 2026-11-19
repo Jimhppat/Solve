@@ -26,18 +26,13 @@ public readonly record struct ProductSnapshot(
 /// 按节点 Id 保留仍然存在的产品位的状态；被删除的位置随之丢弃。</para>
 /// <para>合并而不排队：同一产品位的多次上报只保留最新值，上报再频繁内存也不增长；汇总计数随上报增量维护，每次 O(层数)。</para>
 /// <para>变化标记：状态改变的产品位及其全部祖先被标记，界面用 <see cref="DrainChanges"/> 按需取走，只刷新看得见的节点。</para>
-/// <para>故障安全：初始一律为"无数据"；超过 <see cref="StaleAfter"/> 未收到上报的产品位由 <see cref="ExpireStale"/> 退回"无数据"，
-/// 过期数据绝不继续显示为正常。</para>
+/// <para>初始状态为空闲（<see cref="ProductState.Idle"/>）。暂不做超时判断（状态机尚未实现）：没有新上报时保持最后一次的状态，
+/// <see cref="ProductSnapshot.UpdatedAt"/> 记录最近一次上报时间，供界面显示与将来的超时判断使用。</para>
 /// <para>线程安全：数据源线程写、界面线程读，内部一把锁，每次持锁时间很短（不做磁盘 I/O、不回调外部代码；
 /// 拓扑切换时的日志由异步日志管线写盘）。</para>
 /// </remarks>
 public sealed class TwinStateStore
 {
-    /// <summary>
-    /// 默认超时：数据源的心跳周期应明显短于它（如 5 s 以内）
-    /// </summary>
-    public static readonly TimeSpan DefaultStaleAfter = TimeSpan.FromSeconds(10);
-
     private readonly ITopologyService _topology;
     private readonly ILogger _logger;
     private readonly TimeProvider _time;
@@ -47,21 +42,15 @@ public sealed class TwinStateStore
     public TwinStateStore(
         ITopologyService topology,
         ILogger<TwinStateStore> logger,
-        TimeProvider? timeProvider = null,
-        TimeSpan? staleAfter = null)
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(logger);
-
-        StaleAfter = staleAfter ?? DefaultStaleAfter;
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(StaleAfter, TimeSpan.Zero, nameof(staleAfter));
 
         _topology = topology;
         _logger = logger;
         _time = timeProvider ?? TimeProvider.System;
     }
-
-    public TimeSpan StaleAfter { get; }
 
     /// <summary>
     /// 当前跟随的拓扑；尚未建档或读取失败时为 null
@@ -111,28 +100,6 @@ public sealed class TwinStateStore
             index.SetProduct(position, state, serialNumber);
             return true;
         }
-    }
-
-    /// <summary>
-    /// 把超过 <see cref="StaleAfter"/> 未上报的产品位退回"无数据"，返回本次退回的个数。
-    /// 遍历全部产品位，调用方以秒级周期调用即可。
-    /// </summary>
-    public int ExpireStale()
-    {
-        var threshold = _time.GetUtcNow() - StaleAfter;
-        int expired;
-        lock (_gate)
-        {
-            if (Sync() is not { } index)
-                return 0;
-
-            expired = index.ExpireBefore(threshold);
-        }
-
-        if (expired > 0)
-            _logger.LogWarning("{Count} 个产品位超过 {Timeout} 未收到状态上报，已退回无数据", expired, StaleAfter);
-
-        return expired;
     }
 
     /// <summary>
@@ -288,22 +255,6 @@ public sealed class TwinStateStore
             _state[position] = state;
             _serial[position] = serial;
             MarkDirtyWithAncestors(position);
-        }
-
-        public int ExpireBefore(DateTimeOffset threshold)
-        {
-            var expired = 0;
-            for (var i = 0; i < _state.Length; i++)
-            {
-                // 从未上报的本来就是"无数据"；过期的保留 SN 便于现场核对是哪件产品失联
-                if (IsProduct[i] && _state[i] != ProductState.Unknown && UpdatedAt[i] is { } at && at < threshold)
-                {
-                    SetProduct(i, ProductState.Unknown, _serial[i]);
-                    expired++;
-                }
-            }
-
-            return expired;
         }
 
         public IReadOnlyList<TopologyNodeId> DrainChanges()

@@ -6,7 +6,7 @@ using Solve.Core.Tests.Twin.TestSupport;
 namespace Solve.Core.Tests.Twin;
 
 /// <summary>
-/// 孪生状态库：初始无数据、逐级汇总、停用单独计数、变化标记、过期退回、拓扑切换保留状态、并发一致性
+/// 孪生状态库：初始空闲、逐级汇总、停用单独计数、变化标记、不做超时、拓扑切换保留状态、并发一致性
 /// </summary>
 public sealed class TwinStateStoreTests
 {
@@ -25,24 +25,23 @@ public sealed class TwinStateStoreTests
 
         Assert.Null(store.Topology);
         Assert.Empty(store.ProductIds);
-        Assert.False(store.Report(TopologyNodeId.New(), ProductState.Running));
+        Assert.False(store.Report(TopologyNodeId.New(), ProductState.Standby));
         Assert.Same(TwinStatusSummary.None, store.GetSummary(TopologyNodeId.New()));
         Assert.Empty(store.DrainChanges());
-        Assert.Equal(0, store.ExpireStale());
     }
 
     [Fact]
-    public void Initially_EveryProductIsUnknown()
+    public void Initially_EveryProductIsIdle()
     {
         var store = Store();
 
         Assert.Equal(12, store.ProductIds.Count);
         var root = store.GetSummary(_topology.Root.Id);
-        Assert.Equal(12, root[ProductState.Unknown]);
+        Assert.Equal(12, root[ProductState.Idle]);
         Assert.Equal(12, root.Active);
-        Assert.Equal(ProductState.Unknown, root.Worst);
+        Assert.Equal(ProductState.Idle, root.Worst);
         Assert.True(store.TryGetProduct(store.ProductIds[0], out var product));
-        Assert.Equal(ProductState.Unknown, product.State);
+        Assert.Equal(ProductState.Idle, product.State);
         Assert.Null(product.UpdatedAt);
         Assert.Empty(store.DrainChanges());
     }
@@ -53,19 +52,19 @@ public sealed class TwinStateStoreTests
         var store = Store();
         var product = Twins.Id(_topology, 2, 1, 1, 2, 3);
 
-        Assert.True(store.Report(product, ProductState.Fault, "SN-1"));
+        Assert.True(store.Report(product, ProductState.Defective, "SN-1"));
 
         Assert.True(store.TryGetProduct(product, out var snapshot));
-        Assert.Equal((ProductState.Fault, "SN-1", Twins.T0), (snapshot.State, snapshot.SerialNumber, snapshot.UpdatedAt!.Value));
+        Assert.Equal((ProductState.Defective, "SN-1", Twins.T0), (snapshot.State, snapshot.SerialNumber, snapshot.UpdatedAt!.Value));
         foreach (var ancestor in new[] { _topology.Root.Id, Twins.Id(_topology, 2), Twins.Id(_topology, 2, 1, 1, 2) })
         {
             var summary = store.GetSummary(ancestor);
-            Assert.Equal(1, summary[ProductState.Fault]);
-            Assert.Equal(ProductState.Fault, summary.Worst);
+            Assert.Equal(1, summary[ProductState.Defective]);
+            Assert.Equal(ProductState.Defective, summary.Worst);
         }
 
-        Assert.Equal(0, store.GetSummary(Twins.Id(_topology, 1))[ProductState.Fault]);
-        Assert.Equal(11, store.GetSummary(_topology.Root.Id)[ProductState.Unknown]);
+        Assert.Equal(0, store.GetSummary(Twins.Id(_topology, 1))[ProductState.Defective]);
+        Assert.Equal(11, store.GetSummary(_topology.Root.Id)[ProductState.Idle]);
     }
 
     [Fact]
@@ -73,8 +72,8 @@ public sealed class TwinStateStoreTests
     {
         var store = Store();
 
-        Assert.False(store.Report(TopologyNodeId.New(), ProductState.Running));
-        Assert.False(store.Report(Twins.Id(_topology, 1), ProductState.Running));
+        Assert.False(store.Report(TopologyNodeId.New(), ProductState.Standby));
+        Assert.False(store.Report(Twins.Id(_topology, 1), ProductState.Standby));
         Assert.Empty(store.DrainChanges());
         Assert.Throws<ArgumentOutOfRangeException>(() => store.Report(store.ProductIds[0], (ProductState)42));
     }
@@ -84,7 +83,7 @@ public sealed class TwinStateStoreTests
     {
         var store = Store();
         var product = Twins.Id(_topology, 1, 1, 1, 1, 1);
-        store.Report(product, ProductState.Running);
+        store.Report(product, ProductState.Standby);
 
         var changed = store.DrainChanges();
 
@@ -95,7 +94,7 @@ public sealed class TwinStateStoreTests
         Assert.Empty(store.DrainChanges());
 
         // 心跳（状态与 SN 都没变）只刷新时间，不产生变化
-        store.Report(product, ProductState.Running);
+        store.Report(product, ProductState.Standby);
         Assert.Empty(store.DrainChanges());
     }
 
@@ -112,36 +111,28 @@ public sealed class TwinStateStoreTests
 
         // 停用的产品位仍记录状态（便于核对），但不计入状态统计
         var product = Twins.Id(masked, 1, 1, 1, 1, 1);
-        Assert.True(store.Report(product, ProductState.Fault));
-        Assert.Equal(0, store.GetSummary(masked.Root.Id)[ProductState.Fault]);
+        Assert.True(store.Report(product, ProductState.Defective));
+        Assert.Equal(0, store.GetSummary(masked.Root.Id)[ProductState.Defective]);
         Assert.True(store.TryGetProduct(product, out var snapshot));
         Assert.False(snapshot.IsEnabled);
         Assert.Null(store.GetSummary(fixture).Worst);
     }
 
     [Fact]
-    public void ExpireStale_ReturnsSilentProductsToUnknown_KeepingSerial()
+    public void NoTimeout_StateIsKeptUntilTheNextReport()
     {
+        // 暂不做超时判断（状态机尚未实现）：很久没有上报也保持最后一次的状态，更新时间如实停在那一刻
         var store = Store();
         var quiet = Twins.Id(_topology, 1, 1, 1, 1, 1);
-        var chatty = Twins.Id(_topology, 1, 1, 1, 1, 2);
-        store.Report(quiet, ProductState.Passed, "SN-Q");
-        store.Report(chatty, ProductState.Running);
+        store.Report(quiet, ProductState.Good, "SN-Q");
         store.DrainChanges();
 
-        _time.Advance(TimeSpan.FromSeconds(8));
-        store.Report(chatty, ProductState.Running); // 心跳
-        Assert.Equal(0, store.ExpireStale());
+        _time.Advance(TimeSpan.FromHours(1));
 
-        _time.Advance(TimeSpan.FromSeconds(3)); // quiet 已 11 s 未上报，chatty 只有 3 s
-        Assert.Equal(1, store.ExpireStale());
-
-        Assert.True(store.TryGetProduct(quiet, out var expired));
-        Assert.Equal((ProductState.Unknown, "SN-Q"), (expired.State, expired.SerialNumber));
-        Assert.True(store.TryGetProduct(chatty, out var alive));
-        Assert.Equal(ProductState.Running, alive.State);
-        Assert.Contains(quiet, store.DrainChanges());
-        Assert.Equal(0, store.GetSummary(_topology.Root.Id)[ProductState.Passed]);
+        Assert.True(store.TryGetProduct(quiet, out var snapshot));
+        Assert.Equal((ProductState.Good, "SN-Q", Twins.T0), (snapshot.State, snapshot.SerialNumber, snapshot.UpdatedAt!.Value));
+        Assert.Equal(1, store.GetSummary(_topology.Root.Id)[ProductState.Good]);
+        Assert.Empty(store.DrainChanges());
     }
 
     [Fact]
@@ -151,8 +142,8 @@ public sealed class TwinStateStoreTests
         var store = Twins.Store(service, _time);
         var kept = Twins.Id(_topology, 1, 1, 1, 1, 1);
         var removed = Twins.Id(_topology, 2, 1, 1, 1, 1);
-        store.Report(kept, ProductState.Fault, "SN-K");
-        store.Report(removed, ProductState.Alarm);
+        store.Report(kept, ProductState.Defective, "SN-K");
+        store.Report(removed, ProductState.Good);
 
         // 缩容为 1 柜，并把 1 号柜改编号为 3 号：位置编码变了，Id 不变
         var shrunk = Twins.Layout(1, 1, 1, 2, 3, current: _topology);
@@ -163,10 +154,10 @@ public sealed class TwinStateStoreTests
         Assert.Same(renumbered, store.Topology);
         Assert.Equal(6, store.ProductIds.Count);
         Assert.True(store.TryGetProduct(kept, out var snapshot));
-        Assert.Equal((ProductState.Fault, "SN-K"), (snapshot.State, snapshot.SerialNumber));
-        Assert.Equal(1, store.GetSummary(renumbered.Root.Id)[ProductState.Fault]);
-        Assert.Equal(0, store.GetSummary(renumbered.Root.Id)[ProductState.Alarm]);
-        Assert.False(store.Report(removed, ProductState.Running));
+        Assert.Equal((ProductState.Defective, "SN-K"), (snapshot.State, snapshot.SerialNumber));
+        Assert.Equal(1, store.GetSummary(renumbered.Root.Id)[ProductState.Defective]);
+        Assert.Equal(0, store.GetSummary(renumbered.Root.Id)[ProductState.Good]);
+        Assert.False(store.Report(removed, ProductState.Standby));
     }
 
     [Fact]

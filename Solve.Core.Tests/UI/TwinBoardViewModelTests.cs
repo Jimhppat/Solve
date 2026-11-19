@@ -204,17 +204,17 @@ public sealed class TwinBoardViewModelTests
         var (board, store) = Attached(topology);
         var system = Assert.IsType<SystemNodeViewModel>(board.Root);
 
-        // C02 没在显示，它的产品位出了故障：胶囊上的圆点与红色计数照样更新
-        store.Report(Twins.Id(topology, 2, 1, 1, 1, 1), ProductState.Fault);
-        store.Report(Twins.Id(topology, 2, 1, 1, 1, 2), ProductState.Failed);
+        // C02 没在显示，它出了两个不良品：胶囊上的圆点与红色计数照样更新
+        store.Report(Twins.Id(topology, 2, 1, 1, 1, 1), ProductState.Defective);
+        store.Report(Twins.Id(topology, 2, 1, 1, 1, 2), ProductState.Defective);
         board.Refresh();
 
         var hidden = system.Children[1];
-        Assert.Equal(ProductState.Fault, hidden.Worst);
+        Assert.Equal(ProductState.Defective, hidden.Worst);
         Assert.Equal(2, hidden.AlarmCount);
         Assert.True(hidden.HasAlarm);
         Assert.Equal(0, system.Children[0].AlarmCount);
-        Assert.Equal(ProductState.Fault, system.Worst);
+        Assert.Equal(ProductState.Defective, system.Worst);
     }
 
     [Fact]
@@ -261,7 +261,7 @@ public sealed class TwinBoardViewModelTests
         var (board, store) = Attached(topology);
         var root = board.Root;
         var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
-        store.Report(product.Id, ProductState.Running, "SN-9");
+        store.Report(product.Id, ProductState.Standby, "SN-9");
         board.Refresh();
 
         product.Select();
@@ -270,7 +270,7 @@ public sealed class TwinBoardViewModelTests
         Assert.True(product.IsSelected);
         Assert.True(board.HasSelection);
         Assert.Equal("C01-L01-S01-F01-P04", board.SelectedAddressText);
-        Assert.Equal("测试中", board.SelectedStateText);
+        Assert.Equal("待机", board.SelectedStateText);
         Assert.Equal("SN-9", board.SelectedSerialText);
         Assert.Equal(product.Id.ToString(), board.SelectedIdText);
         Assert.NotEqual("从未收到", board.SelectedUpdatedText);
@@ -331,17 +331,17 @@ public sealed class TwinBoardViewModelTests
         var nodes = Flatten(board.Root!).ToList();
         var product = nodes.OfType<ProductNodeViewModel>().First();
 
-        store.Report(product.Id, ProductState.Fault);
+        store.Report(product.Id, ProductState.Defective);
         board.Refresh();
 
-        Assert.Equal(ProductState.Fault, product.State);
+        Assert.Equal(ProductState.Defective, product.State);
         var slot = nodes.OfType<SlotNodeViewModel>().First();
-        Assert.Equal(ProductState.Fault, slot.Worst);
-        Assert.Contains("故障 1", slot.AlarmText);
-        Assert.Equal(ProductState.Fault, board.Root!.Worst);
+        Assert.Equal(ProductState.Defective, slot.Worst);
+        Assert.Contains("不良品 1", slot.AlarmText);
+        Assert.Equal(ProductState.Defective, board.Root!.Worst);
 
         // 另一个槽位没有变化
-        Assert.Equal(ProductState.Unknown, nodes.OfType<SlotNodeViewModel>().Last().Worst);
+        Assert.Equal(ProductState.Idle, nodes.OfType<SlotNodeViewModel>().Last().Worst);
     }
 
     [Fact]
@@ -351,30 +351,51 @@ public sealed class TwinBoardViewModelTests
         var (board, store) = Attached(topology);
         var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Single();
         product.Select();
-        Assert.Equal("无数据", board.SelectedStateText);
+        Assert.Equal("空闲", board.SelectedStateText);
 
-        store.Report(product.Id, ProductState.Passed, "SN-1");
+        store.Report(product.Id, ProductState.Good, "SN-1");
         board.Refresh();
 
-        Assert.Equal("合格", board.SelectedStateText);
+        Assert.Equal("良品", board.SelectedStateText);
         Assert.Equal("SN-1", board.SelectedSerialText);
     }
 
     [Fact]
-    public void Refresh_ExpiresSilentProducts()
+    public void NewProducts_ShowIdle_NotNoData()
+    {
+        var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 2));
+
+        // 没有收到任何上报的产品位默认空闲
+        var products = Flatten(board.Root!).OfType<ProductNodeViewModel>().ToList();
+        Assert.All(products, product =>
+        {
+            Assert.Equal(ProductState.Idle, product.State);
+            Assert.Equal("空闲", product.StateText);
+        });
+        Assert.Equal(ProductState.Idle, board.Root!.Worst);
+        Assert.False(board.Root.HasAlarm);
+        Assert.Equal("空闲 2", board.Root.SummaryText);
+
+        products[0].Select();
+        Assert.Equal("从未收到", board.SelectedUpdatedText);
+    }
+
+    [Fact]
+    public void Refresh_NoTimeout_KeepsTheLastState()
     {
         var topology = Twins.Layout(1, 1, 1, 1, 2);
         var (board, store) = Attached(topology);
         var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().First();
-        store.Report(product.Id, ProductState.Passed);
+        store.Report(product.Id, ProductState.Good);
         board.Refresh();
-        Assert.Equal(ProductState.Passed, product.State);
+        Assert.Equal(ProductState.Good, product.State);
 
-        _time.Advance(TimeSpan.FromSeconds(11));
-        for (var i = 0; i < 4; i++) // 过期检查每 4 次刷新做一次
+        // 暂不做超时判断：很久没有上报也不会变回空闲
+        _time.Advance(TimeSpan.FromHours(1));
+        for (var i = 0; i < 8; i++)
             board.Refresh();
 
-        Assert.Equal(ProductState.Unknown, product.State);
+        Assert.Equal(ProductState.Good, product.State);
     }
 
     // ==================== 拓扑修改 ====================
@@ -432,7 +453,7 @@ public sealed class TwinBoardViewModelTests
         Assert.Equal(TwinNodeViewModel.DisabledOpacity, cabinets[1].ContentOpacity);
         Assert.Null(cabinets[1].Worst);
         Assert.False(cabinets[0].IsDisabled);
-        Assert.Equal(ProductState.Unknown, cabinets[0].Worst);
+        Assert.Equal(ProductState.Idle, cabinets[0].Worst);
 
         // 停用的柜体也能切过去查看；透明度逐层相乘：停用柜体下的节点不再各自变淡，否则 0.4⁵ 几乎看不见
         board.ShowCabinet(cabinets[1].Id);

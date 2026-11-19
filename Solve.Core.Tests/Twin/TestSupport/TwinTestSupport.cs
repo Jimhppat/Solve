@@ -41,7 +41,7 @@ internal static class Twins
         => EquipmentTopology.Create(new TopologyLayout(c, l, s, f, p).ToDefinition("老化房", current).Value).Value;
 
     public static TwinStateStore Store(ITopologyService topology, TimeProvider? time = null)
-        => new(topology, NullLogger<TwinStateStore>.Instance, time, TimeSpan.FromSeconds(10));
+        => new(topology, NullLogger<TwinStateStore>.Instance, time);
 
     public static TopologyNodeId Id(EquipmentTopology topology, params int[] ordinals)
         => topology.GetNode(TopologyAddress.Of(ordinals)).Value.Id;

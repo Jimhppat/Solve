@@ -26,7 +26,6 @@ public sealed class SimulatedProductStatusFeedTests
         Assert.All(store.ProductIds, id =>
         {
             Assert.True(store.TryGetProduct(id, out var snapshot));
-            Assert.NotEqual(ProductState.Unknown, snapshot.State);
             Assert.NotNull(snapshot.UpdatedAt);
         });
     }
@@ -42,11 +41,11 @@ public sealed class SimulatedProductStatusFeedTests
             feed.Tick();
 
         var summary = store.GetSummary(topology.Root.Id);
-        Assert.True(summary[ProductState.Running] > 0);
-        Assert.True(summary[ProductState.Passed] + summary[ProductState.Failed] > 0);
-        Assert.Equal(0, summary[ProductState.Unknown]);
+        Assert.True(summary[ProductState.Standby] > 0);
+        Assert.True(summary[ProductState.Good] > 0);
+        Assert.True(summary[ProductState.Defective] > 0);
 
-        var withSerial = store.ProductIds.Count(id => store.TryGetProduct(id, out var p) && p.State == ProductState.Running && p.SerialNumber is not null);
+        var withSerial = store.ProductIds.Count(id => store.TryGetProduct(id, out var p) && p.State == ProductState.Standby && p.SerialNumber is not null);
         Assert.True(withSerial > 0);
     }
 
@@ -70,7 +69,8 @@ public sealed class SimulatedProductStatusFeedTests
         feed.Start();
         feed.Start(); // 幂等
         var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (store.ProductIds.Any(id => store.TryGetProduct(id, out var p) && p.State == ProductState.Unknown)
+        // 后台循环跑过：每个产品位都至少收到过一次上报（心跳），更新时间不再为空
+        while (store.ProductIds.Any(id => store.TryGetProduct(id, out var p) && p.UpdatedAt is null)
                && DateTime.UtcNow < deadline)
         {
             await Task.Delay(20);
@@ -79,7 +79,7 @@ public sealed class SimulatedProductStatusFeedTests
         await feed.DisposeAsync();
         await feed.DisposeAsync(); // 幂等
 
-        Assert.All(store.ProductIds, id => Assert.True(store.TryGetProduct(id, out var p) && p.State != ProductState.Unknown));
+        Assert.All(store.ProductIds, id => Assert.True(store.TryGetProduct(id, out var p) && p.UpdatedAt is not null));
         Assert.Throws<ObjectDisposedException>(feed.Start);
     }
 }

@@ -44,7 +44,7 @@ public sealed class TwinStatusSummary
     public int Total => Active + Disabled;
 
     /// <summary>
-    /// 告警类（故障、报警、不合格）的产品位数，用于柜体切换胶囊上的红色计数
+    /// 告警类（不良品）的产品位数，用于柜体切换胶囊上的红色计数
     /// </summary>
     public int AlarmCount
     {
@@ -79,12 +79,12 @@ public sealed class TwinStatusSummary
     }
 
     /// <summary>
-    /// 告警类计数，如"故障 1 · 报警 2 · 不合格 3"；没有时为空串
+    /// 告警类计数，如"不良品 3"；没有时为空串
     /// </summary>
     public string DescribeAlarms() => Describe(alarmsOnly: true);
 
     /// <summary>
-    /// 全部非零计数，按严重度排列，如"故障 1 · 测试中 30 · 合格 5 · 停用 8"
+    /// 全部非零计数，按严重度排列，如"不良品 1 · 待机 30 · 良品 5 · 空闲 12 · 停用 8"
     /// </summary>
     public string DescribeAll() => Describe(alarmsOnly: false);
 

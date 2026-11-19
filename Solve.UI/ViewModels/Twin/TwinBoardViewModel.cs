@@ -19,7 +19,7 @@ namespace Solve.UI.ViewModels.Twin;
 /// <para>显示数量上限：只计算当前柜体（加上系统与全部柜体胶囊），往下逐层展开，超过 <see cref="ElementBudget"/> 时停在上一层，
 /// 最深一层的容器用摘要模式（只画状态条）。当前柜体至少展开到层位。</para>
 /// <para>刷新：视图以 <see cref="RefreshInterval"/> 周期调用 <see cref="Refresh"/>，只更新状态有变化且当前看得见的节点；
-/// 每秒做一次过期检查。只在显示区可见时刷新，主控台不在前台时不占 UI 线程。</para>
+/// 只在显示区可见时刷新，主控台不在前台时不占 UI 线程。暂不做超时判断，状态保持最后一次上报的值。</para>
 /// <para>拓扑被修改时整体重建，选中的产品位与当前柜体都按节点 Id 保留；产品位已被删除时清除选中，
 /// 当前柜体已被删除时回到第一个柜体。只在 UI 线程上使用。</para>
 /// </remarks>
@@ -35,9 +35,6 @@ public sealed class TwinBoardViewModel : ViewModelBase
     /// </summary>
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(250);
 
-    // 每 4 次刷新（约 1 s）做一次过期检查：它要遍历全部产品位，没必要每次都做
-    private const int ExpireEveryRefreshes = 4;
-
     private readonly Dictionary<TopologyNodeId, TwinNodeViewModel> _visible = [];
     private TwinStateStore? _store;
     private EquipmentTopology? _bound;
@@ -45,7 +42,6 @@ public sealed class TwinBoardViewModel : ViewModelBase
     private TopologyNodeId? _cabinetId;
     private TwinNodeViewModel? _root;
     private string? _refreshError;
-    private int _refreshCount;
 
     public TwinBoardViewModel() : this(DefaultElementBudget)
     {
@@ -135,7 +131,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
             if (!node.IsEffectivelyEnabled)
                 return "停用";
 
-            return store.TryGetProduct(node.Id, out var product) ? product.State.DisplayName() : ProductState.Unknown.DisplayName();
+            return store.TryGetProduct(node.Id, out var product) ? product.State.DisplayName() : ProductState.Idle.DisplayName();
         }
     }
 
@@ -170,7 +166,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 周期刷新（UI 线程）：必要时做过期检查；拓扑变了就重建，否则只更新有变化的可见节点。
+    /// 周期刷新（UI 线程）：拓扑变了就重建，否则只更新有变化的可见节点。
     /// </summary>
     public void Refresh()
     {
@@ -179,9 +175,6 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
         try
         {
-            if (_refreshCount++ % ExpireEveryRefreshes == 0)
-                store.ExpireStale();
-
             var topology = store.Topology;
             if (!ReferenceEquals(topology, _bound))
             {

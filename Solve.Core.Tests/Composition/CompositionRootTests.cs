@@ -254,9 +254,10 @@ public sealed class CompositionRootTests : IAsyncLifetime
         Assert.Equal(saved.Root.Id, twin.Topology!.Root.Id);
         Assert.Equal(4, twin.ProductIds.Count);
 
-        // 不运行任何假数据：等过一个仿真周期（250 ms）的时长，产品位仍全部是"无数据"
+        // 不运行任何假数据：等过一个仿真周期（250 ms）的时长，产品位仍全部是默认的空闲、从未收到上报
         await Task.Delay(600);
-        Assert.Equal(4, twin.GetSummary(saved.Root.Id)[Core.Domain.Twin.ProductState.Unknown]);
+        Assert.Equal(4, twin.GetSummary(saved.Root.Id)[Core.Domain.Twin.ProductState.Idle]);
+        Assert.All(twin.ProductIds, id => Assert.True(twin.TryGetProduct(id, out var product) && product.UpdatedAt is null));
     }
 
     [Fact]

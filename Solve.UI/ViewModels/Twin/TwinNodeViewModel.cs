@@ -245,7 +245,7 @@ public sealed class FixtureNodeViewModel(TopologyNode node) : TwinNodeViewModel(
 /// </summary>
 public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node)
 {
-    private ProductState _state = ProductState.Unknown;
+    private ProductState _state = ProductState.Idle;
     private string? _serialNumber;
     private bool _isSelected;
 
