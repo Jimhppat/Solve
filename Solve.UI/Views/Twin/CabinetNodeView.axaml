@@ -5,49 +5,22 @@
              x:Class="Solve.UI.Views.Twin.CabinetNodeView"
              x:DataType="tvm:CabinetNodeViewModel"
              x:CompileBindings="True">
-    <!-- 柜体（只展示，不可选中）：系统一次只画一个柜体，铺满标题行以下的显示区。标题行（编号、名称、告警红字），
-         层位上下等分高度（层位 1 在最上面，与实物一致）；边框颜色 = 柜内最严重的状态。
-         不画状态比例条：标题与边框已表达状态，整条灰色的比例条容易被误认为进度条；
-         只在摘要模式（柜内画不出内容）时显示比例条，此时它是唯一的状态分布信息 -->
-    <Border CornerRadius="8" Padding="8" BorderThickness="1.5"
+    <!-- 柜体（只展示，不可选中）：系统一次只画一个柜体，铺满标题行以下的显示区；层位上下等分高度（层位 1 在最上面，与实物一致），
+         边框颜色 = 柜内最严重的状态。
+         不画柜号标题：多柜时柜号、名称、不良品计数都在系统标题行的切换胶囊上，柜内再写一遍是重复信息，还占掉一行高度；
+         单柜时不显示胶囊，柜体的汇总可悬停系统名称查看，不良品计数在各层的层号栏里。
+         不画状态比例条：当前柜体总是展开到层位，比例条只会在没有层位的空柜里出现，画出来是一条空轨道。
+         上下内边距 3 + 层位外边距 5 = 8，与左右内边距一致 -->
+    <Border CornerRadius="8" Padding="8,3" BorderThickness="1.5"
             BorderBrush="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}"
             Background="{DynamicResource SemiColorBackground1}"
             Opacity="{Binding ContentOpacity}">
-        <!-- DockPanel 不为隐藏的子元素留间距：展开模式下比例条隐藏，不会多出一道空隙 -->
-        <DockPanel>
-            <DockPanel DockPanel.Dock="Top" Margin="2,0,2,6" ToolTip.Tip="{Binding SummaryText}">
-                <TextBlock DockPanel.Dock="Right"
-                           Text="{Binding AlarmText}"
-                           IsVisible="{Binding HasAlarm}"
-                           Margin="12,0,0,0"
-                           FontSize="11"
-                           VerticalAlignment="Center"
-                           Foreground="{DynamicResource SemiColorDanger}" />
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBlock Text="{Binding ShortCode}"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               Foreground="{DynamicResource SemiColorText0}" />
-                    <TextBlock Text="{Binding Name}"
-                               IsVisible="{Binding HasName}"
-                               FontSize="12"
-                               VerticalAlignment="Center"
-                               Foreground="{DynamicResource SemiColorText2}" />
-                </StackPanel>
-            </DockPanel>
-            <tv:TwinStatusBar DockPanel.Dock="Top"
-                              Summary="{Binding Summary}"
-                              Height="6"
-                              MinWidth="160"
-                              Margin="2,0,2,6"
-                              IsVisible="{Binding IsSummary}" />
-            <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <UniformGrid Columns="1" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-            </ItemsControl>
-        </DockPanel>
+        <ItemsControl ItemsSource="{Binding Children}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <UniformGrid Columns="1" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+        </ItemsControl>
     </Border>
 </UserControl>

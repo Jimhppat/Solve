@@ -91,7 +91,7 @@
                     </ListBox.Styles>
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="tvm:TwinNodeViewModel">
-                            <!-- 圆点 = 柜内最严重的状态；红色数字 = 告警类产品位数（故障、报警、不合格） -->
+                            <!-- 圆点 = 柜内最严重的状态；红色数字 = 不良品数 -->
                             <StackPanel Orientation="Horizontal"
                                         Spacing="6"
                                         Opacity="{Binding ContentOpacity}"
