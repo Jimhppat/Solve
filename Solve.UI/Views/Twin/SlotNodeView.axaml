@@ -5,16 +5,12 @@
              x:Class="Solve.UI.Views.Twin.SlotNodeView"
              x:DataType="tvm:SlotNodeViewModel"
              x:CompileBindings="True"
-             Margin="5"
-             Cursor="Hand"
-             Tapped="OnTapped">
-    <!-- 槽位：只是放产品的容器——不画边框、不显示编号，只用一块淡底色把同槽的治具位归在一起，
+             Margin="5">
+    <!-- 槽位（只展示，不可选中）：只是放产品的容器——不画边框、不显示编号，只用一块淡底色把同槽的治具位归在一起，
          槽与槽之间的空隙（10 px）大于治具之间（6 px）。
-         摘要模式（画不到产品位）时没有别的标识，才显示小号编号与状态条。选中时加外框 -->
+         摘要模式（画不到产品位）时没有别的标识，才显示小号编号与状态条 -->
     <Border CornerRadius="6" Padding="3"
             Background="{DynamicResource SemiColorFill0}"
-            BorderBrush="{DynamicResource SemiColorText0}"
-            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
             Opacity="{Binding ContentOpacity}">
         <Panel>
             <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">

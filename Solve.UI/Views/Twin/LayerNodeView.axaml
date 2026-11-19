@@ -5,51 +5,43 @@
              x:Class="Solve.UI.Views.Twin.LayerNodeView"
              x:DataType="tvm:LayerNodeViewModel"
              x:CompileBindings="True"
-             Margin="0,4"
-             Cursor="Hand"
-             Tapped="OnTapped">
-    <!-- 层位：不画框，层与层之间靠空白分开。左侧层号（小圆点 = 这一层最严重的状态）、名称与告警计数，
-         右侧槽位从左到右等分宽度（货架）；摘要模式右侧画状态条。选中时加外框 -->
-    <Border CornerRadius="6"
-            Background="Transparent"
-            BorderBrush="{DynamicResource SemiColorText0}"
-            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
-            Opacity="{Binding ContentOpacity}">
-        <Grid ColumnDefinitions="56,*" ColumnSpacing="2">
-            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" ToolTip.Tip="{Binding SummaryText}">
-                <StackPanel Orientation="Horizontal" Spacing="5">
-                    <Ellipse Width="8" Height="8"
-                             VerticalAlignment="Center"
-                             Fill="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}" />
-                    <TextBlock Text="{Binding ShortCode}"
-                               FontWeight="SemiBold"
-                               Foreground="{DynamicResource SemiColorText0}" />
-                </StackPanel>
-                <TextBlock Text="{Binding Name}"
-                           IsVisible="{Binding HasName}"
-                           FontSize="11"
-                           TextTrimming="CharacterEllipsis"
-                           Foreground="{DynamicResource SemiColorText2}" />
-                <TextBlock Text="{Binding AlarmText}"
-                           IsVisible="{Binding HasAlarm}"
-                           FontSize="10"
-                           TextWrapping="Wrap"
-                           Foreground="{DynamicResource SemiColorDanger}" />
+             Margin="0,4">
+    <!-- 层位（只展示，不可选中）：不画框，层与层之间靠空白分开。左侧层号（小圆点 = 这一层最严重的状态）、
+         名称与告警计数，右侧槽位从左到右等分宽度（货架）；摘要模式右侧画状态条 -->
+    <Grid ColumnDefinitions="56,*" ColumnSpacing="2" Opacity="{Binding ContentOpacity}">
+        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center" ToolTip.Tip="{Binding SummaryText}">
+            <StackPanel Orientation="Horizontal" Spacing="5">
+                <Ellipse Width="8" Height="8"
+                         VerticalAlignment="Center"
+                         Fill="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}" />
+                <TextBlock Text="{Binding ShortCode}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource SemiColorText0}" />
             </StackPanel>
-            <ItemsControl Grid.Column="1" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <UniformGrid Rows="1" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-            </ItemsControl>
-            <tv:TwinStatusBar Grid.Column="1"
-                              Summary="{Binding Summary}"
-                              Height="10"
-                              MinWidth="120"
-                              Margin="5,0"
-                              VerticalAlignment="Center"
-                              IsVisible="{Binding IsSummary}" />
-        </Grid>
-    </Border>
+            <TextBlock Text="{Binding Name}"
+                       IsVisible="{Binding HasName}"
+                       FontSize="11"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource SemiColorText2}" />
+            <TextBlock Text="{Binding AlarmText}"
+                       IsVisible="{Binding HasAlarm}"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource SemiColorDanger}" />
+        </StackPanel>
+        <ItemsControl Grid.Column="1" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <UniformGrid Rows="1" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+        </ItemsControl>
+        <tv:TwinStatusBar Grid.Column="1"
+                          Summary="{Binding Summary}"
+                          Height="10"
+                          MinWidth="120"
+                          Margin="5,0"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding IsSummary}" />
+    </Grid>
 </UserControl>

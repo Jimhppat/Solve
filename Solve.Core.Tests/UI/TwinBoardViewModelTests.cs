@@ -101,59 +101,73 @@ public sealed class TwinBoardViewModelTests
         Assert.All(cabinets, cabinet => Assert.True(cabinet.IsSummary));
     }
 
-    // ==================== 点击：只选中，不进入下一级 ====================
+    // ==================== 点击：只有产品位可选中，画面不变 ====================
 
     [Fact]
-    public void SelectingContainer_ShowsDetails_WithoutChangingTheView()
-    {
-        var (board, _) = Attached(Twins.Layout(2, 2, 2, 2, 4), budget: 20);
-        var root = board.Root;
-        var layer = Flatten(board.Root!).OfType<LayerNodeViewModel>().First(l => l.Node.Address == TopologyAddress.Of(2, 1));
-
-        layer.Select();
-
-        // 画面不变：根还是系统，可见节点不变，层位仍按原来的上限画到槽位摘要
-        Assert.Same(root, board.Root);
-        Assert.Equal(15, board.VisibleCount);
-        Assert.True(layer.IsSelected);
-        Assert.Equal("层位 C02-L01", board.SelectedTitle);
-        Assert.Equal("无数据 16", board.SelectedSummaryText);
-        Assert.False(board.IsProductSelected);
-    }
-
-    [Fact]
-    public void SelectingProduct_ShowsItsDetails()
+    public void SelectingProduct_ShowsProductInfo_WithoutChangingTheView()
     {
         var topology = Twins.Layout(1, 1, 1, 1, 4);
         var (board, store) = Attached(topology);
+        var root = board.Root;
         var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
         store.Report(product.Id, ProductState.Running, "SN-9");
         board.Refresh();
 
         product.Select();
 
-        Assert.IsType<SystemNodeViewModel>(board.Root);
+        Assert.Same(root, board.Root);
         Assert.True(product.IsSelected);
-        Assert.True(board.IsProductSelected);
-        Assert.Equal("产品位 C01-L01-S01-F01-P04", board.SelectedTitle);
+        Assert.True(board.HasSelection);
+        Assert.Equal("C01-L01-S01-F01-P04", board.SelectedAddressText);
         Assert.Equal("测试中", board.SelectedStateText);
         Assert.Equal("SN-9", board.SelectedSerialText);
         Assert.Equal(product.Id.ToString(), board.SelectedIdText);
         Assert.NotEqual("从未收到", board.SelectedUpdatedText);
+        Assert.False(board.HasSelectedName);
     }
 
     [Fact]
-    public void SelectingAnotherNode_MovesTheHighlight()
+    public void Containers_CannotBeSelected()
+    {
+        var topology = Twins.Layout(2, 1, 1, 1, 2);
+        var (board, _) = Attached(topology);
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().First();
+        product.Select();
+
+        // 柜体、层位、槽位、治具位、系统的 Id 一律忽略，当前选中的产品位保持不变
+        foreach (var container in Flatten(board.Root!).Where(node => node is not ProductNodeViewModel))
+            board.Select(container.Id);
+        board.Select(TopologyNodeId.New());
+
+        Assert.True(product.IsSelected);
+        Assert.Equal(product.Id.ToString(), board.SelectedIdText);
+    }
+
+    [Fact]
+    public void SelectingAnotherProduct_MovesTheHighlight()
     {
         var (board, _) = Attached(Twins.Layout(2, 1, 1, 1, 1));
-        var cabinets = Flatten(board.Root!).OfType<CabinetNodeViewModel>().ToList();
+        var products = Flatten(board.Root!).OfType<ProductNodeViewModel>().ToList();
 
-        cabinets[0].Select();
-        cabinets[1].Select();
+        products[0].Select();
+        products[1].Select();
 
-        Assert.False(cabinets[0].IsSelected);
-        Assert.True(cabinets[1].IsSelected);
-        Assert.Equal("柜体 C02", board.SelectedTitle);
+        Assert.False(products[0].IsSelected);
+        Assert.True(products[1].IsSelected);
+        Assert.Equal("C02-L01-S01-F01-P01", board.SelectedAddressText);
+    }
+
+    [Fact]
+    public void NamedProduct_ShowsItsName()
+    {
+        var topology = Twins.Layout(1, 1, 1, 1, 1);
+        var named = topology.WithNodeSettings(Twins.Id(topology, 1, 1, 1, 1, 1), "左上角", enabled: true).Value;
+        var (board, _) = Attached(named);
+
+        Flatten(board.Root!).OfType<ProductNodeViewModel>().Single().Select();
+
+        Assert.True(board.HasSelectedName);
+        Assert.Equal("左上角", board.SelectedNameText);
     }
 
     // ==================== 刷新 ====================
@@ -219,35 +233,35 @@ public sealed class TwinBoardViewModelTests
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, store) = Attached(topology);
-        var cabinet = Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last();
-        cabinet.Select();
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
+        product.Select();
 
-        // 改名：拓扑被替换，节点 Id 不变
-        _topology.Current = topology.WithNodeSettings(cabinet.Id, "B 柜", enabled: true).Value;
+        // 给所在柜体改名：拓扑被替换，产品位 Id 不变
+        _topology.Current = topology.WithNodeSettings(Twins.Id(topology, 2), "B 柜", enabled: true).Value;
         board.Refresh();
 
-        var rebuilt = Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last();
-        Assert.NotSame(cabinet, rebuilt);
-        Assert.Equal(cabinet.Id, rebuilt.Id);
-        Assert.Equal("B 柜", rebuilt.Name);
+        var rebuilt = Flatten(board.Root!).OfType<ProductNodeViewModel>().Last();
+        Assert.NotSame(product, rebuilt);
+        Assert.Equal(product.Id, rebuilt.Id);
         Assert.True(rebuilt.IsSelected);
-        Assert.Equal("B 柜", board.SelectedNameText);
+        Assert.Equal("C02-L01-S01-F01-P02", board.SelectedAddressText);
+        Assert.Equal("B 柜", Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last().Name);
         Assert.Same(_topology.Current, store.Topology);
     }
 
     [Fact]
-    public void SelectedNodeRemoved_ClearsSelection()
+    public void SelectedProductRemoved_ClearsSelection()
     {
         var topology = Twins.Layout(2, 1, 1, 1, 2);
         var (board, _) = Attached(topology);
-        Flatten(board.Root!).OfType<CabinetNodeViewModel>().Last().Select();
+        Flatten(board.Root!).OfType<ProductNodeViewModel>().Last().Select();
 
         _topology.Current = Twins.Layout(1, 1, 1, 1, 2, current: topology);
         board.Refresh();
 
         Assert.IsType<SystemNodeViewModel>(board.Root);
         Assert.False(board.HasSelection);
-        Assert.Null(board.SelectedTitle);
+        Assert.Null(board.SelectedAddressText);
     }
 
     [Fact]

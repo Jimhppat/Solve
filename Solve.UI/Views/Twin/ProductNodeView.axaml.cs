@@ -1,10 +1,11 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Solve.UI.ViewModels.Twin;
 
 namespace Solve.UI.Views.Twin;
 
 /// <summary>
-/// 六层控件之一。逻辑在视图模型中，代码后置只把点选（选中，不进入下一级）转交视图模型。
+/// 产品位：显示区中唯一可选中的节点。代码后置只把点选转交视图模型。
 /// </summary>
 public partial class ProductNodeView : UserControl
 {
@@ -13,5 +14,12 @@ public partial class ProductNodeView : UserControl
         InitializeComponent();
     }
 
-    private void OnTapped(object? sender, TappedEventArgs e) => TwinNodeInput.Select(DataContext, e);
+    private void OnTapped(object? sender, TappedEventArgs e)
+    {
+        if (DataContext is not ProductNodeViewModel product)
+            return;
+
+        product.Select();
+        e.Handled = true;
+    }
 }

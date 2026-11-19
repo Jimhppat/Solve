@@ -5,33 +5,24 @@
              x:Class="Solve.UI.Views.Twin.FixtureNodeView"
              x:DataType="tvm:FixtureNodeViewModel"
              x:CompileBindings="True"
-             Margin="3"
-             Cursor="Hand"
-             Tapped="OnTapped">
-    <!-- 治具位：只是放产品的容器——不画边框、不显示编号，产品格按网格铺满（每行最多 4 个）。
-         同槽治具之间的空隙（6 px）大于产品格之间（2 px），靠间距看出分组。
-         摘要模式才显示小号编号与状态条。选中时加外框 -->
-    <Border CornerRadius="4"
-            Background="Transparent"
-            BorderBrush="{DynamicResource SemiColorText0}"
-            BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
-            Opacity="{Binding ContentOpacity}">
-        <Panel>
-            <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <UniformGrid Columns="{Binding ProductColumns}" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-            </ItemsControl>
-            <StackPanel IsVisible="{Binding IsSummary}"
-                        Margin="3"
-                        Spacing="3"
-                        VerticalAlignment="Center"
-                        ToolTip.Tip="{Binding SummaryText}">
-                <TextBlock Text="{Binding ShortCode}" FontSize="10" Foreground="{DynamicResource SemiColorText2}" />
-                <tv:TwinStatusBar Summary="{Binding Summary}" Height="8" MinWidth="32" />
-            </StackPanel>
-        </Panel>
-    </Border>
+             Margin="3">
+    <!-- 治具位（只展示，不可选中）：只是放产品的容器——不画边框、不显示编号，产品格按网格铺满（每行最多 4 个）。
+         同槽治具之间的空隙（6 px）大于产品格之间（2 px），靠间距看出分组。摘要模式才显示小号编号与状态条 -->
+    <Panel Opacity="{Binding ContentOpacity}">
+        <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <UniformGrid Columns="{Binding ProductColumns}" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+        </ItemsControl>
+        <StackPanel IsVisible="{Binding IsSummary}"
+                    Margin="3"
+                    Spacing="3"
+                    VerticalAlignment="Center"
+                    ToolTip.Tip="{Binding SummaryText}">
+            <TextBlock Text="{Binding ShortCode}" FontSize="10" Foreground="{DynamicResource SemiColorText2}" />
+            <tv:TwinStatusBar Summary="{Binding Summary}" Height="8" MinWidth="32" />
+        </StackPanel>
+    </Panel>
 </UserControl>

@@ -4,8 +4,7 @@
              xmlns:tv="using:Solve.UI.Views.Twin"
              x:Class="Solve.UI.Views.Twin.SystemNodeView"
              x:DataType="tvm:SystemNodeViewModel"
-             x:CompileBindings="True"
-             Tapped="OnTapped">
+             x:CompileBindings="True">
     <!-- 系统：铺满整个显示区。标题行：左侧系统名称与全部计数，右侧图例；柜体排成一行等分宽度。
          不再画全局状态条：每个柜体卡片已有自己的状态条，只有一个柜体时两条完全重复。
          柜体多到放不下最小尺寸时，显示区出现横向滚动条 -->

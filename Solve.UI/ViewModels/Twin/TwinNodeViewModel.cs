@@ -11,18 +11,17 @@ namespace Solve.UI.ViewModels.Twin;
 /// 主控台上一个六层节点的视图模型基类。容器节点显示其下产品位的汇总，产品位显示自身状态。
 /// </summary>
 /// <remarks>
-/// <para>只为当前看得见的节点创建：显示区按"焦点 + 显示数量上限"决定画到哪一层，最深一层的容器用摘要模式（只画状态条）。</para>
+/// <para>只为当前画出的节点创建：显示区从系统根按显示数量上限决定画到哪一层，最深一层的容器用摘要模式（只画状态条）。</para>
+/// <para>容器（系统、柜体、层位、槽位、治具位）只做展示，不能被选中；只有 <see cref="ProductNodeViewModel"/> 可选中。</para>
 /// <para>系统用 <see cref="Id"/> 对应状态库中的数据，界面显示位置编码与名称。只在 UI 线程上使用。</para>
 /// </remarks>
 public abstract class TwinNodeViewModel : ViewModelBase
 {
     private TwinStatusSummary _summary = TwinStatusSummary.None;
-    private bool _isSelected;
 
-    protected TwinNodeViewModel(TopologyNode node, TwinBoardViewModel board)
+    protected TwinNodeViewModel(TopologyNode node)
     {
         Node = node;
-        Board = board;
     }
 
     public TopologyNode Node { get; }
@@ -113,19 +112,6 @@ public abstract class TwinNodeViewModel : ViewModelBase
     /// </summary>
     public string SummaryText => _summary.Total == 0 ? "没有产品位" : _summary.DescribeAll();
 
-    public bool IsSelected
-    {
-        get => _isSelected;
-        internal set => SetProperty(ref _isSelected, value);
-    }
-
-    internal TwinBoardViewModel Board { get; }
-
-    /// <summary>
-    /// 点选：选中，在控制区显示详情。显示区是展示面板，不进入下一级
-    /// </summary>
-    public void Select() => Board.Select(Id);
-
     internal void Expand(IReadOnlyList<TwinNodeViewModel> children)
     {
         IsExpanded = true;
@@ -150,11 +136,11 @@ public abstract class TwinNodeViewModel : ViewModelBase
 
     internal static TwinNodeViewModel Create(TopologyNode node, TwinBoardViewModel board) => node.Level switch
     {
-        TopologyLevel.System => new SystemNodeViewModel(node, board),
-        TopologyLevel.Cabinet => new CabinetNodeViewModel(node, board),
-        TopologyLevel.Layer => new LayerNodeViewModel(node, board),
-        TopologyLevel.Slot => new SlotNodeViewModel(node, board),
-        TopologyLevel.Fixture => new FixtureNodeViewModel(node, board),
+        TopologyLevel.System => new SystemNodeViewModel(node),
+        TopologyLevel.Cabinet => new CabinetNodeViewModel(node),
+        TopologyLevel.Layer => new LayerNodeViewModel(node),
+        TopologyLevel.Slot => new SlotNodeViewModel(node),
+        TopologyLevel.Fixture => new FixtureNodeViewModel(node),
         _ => new ProductNodeViewModel(node, board),
     };
 }
@@ -162,27 +148,27 @@ public abstract class TwinNodeViewModel : ViewModelBase
 /// <summary>
 /// 系统：柜体排成一行，等分宽度
 /// </summary>
-public sealed class SystemNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
+public sealed class SystemNodeViewModel(TopologyNode node) : TwinNodeViewModel(node);
 
 /// <summary>
 /// 柜体：层位上下堆叠、等分高度，层位 1 在最上面
 /// </summary>
-public sealed class CabinetNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
+public sealed class CabinetNodeViewModel(TopologyNode node) : TwinNodeViewModel(node);
 
 /// <summary>
 /// 层位：槽位从左到右排成一行、等分宽度
 /// </summary>
-public sealed class LayerNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
+public sealed class LayerNodeViewModel(TopologyNode node) : TwinNodeViewModel(node);
 
 /// <summary>
 /// 槽位：治具位上下排列、等分高度
 /// </summary>
-public sealed class SlotNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
+public sealed class SlotNodeViewModel(TopologyNode node) : TwinNodeViewModel(node);
 
 /// <summary>
 /// 治具位：产品位按网格铺满，每行最多 4 个
 /// </summary>
-public sealed class FixtureNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board)
+public sealed class FixtureNodeViewModel(TopologyNode node) : TwinNodeViewModel(node)
 {
     /// <summary>
     /// 每行最多的产品位数（默认值，按现场治具调整）
@@ -196,12 +182,13 @@ public sealed class FixtureNodeViewModel(TopologyNode node, TwinBoardViewModel b
 }
 
 /// <summary>
-/// 产品位：叶子，显示自身状态与序号
+/// 产品位：叶子，显示自身状态与序号；显示区中唯一可选中的节点
 /// </summary>
-public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board)
+public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node)
 {
     private ProductState _state = ProductState.Unknown;
     private string? _serialNumber;
+    private bool _isSelected;
 
     public ProductState State
     {
@@ -225,6 +212,17 @@ public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel b
     }
 
     public string OrdinalText => Node.Ordinal.ToString(CultureInfo.InvariantCulture);
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        internal set => SetProperty(ref _isSelected, value);
+    }
+
+    /// <summary>
+    /// 点选：选中这个产品位，在控制区显示产品信息
+    /// </summary>
+    public void Select() => board.Select(Id);
 
     internal override void Refresh(TwinStateStore store)
     {

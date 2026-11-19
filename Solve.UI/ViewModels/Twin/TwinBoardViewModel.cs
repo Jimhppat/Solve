@@ -12,7 +12,8 @@ namespace Solve.UI.ViewModels.Twin;
 /// 主控台显示区：纯展示面板，始终显示整套设备（从系统根开始），按显示数量上限逐层展开六层节点的产品状态。
 /// </summary>
 /// <remarks>
-/// <para>点击只选中：任何节点被点选后在控制区显示详情，画面不切换、不进入下一级。</para>
+/// <para>只有产品位可以被点选：选中后在控制区显示产品信息，画面不切换、不进入下一级；
+/// 柜体、层位等容器只做展示。</para>
 /// <para>显示数量上限：从系统根往下逐层展开，可见节点超过 <see cref="ElementBudget"/> 时停在上一层，
 /// 最深一层的容器用摘要模式（只画状态条）。至少展开一层，所以柜体总会画出来。</para>
 /// <para>刷新：视图以 <see cref="RefreshInterval"/> 周期调用 <see cref="Refresh"/>，只更新状态有变化且当前看得见的节点；
@@ -93,57 +94,54 @@ public sealed class TwinBoardViewModel : ViewModelBase
     /// </summary>
     public int VisibleCount => _visible.Count;
 
-    // ==================== 选中节点详情（主控台控制区） ====================
+    // ==================== 选中产品位的信息（主控台控制区） ====================
+    // 只有产品位能被选中；柜体、层位等容器的情况在显示区上已经看得到（边框颜色、圆点、告警红字），不单独显示
 
-    public bool HasSelection => SelectedNode is not null;
-
-    public bool IsProductSelected => SelectedNode is { Level: TopologyLevel.Product };
-
-    public string? SelectedTitle => SelectedNode is { } node
-        ? node.Level == TopologyLevel.System ? $"系统 {node.DisplayName}" : $"{node.Level.DisplayName()} {node.Address}"
-        : null;
-
-    public string? SelectedNameText => SelectedNode is { } node ? node.Name ?? "（未命名）" : null;
-
-    public string? SelectedIdText => SelectedNode?.Id.ToString();
+    public bool HasSelection => SelectedProduct is not null;
 
     /// <summary>
-    /// 产品位：自身状态；容器：最严重的状态
+    /// 产品位编码（人用），如 C01-L01-S01-F01-P01
     /// </summary>
+    public string? SelectedAddressText => SelectedProduct?.Address.ToString();
+
+    /// <summary>
+    /// 产品位配置的名称；未命名为 null，界面不显示这一行
+    /// </summary>
+    public string? SelectedNameText => SelectedProduct?.Name;
+
+    public bool HasSelectedName => SelectedNameText is not null;
+
+    /// <summary>
+    /// 节点 Id（系统用）
+    /// </summary>
+    public string? SelectedIdText => SelectedProduct?.Id.ToString();
+
     public string? SelectedStateText
     {
         get
         {
-            if (SelectedNode is not { } node || _store is not { } store)
+            if (SelectedProduct is not { } node || _store is not { } store)
                 return null;
 
             if (!node.IsEffectivelyEnabled)
                 return "停用";
 
-            if (node.Level == TopologyLevel.Product)
-                return store.TryGetProduct(node.Id, out var product) ? product.State.DisplayName() : ProductState.Unknown.DisplayName();
-
-            return store.GetSummary(node.Id).Worst?.DisplayName() ?? "停用";
+            return store.TryGetProduct(node.Id, out var product) ? product.State.DisplayName() : ProductState.Unknown.DisplayName();
         }
     }
 
-    public string? SelectedSerialText => IsProductSelected && _store is { } store && store.TryGetProduct(SelectedNode!.Id, out var product)
+    public string? SelectedSerialText => SelectedProduct is { } node && _store is { } store && store.TryGetProduct(node.Id, out var product)
         ? product.SerialNumber ?? "—"
         : null;
 
-    public string? SelectedUpdatedText => IsProductSelected && _store is { } store && store.TryGetProduct(SelectedNode!.Id, out var product)
+    public string? SelectedUpdatedText => SelectedProduct is { } node && _store is { } store && store.TryGetProduct(node.Id, out var product)
         ? product.UpdatedAt is { } at ? at.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) : "从未收到"
         : null;
 
-    /// <summary>
-    /// 其下全部产品位的统计
-    /// </summary>
-    public string? SelectedSummaryText => SelectedNode is { } node && _store is { } store
-        ? store.GetSummary(node.Id) is { Total: > 0 } summary ? summary.DescribeAll() : "没有产品位"
-        : null;
-
-    private TopologyNode? SelectedNode
-        => _selectedId is { } id && _bound is { } topology && topology.TryGetNode(id, out var node) ? node : null;
+    private TopologyNode? SelectedProduct
+        => _selectedId is { } id && _bound is { } topology && topology.TryGetNode(id, out var node) && node.Level == TopologyLevel.Product
+            ? node
+            : null;
 
     // ==================== 接入、刷新与选中 ====================
 
@@ -204,16 +202,20 @@ public sealed class TwinBoardViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 选中一个节点，在控制区显示详情。画面不变：显示区是展示面板，不进入下一级。
+    /// 选中一个产品位，在控制区显示产品信息。画面不变：显示区是展示面板，不进入下一级。
+    /// 只接受产品位：传入容器或不存在的 Id 时忽略，当前选中保持不变。
     /// </summary>
-    public void Select(TopologyNodeId id)
+    public void Select(TopologyNodeId productId)
     {
-        if (_selectedId is { } previous && _visible.TryGetValue(previous, out var oldItem))
-            oldItem.IsSelected = false;
+        if (_bound is not { } topology || !topology.TryGetNode(productId, out var node) || node.Level != TopologyLevel.Product)
+            return;
 
-        _selectedId = id;
-        if (_visible.TryGetValue(id, out var newItem))
-            newItem.IsSelected = true;
+        if (_selectedId is { } previous && _visible.TryGetValue(previous, out var oldItem) && oldItem is ProductNodeViewModel oldProduct)
+            oldProduct.IsSelected = false;
+
+        _selectedId = productId;
+        if (_visible.TryGetValue(productId, out var newItem) && newItem is ProductNodeViewModel newProduct)
+            newProduct.IsSelected = true;
 
         RaiseSelectionChanged();
     }
@@ -232,8 +234,8 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
         Root = topology is null || _store is not { } store ? null : Build(topology.Root, DeepestLevel(topology), store);
 
-        if (_selectedId is { } id && _visible.TryGetValue(id, out var item))
-            item.IsSelected = true;
+        if (_selectedId is { } id && _visible.TryGetValue(id, out var item) && item is ProductNodeViewModel product)
+            product.IsSelected = true;
 
         OnPropertyChanged(nameof(VisibleCount));
         OnPropertyChanged(nameof(HasTopology));
@@ -276,13 +278,12 @@ public sealed class TwinBoardViewModel : ViewModelBase
     private void RaiseSelectionChanged()
     {
         OnPropertyChanged(nameof(HasSelection));
-        OnPropertyChanged(nameof(IsProductSelected));
-        OnPropertyChanged(nameof(SelectedTitle));
+        OnPropertyChanged(nameof(SelectedAddressText));
         OnPropertyChanged(nameof(SelectedNameText));
+        OnPropertyChanged(nameof(HasSelectedName));
         OnPropertyChanged(nameof(SelectedIdText));
         OnPropertyChanged(nameof(SelectedStateText));
         OnPropertyChanged(nameof(SelectedSerialText));
         OnPropertyChanged(nameof(SelectedUpdatedText));
-        OnPropertyChanged(nameof(SelectedSummaryText));
     }
 }

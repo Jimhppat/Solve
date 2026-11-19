@@ -1,10 +1,9 @@
 using Avalonia.Controls;
-using Avalonia.Input;
 
 namespace Solve.UI.Views.Twin;
 
 /// <summary>
-/// 六层控件之一。逻辑在视图模型中，代码后置只把点选（选中，不进入下一级）转交视图模型。
+/// 六层控件之一（只展示，不可选中）。逻辑在视图模型中，代码后置不做任何事。
 /// </summary>
 public partial class CabinetNodeView : UserControl
 {
@@ -12,6 +11,4 @@ public partial class CabinetNodeView : UserControl
     {
         InitializeComponent();
     }
-
-    private void OnTapped(object? sender, TappedEventArgs e) => TwinNodeInput.Select(DataContext, e);
 }
