@@ -1,0 +1,25 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:Solve.UI.ViewModels"
+        xmlns:views="using:Solve.UI.Views"
+        mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="640"
+        x:Class="Solve.UI.Views.BusModulesWindow"
+        x:DataType="vm:BusDevicesViewModel"
+        Title="{Binding Bus.Name, StringFormat='模块配置 - {0}'}"
+        Width="1440" Height="900"
+        MinWidth="1100" MinHeight="640"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource SemiColorBackground0}">
+
+    <!-- 一条总线的模块配置窗口：非模态、从属于主窗口（见 MainWindow.OnModuleWindowRequested）。
+         Width/Height 只是取不到屏幕信息时的后备值，打开时按所在屏幕工作区的 90% 设置 -->
+
+
+    <Design.DataContext>
+        <vm:BusDevicesViewModel />
+    </Design.DataContext>
+
+    <views:BusDevicesView />
+</Window>

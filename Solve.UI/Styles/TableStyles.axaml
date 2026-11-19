@@ -1,0 +1,91 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 表格与弹窗表单共用样式：总线页与模块配置窗口都引用这里。模块配置是独立窗口，不会继承总线页的样式 -->
+
+    <!-- 表格行：紧凑高密度、底部发丝线 -->
+    <Style Selector="Border.row">
+        <Setter Property="Height" Value="42" />
+        <Setter Property="Padding" Value="14,0" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+    <Style Selector="Border.head">
+        <Setter Property="Height" Value="34" />
+        <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+        <Setter Property="Padding" Value="14,0" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+    <Style Selector="Border.row TextBlock">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <Style Selector="Border.head TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- 端口参数用等宽字体 -->
+    <Style Selector="TextBlock.mono">
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, Courier New" />
+        <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+    </Style>
+    <!-- 说明栏的错误信息（故障原因、被拒绝的操作）：必须排在 .muted 之后以覆盖其前景色 -->
+    <Style Selector="TextBlock.error">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+    </Style>
+
+    <!-- 启动问题横幅：默认警告色，.fatal 为危险色 -->
+    <Style Selector="Border.notice">
+        <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+        <Setter Property="Padding" Value="12,10" />
+    </Style>
+    <Style Selector="Border.notice PathIcon.notice-icon">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorWarning}" />
+    </Style>
+    <Style Selector="Border.notice.fatal">
+        <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource SemiColorDanger}" />
+    </Style>
+    <Style Selector="Border.notice.fatal PathIcon.notice-icon">
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+    </Style>
+    <Style Selector="Ellipse.dot">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- ==================== 弹窗表单 ==================== -->
+    <!-- 字段 = 标签 + 控件，统一 4px 间距 -->
+    <Style Selector="StackPanel.field">
+        <Setter Property="Spacing" Value="4" />
+    </Style>
+    <Style Selector="TextBlock.field-label">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+    </Style>
+    <!-- 分组卡片：浅底 + 小标题，让每块灰底都有明确语义 -->
+    <Style Selector="Border.section">
+        <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+        <Setter Property="Padding" Value="14,12,14,14" />
+    </Style>
+    <Style Selector="TextBlock.section-title">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+</Styles>

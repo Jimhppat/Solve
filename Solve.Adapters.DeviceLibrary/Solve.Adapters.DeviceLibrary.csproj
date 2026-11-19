@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- 设备库适配器：发现、校验、确认并加载第三方驱动包，向内核提供驱动目录。内核的其他部分不引用驱动包。 -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>14</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Solve.Core.Application\Solve.Core.Application.csproj" />
+      <ProjectReference Include="..\Solve.Device.Sdk\Solve.Device.Sdk.csproj" />
+    </ItemGroup>
+
+</Project>

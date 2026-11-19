@@ -105,6 +105,27 @@ public sealed class SqliteDatabase
         CREATE UNIQUE INDEX ux_topology_nodes_address
             ON topology_nodes (address);
         """,
+
+        // v4：总线挂载设备。只新增表，不改动既有数据；与 v1 一样，数值范围由领域层校验，数据库只保证结构完整。
+        // bus_id 使用 ON DELETE CASCADE：删除总线时其下设备在同一条 DELETE 语句内一并删除，不会留下孤儿设备。
+        // 因此 buses 表的保存必须一直用 ON CONFLICT DO UPDATE，不得改成 INSERT OR REPLACE 或"先删后插"，否则保存总线会清空其设备。
+        // driver_id 存驱动目录中的稳定标识（如 generic.module），驱动在代码里，不建外键；未知驱动的设备照常加载、显示为未知驱动。
+        """
+        CREATE TABLE bus_devices (
+            id          TEXT    NOT NULL PRIMARY KEY CHECK (length(id) = 36),
+            bus_id      TEXT    NOT NULL REFERENCES buses (id) ON DELETE CASCADE,
+            driver_id   TEXT    NOT NULL,
+            address     INTEGER NOT NULL,
+            name        TEXT    NOT NULL,
+            remark      TEXT    NULL,
+            created_at  TEXT    NOT NULL,  -- ISO 8601 UTC
+            updated_at  TEXT    NOT NULL   -- ISO 8601 UTC
+        ) STRICT;
+
+        -- 同一条总线上地址唯一；兼作外键子表索引（级联删除按 bus_id 查找）
+        CREATE UNIQUE INDEX ux_bus_devices_address
+            ON bus_devices (bus_id, address);
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

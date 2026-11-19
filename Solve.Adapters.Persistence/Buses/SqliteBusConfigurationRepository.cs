@@ -70,7 +70,8 @@ public sealed class SqliteBusConfigurationRepository : IBusConfigurationReposito
          WHERE id = @Id;
         """;
 
-    // 更新时保留 created_at，只刷新 updated_at；kind 变化时另一类链路字段被置 NULL，满足表级 CHECK
+    // 更新时保留 created_at，只刷新 updated_at；kind 变化时另一类链路字段被置 NULL，满足表级 CHECK。
+    // 必须保持 ON CONFLICT DO UPDATE：改成 INSERT OR REPLACE 会先删旧行，触发级联删除该总线的全部挂载设备
     private const string UpsertSql = """
         INSERT INTO buses (
             id, kind, name,
@@ -106,7 +107,10 @@ public sealed class SqliteBusConfigurationRepository : IBusConfigurationReposito
             updated_at                 = excluded.updated_at;
         """;
 
+    // 挂载设备由 bus_devices 的 ON DELETE CASCADE 随总线一并删除（见 SqliteDatabase v4 迁移）
     private const string DeleteSql = "DELETE FROM buses WHERE id = @Id;";
+
+    private const string CountDevicesSql = "SELECT count(*) FROM bus_devices WHERE bus_id = @Id;";
 
     private readonly SqliteDatabase _database;
     private readonly ILogger _logger;
@@ -217,11 +221,19 @@ public sealed class SqliteBusConfigurationRepository : IBusConfigurationReposito
     public async Task<Result> DeleteAsync(BusId id, CancellationToken cancellationToken)
     {
         int affected;
+        long devices;
         try
         {
+            var parameters = new { Id = id.Value.ToString("D") };
             await using var connection = await _database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            // 计数与删除在同一事务内：日志里的连带设备数就是被级联删除的数量
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            devices = await connection.ExecuteScalarAsync<long>(
+                _database.Command(CountDevicesSql, cancellationToken, parameters, transaction)).ConfigureAwait(false);
             affected = await connection.ExecuteAsync(
-                _database.Command(DeleteSql, cancellationToken, new { Id = id.Value.ToString("D") })).ConfigureAwait(false);
+                _database.Command(DeleteSql, cancellationToken, parameters, transaction)).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SqliteException ex)
         {
@@ -231,7 +243,7 @@ public sealed class SqliteBusConfigurationRepository : IBusConfigurationReposito
         if (affected == 0)
             return Result.Failure(BusErrors.StorageNotFound(id));
 
-        _logger.LogInformation("删除总线配置 {BusId}", id);
+        _logger.LogInformation("删除总线配置 {BusId}，连带删除挂载模块 {DeviceCount} 个", id, devices);
         return Result.Success();
     }
 

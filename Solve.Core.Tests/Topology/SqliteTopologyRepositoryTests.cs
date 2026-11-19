@@ -111,7 +111,6 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task Open_CreatesTopologyTable_AtLatestVersion()
     {
-        Assert.Equal(3, SqliteDatabase.LatestSchemaVersion);
         Assert.Equal(SqliteDatabase.LatestSchemaVersion, await ScalarRawAsync<long>("PRAGMA user_version;"));
         Assert.Equal(1L, await ScalarRawAsync<long>("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'topology_nodes';"));
     }
@@ -119,7 +118,8 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task Migration_V2ToV3_AddsTopologyTable()
     {
-        await ExecuteRawAsync("DROP TABLE topology_nodes; PRAGMA user_version = 2;");
+        // 退回 v2 形态：去掉 v3 及之后新增的表
+        await ExecuteRawAsync("DROP TABLE bus_devices; DROP TABLE topology_nodes; PRAGMA user_version = 2;");
         SqliteDatabase.ClearPool(new SqliteStorageOptions(DatabasePath));
 
         var reopened = await OpenDatabaseAsync();

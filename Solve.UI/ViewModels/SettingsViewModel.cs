@@ -74,6 +74,11 @@ public sealed class SettingsViewModel : ViewModelBase
     public string PageTitle => "系统设置";
 
     /// <summary>
+    /// 「设备库」卡片。启用、撤销驱动包是即时操作（重启后生效），不随页面的「保存」一起提交。
+    /// </summary>
+    public DeviceLibraryViewModel DeviceLibrary { get; } = new();
+
+    /// <summary>
     /// 保存页面上的全部设置
     /// </summary>
     public AsyncRelayCommand SaveCommand { get; }

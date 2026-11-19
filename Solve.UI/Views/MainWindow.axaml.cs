@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -9,6 +11,10 @@ namespace Solve.UI.Views;
 
 public partial class MainWindow : Window
 {
+    // 模块配置窗口由主窗口统一持有：总线页视图在切换页面时会被重建，放在那里会丢失已打开窗口的登记
+    private readonly Dictionary<BusDevicesViewModel, BusModulesWindow> _moduleWindows = [];
+    private BusConsoleViewModel? _busConsole;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -17,6 +23,69 @@ public partial class MainWindow : Window
     public MainWindow(MainViewModel viewModel) : this()
     {
         DataContext = viewModel;
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+
+        if (_busConsole is not null)
+            _busConsole.ModuleWindowRequested -= OnModuleWindowRequested;
+
+        _busConsole = (DataContext as MainViewModel)?.BusConsole;
+
+        if (_busConsole is not null)
+            _busConsole.ModuleWindowRequested += OnModuleWindowRequested;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        if (_busConsole is not null)
+        {
+            _busConsole.ModuleWindowRequested -= OnModuleWindowRequested;
+            _busConsole = null;
+        }
+
+        base.OnClosed(e);
+    }
+
+    // 模块配置用非模态的从属窗口：模态会锁住主窗口，标题栏的「紧急停止」就点不到了。
+    // 从属窗口始终在主窗口之上，随主窗口最小化、关闭；同一条总线已打开时只激活，不重复创建。
+    private void OnModuleWindowRequested(object? sender, BusDevicesViewModel page)
+    {
+        if (_moduleWindows.TryGetValue(page, out var existing))
+        {
+            if (existing.WindowState == WindowState.Minimized)
+                existing.WindowState = WindowState.Normal;
+            existing.Activate();
+            return;
+        }
+
+        var window = new BusModulesWindow { DataContext = page };
+        FitToScreen(window);
+        _moduleWindows.Add(page, window);
+        window.Closed += (_, _) =>
+        {
+            _moduleWindows.Remove(page);
+            _busConsole?.ReleaseModulePage(page);
+        };
+        window.Show(this);
+    }
+
+    /// <summary>
+    /// 模块配置窗口取主窗口所在屏幕工作区（不含任务栏）的 90%：各种分辨率下都完整可见，仍可手动最大化
+    /// </summary>
+    private void FitToScreen(Window window)
+    {
+        const double ScreenFraction = 0.9;
+
+        if (Screens.ScreenFromWindow(this) is not { } screen)
+            return;
+
+        // WorkingArea 是物理像素，窗口尺寸是与 DPI 无关的逻辑像素，按屏幕缩放换算
+        var area = screen.WorkingArea;
+        window.Width = Math.Max(window.MinWidth, area.Width / screen.Scaling * ScreenFraction);
+        window.Height = Math.Max(window.MinHeight, area.Height / screen.Scaling * ScreenFraction);
     }
 
     // 自绘系统按钮：ElementRole 只负责 Win32 命中测试（贴靠布局、悬停语义），
