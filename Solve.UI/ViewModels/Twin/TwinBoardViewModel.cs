@@ -14,7 +14,7 @@ namespace Solve.UI.ViewModels.Twin;
 /// <remarks>
 /// <para>柜体切换：系统下的全部柜体都有视图模型，作为切换胶囊显示各自最严重的状态与告警数，看不见的柜体出了故障也能发现；
 /// 只有当前柜体展开到下级。切换时收起旧柜体、放掉它下级的视图模型，再展开新柜体。默认显示第一个柜体。</para>
-/// <para>只有产品位可以被点选：选中后在那个产品格旁弹出产品信息卡片，画面不切换、不进入下一级；
+/// <para>只有产品位可以被点选：选中后在那个产品格旁弹出产品信息卡片，再点同一个收起（<see cref="ToggleSelection"/>），画面不切换、不进入下一级；
 /// 柜体、层位等容器只做展示。选中与卡片同生同灭：卡片收起（<see cref="ClearSelection"/>）即取消选中；
 /// 切换柜体、拓扑重建时卡片所指的产品格已不在画面上，同样取消选中。</para>
 /// <para>显示数量上限：只计算当前柜体（加上系统与全部柜体胶囊），往下逐层展开，超过 <see cref="ElementBudget"/> 时停在上一层，
@@ -212,6 +212,18 @@ public sealed class TwinBoardViewModel : ViewModelBase
         _selectedId = productId;
         product.IsSelected = true;
         RaiseSelectionChanged();
+    }
+
+    /// <summary>
+    /// 点选产品格的开关：点未选中的产品位 → 选中（卡片打开或移过去）；再点已选中的那一个 → 取消选中（卡片收起）。
+    /// 与 <see cref="Select"/> 一样只接受当前画出的产品位。
+    /// </summary>
+    public void ToggleSelection(TopologyNodeId productId)
+    {
+        if (_selectedId == productId)
+            ClearSelection();
+        else
+            Select(productId);
     }
 
     /// <summary>

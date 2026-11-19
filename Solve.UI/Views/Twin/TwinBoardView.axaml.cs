@@ -15,7 +15,7 @@ namespace Solve.UI.Views.Twin;
 /// </summary>
 /// <remarks>
 /// <para>刷新节拍：显示区在界面上时按固定周期刷新，离开界面（切到其他页面）即停止，不占 UI 线程。</para>
-/// <para>产品信息卡片：点选产品格 → 卡片挂在那一格旁边打开；再点同一格保持不变；点另一格 → 卡片移到那一格。
+/// <para>产品信息卡片：点选产品格 → 卡片挂在那一格旁边打开；再点同一格 → 收起；点另一格 → 卡片移到那一格。
 /// 在窗口里按下的位置既不是卡片也不是产品格（空白处、容器、切换胶囊、页面其他元素）→ 收起并取消选中。
 /// Esc、滚动显示区（卡片会与格子错位）、离开主控台也会收起；视图模型取消选中（切换柜体、拓扑重建）时卡片跟着收起。</para>
 /// <para>判断"按在哪里"用窗口级隧道事件，并且包括已处理的事件：按钮、切换胶囊会把按下事件标记为已处理，冒泡收不到。
@@ -81,15 +81,12 @@ public partial class TwinBoardView : UserControl
         if (_board is not { } board || e.Source is not Control fixture)
             return;
 
-        // 再点已经打开的那一格：保持不变
-        if (ProductCard.IsOpen && e.Product.IsSelected)
-            return;
-
-        // 换到另一格时先关再开：弹出层只在打开时按挂靠位置计算自己的位置
+        // 点未选中的格子：卡片挂到这一格打开（换格时先关再开，弹出层只在打开时按挂靠位置计算自己的位置）；
+        // 再点已打开的那一格：收起
         ProductCard.IsOpen = false;
         ProductCard.PlacementTarget = fixture;
         ProductCard.PlacementRect = e.Cell;
-        board.Select(e.Product.Id);
+        board.ToggleSelection(e.Product.Id);
         ProductCard.IsOpen = board.HasSelection;
     }
 

@@ -338,6 +338,49 @@ public sealed class TwinBoardViewModelTests
     }
 
     [Fact]
+    public void ToggleSelection_SecondClickOnTheSameProductCloses_AnotherProductMoves()
+    {
+        var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 2));
+        var products = Flatten(board.Root!).OfType<ProductNodeViewModel>().ToList();
+
+        // 第一次点：打开
+        board.ToggleSelection(products[0].Id);
+        Assert.True(products[0].IsSelected);
+        Assert.Equal("C01-L01-S01-F01-P01", board.SelectedAddressText);
+
+        // 点另一个：移过去
+        board.ToggleSelection(products[1].Id);
+        Assert.False(products[0].IsSelected);
+        Assert.True(products[1].IsSelected);
+        Assert.Equal("C01-L01-S01-F01-P02", board.SelectedAddressText);
+
+        // 再点同一个：收起
+        board.ToggleSelection(products[1].Id);
+        Assert.False(products[1].IsSelected);
+        Assert.False(board.HasSelection);
+
+        // 收起后再点：重新打开
+        board.ToggleSelection(products[1].Id);
+        Assert.True(products[1].IsSelected);
+        Assert.True(board.HasSelection);
+    }
+
+    [Fact]
+    public void ToggleSelection_IgnoresContainersAndUnknownIds()
+    {
+        var topology = Twins.Layout(1, 1, 1, 1, 2);
+        var (board, _) = Attached(topology);
+        var product = Flatten(board.Root!).OfType<ProductNodeViewModel>().First();
+        board.ToggleSelection(product.Id);
+
+        board.ToggleSelection(Twins.Id(topology, 1));
+        board.ToggleSelection(TopologyNodeId.New());
+
+        Assert.True(product.IsSelected);
+        Assert.Equal("C01-L01-S01-F01-P01", board.SelectedAddressText);
+    }
+
+    [Fact]
     public void NamedProduct_ShowsItsName()
     {
         var topology = Twins.Layout(1, 1, 1, 1, 1);
