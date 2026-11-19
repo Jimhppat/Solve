@@ -82,7 +82,7 @@ public sealed class TopologyServiceTests
     }
 
     [Fact]
-    public async Task Plan_Grow_KeepsIds_AndNeedsNoConfirmation()
+    public async Task Plan_Grow_KeepsIds_AndConfirmsNewEnabledPositions()
     {
         var current = FakeTopologyRepository.Layout(1, 1, 1, 1, 2);
         await LoadedAsync(current);
@@ -92,8 +92,14 @@ public sealed class TopologyServiceTests
         Assert.Same(current, plan.Base);
         Assert.Equal(6, plan.AddedCount);
         Assert.Equal(0, plan.ChangedCount);
-        Assert.False(plan.RequiresConfirmation);
         Assert.Equal(current.Root.Id, plan.Candidate.Root.Id);
+
+        // 统一布局补出的位置默认启用：已有设备上新增可用位置必须确认，不能悄悄放行
+        Assert.True(plan.RequiresConfirmation);
+        Assert.Equal(6, plan.AddedEnabledCount);
+        Assert.Equal(2, plan.AddedEnabledProductCount);
+        Assert.Equal([TopologyAddress.Of(2)], plan.AddedEnabledRoots);
+        Assert.Contains("按统一布局修改", plan.Operation);
     }
 
     [Fact]
@@ -201,6 +207,150 @@ public sealed class TopologyServiceTests
         _repository.NextLoadError = FakeTopologyRepository.CorruptError;
         await _service.LoadAsync(CancellationToken.None);
         Assert.Equal(TopologyErrors.SaveBlockedCode, _service.PlanNodeSettings(TopologyNodeId.New(), "X", true).Error.Code);
+    }
+
+    // ---------- 结构编辑的预览 ----------
+
+    [Fact]
+    public async Task PlanAddChildren_Disabled_NeedsNoConfirmation_AndDescribesOperation()
+    {
+        var current = FakeTopologyRepository.Layout(1, 2, 1, 1, 1);
+        await LoadedAsync(current);
+        var cabinet = current.GetNode(TopologyAddress.Of(1)).Value;
+
+        var plan = _service.PlanAddChildren(cabinet.Id, 2, new TopologyTemplate([3, 1, 2]), enabled: false).Value;
+
+        Assert.Same(current, plan.Base);
+        Assert.Equal(2 * (1 + 3 + 3 + 6), plan.AddedCount);
+        Assert.Equal(0, plan.AddedEnabledCount); // 新层位停用，下级都被它屏蔽
+        Assert.False(plan.RequiresConfirmation);
+        Assert.Contains("C01", plan.Operation);
+        Assert.Contains($"[{cabinet.Id}]", plan.Operation);
+        Assert.Contains("新增 2 个层位", plan.Operation);
+    }
+
+    [Fact]
+    public async Task PlanAddChildren_Enabled_RequiresConfirmation_AndListsNewPositions()
+    {
+        var current = FakeTopologyRepository.Layout(1, 2, 1, 1, 1);
+        await LoadedAsync(current);
+        var cabinet = current.GetNode(TopologyAddress.Of(1)).Value;
+
+        var plan = _service.PlanAddChildren(cabinet.Id, 2, new TopologyTemplate([1, 1, 2]), enabled: true).Value;
+
+        Assert.True(plan.RequiresConfirmation);
+        Assert.Equal(plan.AddedCount, plan.AddedEnabledCount);
+        Assert.Equal(4, plan.AddedEnabledProductCount);
+        Assert.Equal([TopologyAddress.Of(1, 3), TopologyAddress.Of(1, 4)], plan.AddedEnabledRoots);
+    }
+
+    [Fact]
+    public async Task PlanAddChildren_EnabledUnderDisabledParent_IsNotUsable_NoConfirmation()
+    {
+        var current = FakeTopologyRepository.Layout(1, 1, 1, 1, 1);
+        await LoadedAsync(current);
+        var cabinet = current.GetNode(TopologyAddress.Of(1)).Value;
+        Assert.True((await _service.SaveAsync(_service.PlanNodeSettings(cabinet.Id, null, false).Value, CancellationToken.None)).IsSuccess);
+
+        var plan = _service.PlanAddChildren(cabinet.Id, 1, new TopologyTemplate([1, 1, 1]), enabled: true).Value;
+
+        Assert.Equal(0, plan.AddedEnabledCount);
+        Assert.False(plan.RequiresConfirmation);
+    }
+
+    [Fact]
+    public async Task PlanRemove_RequiresConfirmation_AndListsRemovedSubtree()
+    {
+        var current = FakeTopologyRepository.Layout(1, 3, 1, 1, 2);
+        await LoadedAsync(current);
+        var layer = current.GetNode(TopologyAddress.Of(1, 2)).Value;
+
+        var plan = _service.PlanRemove(layer.Id).Value;
+
+        Assert.True(plan.RequiresConfirmation);
+        Assert.Equal(5, plan.RemovedCount);
+        Assert.Equal(2, plan.RemovedProductCount);
+        Assert.Equal([TopologyAddress.Of(1, 2)], plan.RemovedRoots);
+        Assert.Equal(0, plan.RenumberedCount); // 删除中间的层位不会让后面的层位重新编号
+        Assert.Contains("删除 层位 C01-L02", plan.Operation);
+    }
+
+    [Fact]
+    public async Task PlanRenumber_RequiresConfirmation_AndListsOldAndNewAddress()
+    {
+        var current = FakeTopologyRepository.Layout(1, 2, 1, 1, 2);
+        await LoadedAsync(current);
+        var layer = current.GetNode(TopologyAddress.Of(1, 2)).Value;
+
+        var plan = _service.PlanRenumber(layer.Id, 5).Value;
+
+        Assert.True(plan.RequiresConfirmation);
+        Assert.Equal(5, plan.RenumberedCount); // 层位 + 槽位 + 治具位 + 2 个产品位
+        Assert.Equal(5, plan.ChangedCount);
+        Assert.Equal(0, plan.AddedCount + plan.RemovedCount);
+        var change = Assert.Single(plan.RenumberedRoots);
+        Assert.Equal(TopologyAddress.Of(1, 2), change.From);
+        Assert.Equal(TopologyAddress.Of(1, 5), change.To);
+        Assert.Equal("C01-L02 → C01-L05", change.ToString());
+    }
+
+    [Fact]
+    public async Task PlanRenumber_SameOrdinal_HasNoChanges()
+    {
+        var current = FakeTopologyRepository.Layout(1, 2, 1, 1, 1);
+        await LoadedAsync(current);
+
+        var plan = _service.PlanRenumber(current.GetNode(TopologyAddress.Of(1, 2)).Value.Id, 2).Value;
+
+        Assert.False(plan.HasChanges);
+        Assert.False(plan.RequiresConfirmation);
+    }
+
+    [Fact]
+    public async Task PlanCopy_Disabled_AddsSubtreeWithoutConfirmation()
+    {
+        var current = FakeTopologyRepository.Layout(2, 1, 1, 1, 3);
+        await LoadedAsync(current);
+
+        var plan = _service.PlanCopy(current.GetNode(TopologyAddress.Of(1)).Value.Id, enabled: false).Value;
+
+        Assert.Equal(7, plan.AddedCount);
+        Assert.False(plan.RequiresConfirmation);
+        Assert.True(plan.Candidate.TryGetNode(TopologyAddress.Of(3), out var copy));
+        Assert.False(copy.IsEnabled);
+    }
+
+    [Fact]
+    public async Task PlanStructureEdits_InvalidOrBlocked_Fail()
+    {
+        var current = FakeTopologyRepository.Layout(1, 2, 1, 1, 1);
+        await LoadedAsync(current);
+
+        Assert.Equal(TopologyErrors.InvalidEditCode, _service.PlanRemove(current.Root.Id).Error.Code);
+        Assert.Equal(TopologyErrors.InvalidEditCode,
+            _service.PlanRenumber(current.GetNode(TopologyAddress.Of(1, 1)).Value.Id, 2).Error.Code);
+        Assert.Equal(TopologyErrors.NodeNotFoundCode, _service.PlanCopy(TopologyNodeId.New(), false).Error.Code);
+
+        _repository.NextLoadError = FakeTopologyRepository.CorruptError;
+        await _service.LoadAsync(CancellationToken.None);
+        Assert.Equal(TopologyErrors.SaveBlockedCode,
+            _service.PlanAddChildren(current.Root.Id, 1, TopologyTemplate.Empty, false).Error.Code);
+    }
+
+    [Fact]
+    public async Task StructureEdit_Saved_ThenNextPlanUsesNewBase()
+    {
+        var current = FakeTopologyRepository.Layout(1, 1, 1, 1, 1);
+        await LoadedAsync(current);
+        var add = _service.PlanAddChildren(current.Root.Id, 1, new TopologyTemplate([1, 1, 1, 1]), false).Value;
+        Assert.True((await _service.SaveAsync(add, CancellationToken.None)).IsSuccess);
+
+        var remove = _service.PlanRemove(add.Candidate.GetNode(TopologyAddress.Of(2)).Value.Id).Value;
+
+        Assert.Same(add.Candidate, remove.Base);
+        Assert.True((await _service.SaveAsync(remove, CancellationToken.None)).IsSuccess);
+        Assert.Equal(current.NodeCount, _service.Current!.NodeCount);
+        Assert.Equal(2, _repository.Saves.Count);
     }
 
     // ---------- 保存 ----------

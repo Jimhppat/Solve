@@ -805,10 +805,22 @@ public sealed class TopologyViewModel : ViewModelBase
                       $"{ListPositions(plan.ReenabledRoots)}。启用后联锁不再拦截发往这些位置的命令，请确认维护已结束、现场已具备运行条件。");
         }
 
+        if (plan.AddedEnabledCount > 0)
+        {
+            parts.Add($"保存后将新增并直接启用 {Format(plan.AddedEnabledCount)} 个位置（其中产品位 {Format(plan.AddedEnabledProductCount)} 个）：" +
+                      $"{ListPositions(plan.AddedEnabledRoots)}。联锁不会拦截发往这些位置的命令，请确认现场已安装到位、具备运行条件。");
+        }
+
+        if (plan.RenumberedCount > 0)
+        {
+            parts.Add($"保存后 {Format(plan.RenumberedCount)} 个位置的位置编码将改变：{ListPositions(plan.RenumberedRoots)}。" +
+                      "节点 Id 不变，历史数据不受影响；但现场标牌与扫码标签必须同步更换，否则会按旧编码找到别的位置。");
+        }
+
         return string.Join(Environment.NewLine, parts);
     }
 
-    private static string ListPositions(IReadOnlyList<TopologyAddress> positions)
+    private static string ListPositions<T>(IReadOnlyList<T> positions)
     {
         var listed = string.Join("、", positions.Take(TopologyChangePlan.MaxListedPositions));
         return positions.Count > TopologyChangePlan.MaxListedPositions ? $"{listed} 等 {positions.Count} 处" : listed;

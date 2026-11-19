@@ -125,13 +125,20 @@ public sealed class TopologyViewModelTests
     }
 
     [Fact]
-    public async Task Save_Grow_KeepsExistingIds()
+    public async Task Save_Grow_ConfirmsNewEnabledPositions_AndKeepsExistingIds()
     {
         var stored = FakeTopologyRepository.Layout(1, 1, 1, 1, 2);
         var vm = await AttachedAsync(stored);
         vm.CabinetsInput = 2;
 
         await vm.SaveCommand.ExecuteAsync();
+
+        // 补出的位置直接启用：已有设备上新增可用位置要先确认
+        Assert.Equal(TopologySaveState.AwaitingConfirmation, vm.State);
+        Assert.Contains("新增并直接启用 6 个位置（其中产品位 2 个）：C02", vm.PendingConfirmationText);
+        Assert.Empty(_repository.Saves);
+
+        await vm.ConfirmCommand.ExecuteAsync();
 
         var saved = Assert.Single(_repository.Saves);
         foreach (var node in TopologyLevels.All.SelectMany(stored.GetNodes))

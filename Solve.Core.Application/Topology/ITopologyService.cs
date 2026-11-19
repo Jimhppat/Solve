@@ -7,7 +7,7 @@ namespace Solve.Core.Application.Topology;
 /// 设备拓扑用例服务：持有当前生效的拓扑，负责启动加载、按布局预览变更与保存。
 /// </summary>
 /// <remarks>
-/// <para>保存分两步：<see cref="PlanLayout"/> 生成预览（会删除哪些位置）→ 操作员确认后 <see cref="SaveAsync"/>。
+/// <para>保存分两步：Plan* 生成预览（会删除、启用、重新编号哪些位置）→ 需要时操作员确认 → <see cref="SaveAsync"/>。
 /// 预览期间拓扑若被其他保存改动，保存会以 Topology.StalePlan 拒绝，避免基于过期预览覆盖。</para>
 /// <para>读取失败（库损坏或存储故障）后禁止保存，防止用新拓扑覆盖待人工修复的数据，同时丢失节点的原有 Id。</para>
 /// </remarks>
@@ -39,6 +39,30 @@ public interface ITopologyService
     /// 需要重建整棵拓扑，大型拓扑耗时数百毫秒，界面应在线程池上调用。
     /// </summary>
     Result<TopologyChangePlan> PlanNodeSettings(TopologyNodeId id, string? name, bool enabled);
+
+    // 以下四个结构编辑与 PlanNodeSettings 相同：纯计算、不写库，需要重建整棵拓扑，界面应在线程池上调用。
+
+    /// <summary>
+    /// 在节点下新增 <paramref name="count"/> 个下级（序号接在现有最大序号之后），每个按 <paramref name="template"/> 带上下级。
+    /// </summary>
+    /// <param name="enabled">新位置是否直接启用；启用时保存前要求确认</param>
+    Result<TopologyChangePlan> PlanAddChildren(TopologyNodeId parentId, int count, TopologyTemplate template, bool enabled);
+
+    /// <summary>
+    /// 删除节点及其整棵子树（保存前要求确认）。系统根不能删除。
+    /// </summary>
+    Result<TopologyChangePlan> PlanRemove(TopologyNodeId id);
+
+    /// <summary>
+    /// 修改节点在上级中的序号：整棵子树的位置编码随之改变，Id 不变（保存前要求确认）。
+    /// </summary>
+    Result<TopologyChangePlan> PlanRenumber(TopologyNodeId id, int ordinal);
+
+    /// <summary>
+    /// 把节点连同子树复制为一个同级节点（全部新 Id），放在现有最大序号之后。
+    /// </summary>
+    /// <param name="enabled">副本是否直接启用；启用时保存前要求确认</param>
+    Result<TopologyChangePlan> PlanCopy(TopologyNodeId id, bool enabled);
 
     /// <summary>
     /// 保存预览中的拓扑并使其生效。多次调用串行执行；磁盘 I/O 在线程池上执行。
