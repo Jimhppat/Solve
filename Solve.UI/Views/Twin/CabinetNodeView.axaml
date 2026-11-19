@@ -6,14 +6,17 @@
              x:DataType="tvm:CabinetNodeViewModel"
              x:CompileBindings="True"
              Margin="6,0">
-    <!-- 柜体（只展示，不可选中）：铺满系统中分到的一列。标题行 + 整柜状态条，
-         层位上下等分高度（层位 1 在最上面，与实物一致）；摘要模式只保留标题与状态条 -->
+    <!-- 柜体（只展示，不可选中）：铺满系统中分到的一列。标题行（编号、名称、告警红字），
+         层位上下等分高度（层位 1 在最上面，与实物一致）；边框颜色 = 柜内最严重的状态。
+         不画状态比例条：标题与边框已表达状态，整条灰色的比例条容易被误认为进度条；
+         只在摘要模式（柜内画不出内容）时显示比例条，此时它是唯一的状态分布信息 -->
     <Border CornerRadius="8" Padding="8" BorderThickness="1.5"
             BorderBrush="{Binding Worst, Converter={x:Static tv:TwinConverters.WorstBrush}}"
             Background="{DynamicResource SemiColorBackground1}"
             Opacity="{Binding ContentOpacity}">
-        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8">
-            <DockPanel Grid.Row="0" ToolTip.Tip="{Binding SummaryText}">
+        <!-- DockPanel 不为隐藏的子元素留间距：展开模式下比例条隐藏，不会多出一道空隙 -->
+        <DockPanel>
+            <DockPanel DockPanel.Dock="Top" Margin="2,0,2,6" ToolTip.Tip="{Binding SummaryText}">
                 <TextBlock DockPanel.Dock="Right"
                            Text="{Binding AlarmText}"
                            IsVisible="{Binding HasAlarm}"
@@ -33,14 +36,19 @@
                                Foreground="{DynamicResource SemiColorText2}" />
                 </StackPanel>
             </DockPanel>
-            <tv:TwinStatusBar Grid.Row="1" Summary="{Binding Summary}" Height="6" MinWidth="160" />
-            <ItemsControl Grid.Row="2" ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
+            <tv:TwinStatusBar DockPanel.Dock="Top"
+                              Summary="{Binding Summary}"
+                              Height="6"
+                              MinWidth="160"
+                              Margin="2,0,2,6"
+                              IsVisible="{Binding IsSummary}" />
+            <ItemsControl ItemsSource="{Binding Children}" IsVisible="{Binding IsExpanded}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <UniformGrid Columns="1" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
             </ItemsControl>
-        </Grid>
+        </DockPanel>
     </Border>
 </UserControl>
