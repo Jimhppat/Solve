@@ -154,7 +154,7 @@ public sealed partial class TopologyViewModel
         var name = NormalizeName(_nodeNameInput);
         if (isRoot && name is null)
         {
-            ReportError("系统名称不能为空");
+            ShowMessage(PendingOrigin.Node, "系统名称不能为空", isError: true);
             return;
         }
 
@@ -164,7 +164,7 @@ public sealed partial class TopologyViewModel
         {
             if (!TryReadCount(_ordinalInput, "序号", MinCount, out var value, out error))
             {
-                ReportError(error);
+                ShowMessage(PendingOrigin.Node, error, isError: true);
                 return;
             }
 
@@ -176,7 +176,7 @@ public sealed partial class TopologyViewModel
         {
             if (!TryReadCount(_childCountInput, label, MinChildCount, out var value, out error))
             {
-                ReportError(error);
+                ShowMessage(PendingOrigin.Node, error, isError: true);
                 return;
             }
 
@@ -184,21 +184,20 @@ public sealed partial class TopologyViewModel
         }
 
         var edit = new TopologyNodeEdit(name, isRoot || _nodeEnabledInput, ordinal, childCount);
-        var plan = await PlanAsync(() => service.PlanNodeEdit(node.Id, edit));
+        var plan = await PlanAsync(() => service.PlanNodeEdit(node.Id, edit), PendingOrigin.Node);
         if (plan is null)
             return;
 
         // 下级数量调大后展开它，新位置直接可见
         var grew = childCount > node.Children.Count;
         await SaveOrAwaitConfirmationAsync(service,
-            new PendingSave(plan, DescribeSaved(plan), Select: node.Id, Expand: grew ? node.Id : null));
+            new PendingSave(plan, PendingOrigin.Node, DescribeSaved("已保存", plan), Select: node.Id, Expand: grew ? node.Id : null));
     }
 
     private void RevertNode()
     {
-        CancelPending();
-        IsSaveError = false;
-        SaveMessage = null;
+        CancelPending(PendingOrigin.Node);
+        ClearMessage(PendingOrigin.Node);
         ShowNodeInputs();
     }
 
@@ -208,14 +207,14 @@ public sealed partial class TopologyViewModel
             return;
 
         var node = item.Node;
-        var plan = await PlanAsync(() => service.PlanCopy(node.Id));
+        var plan = await PlanAsync(() => service.PlanCopy(node.Id), PendingOrigin.Node);
         if (plan is null)
             return;
 
         // 保存后直接选中副本，方便接着改名
         var copy = FindCopy(plan, node);
         await SaveOrAwaitConfirmationAsync(service,
-            new PendingSave(plan, copy is null ? "已复制" : $"已复制为 {copy.Address}", Select: copy?.Id ?? node.Id));
+            new PendingSave(plan, PendingOrigin.Node, copy is null ? "已复制" : $"已复制为 {copy.Address}", Select: copy?.Id ?? node.Id));
     }
 
     private async Task RemoveAsync()
@@ -230,11 +229,11 @@ public sealed partial class TopologyViewModel
         if (Current is { } topology && node.Address.TryGetParent(out var parentAddress) && topology.TryGetNode(parentAddress, out var parent))
             parentId = parent.Id;
 
-        var plan = await PlanAsync(() => service.PlanRemove(node.Id));
+        var plan = await PlanAsync(() => service.PlanRemove(node.Id), PendingOrigin.Node);
         if (plan is null)
             return;
 
-        await SaveOrAwaitConfirmationAsync(service, new PendingSave(plan, $"已删除 {node.Address}", Select: parentId));
+        await SaveOrAwaitConfirmationAsync(service, new PendingSave(plan, PendingOrigin.Node, $"已删除 {node.Address}", Select: parentId));
     }
 
     // ==================== 内部 ====================
@@ -264,9 +263,8 @@ public sealed partial class TopologyViewModel
     /// </summary>
     private void OnNodeInputChanged()
     {
-        CancelPending();
-        IsSaveError = false;
-        SaveMessage = null;
+        CancelPending(PendingOrigin.Node);
+        ClearMessage(PendingOrigin.Node);
         OnPropertyChanged(nameof(HasNodeChanges));
         SaveNodeCommand.RaiseCanExecuteChanged();
         RevertNodeCommand.RaiseCanExecuteChanged();
@@ -290,18 +288,6 @@ public sealed partial class TopologyViewModel
         RemoveCommand.RaiseCanExecuteChanged();
     }
 
-    /// <summary>
-    /// 保存成功的提示：只在结构有增删时补一句数量
-    /// </summary>
-    private static string DescribeSaved(TopologyChangePlan plan)
-    {
-        var message = "已保存";
-        if (plan.AddedCount > 0)
-            message += $"，新增 {Format(plan.AddedCount)} 个位置";
-        if (plan.RemovedCount > 0)
-            message += $"，删除 {Format(plan.RemovedCount)} 个位置";
-        return message;
-    }
 
     /// <summary>
     /// 副本放在同级现有最大序号之后：按预览基准里上级的下一个序号，在变更后的拓扑中找到它

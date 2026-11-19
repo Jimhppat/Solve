@@ -34,7 +34,14 @@ public interface ITopologyService
     /// </summary>
     Result<TopologyChangePlan> PlanLayout(string systemName, TopologyLayout layout);
 
-    // 以下三个单节点编辑：纯计算、不写库，需要重建整棵拓扑，大型拓扑耗时数百毫秒，界面应在线程池上调用。
+    // 以下单节点编辑：纯计算、不写库，需要重建整棵拓扑，大型拓扑耗时数百毫秒，界面应在线程池上调用。
+
+    /// <summary>
+    /// 一键拓扑：按统一布局重建节点的下级（对系统根即整机），按位置编码对齐，同一位置保留原 Id、名称与启用状态。
+    /// 会抹平该节点下的个性化结构，删除或新增可用位置时保存前要求确认。
+    /// </summary>
+    /// <param name="counts">节点下面每一层每个节点的下级数，一直到产品位</param>
+    Result<TopologyChangePlan> PlanChildLayout(TopologyNodeId id, IReadOnlyList<int> counts);
 
     /// <summary>
     /// 一次修改一个节点的名称、启用状态、序号与下级数量，合成一份变更预览，保存时只需确认一次。

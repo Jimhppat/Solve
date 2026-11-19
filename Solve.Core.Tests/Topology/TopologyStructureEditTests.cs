@@ -3,7 +3,7 @@ using Solve.Core.Domain.Topology;
 namespace Solve.Core.Tests.Topology;
 
 /// <summary>
-/// 结构编辑：增减下级数量、删除、重新编号、复制。每次得到新拓扑，未涉及的节点 Id、序号、名称与启用状态原样保留。
+/// 结构编辑：按布局重建下级、增减下级数量、删除、重新编号、复制。每次得到新拓扑，未涉及的节点 Id、序号、名称与启用状态原样保留。
 /// </summary>
 public sealed class TopologyStructureEditTests
 {
@@ -29,6 +29,102 @@ public sealed class TopologyStructureEditTests
             var kept = after.GetNode(node.Id).Value;
             Assert.Equal((node.Address, node.Name, node.IsEnabled), (kept.Address, kept.Name, kept.IsEnabled));
         }
+    }
+
+    // ---------- 按布局重建下级（一键拓扑） ----------
+
+    [Fact]
+    public void ChildLayout_WholeDevice_KeepsIdsNamesAndEnabledByAddress()
+    {
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            Node(1, Node(1, Node(1, Node(1, Node(1))))) with { Name = "A 柜", Enabled = false },
+            Node(2, Node(1, Node(1, Node(1, Node(1))))),
+        ])).Value;
+
+        var rebuilt = topology.WithChildLayout(topology.Root.Id, [3, 1, 1, 1, 1]).Value;
+
+        AssertKeptUnchanged(topology, rebuilt);
+        Assert.Equal(16, rebuilt.NodeCount);
+        Assert.Equal(("A 柜", false), (At(rebuilt, 1).Name, At(rebuilt, 1).IsEnabled));
+        Assert.True(At(rebuilt, 3).IsEnabled);
+        Assert.Equal(topology.Root.Id, rebuilt.Root.Id);
+        Assert.Equal("S", rebuilt.Name);
+    }
+
+    [Fact]
+    public void ChildLayout_OfNode_OnlyRebuildsItsSubtree()
+    {
+        var topology = Layout(2, 2, 1, 1, 1);
+        var second = At(topology, 2);
+
+        var rebuilt = topology.WithChildLayout(second.Id, [1, 1, 1, 3]).Value;
+
+        foreach (var node in topology.GetDescendants(TopologyAddress.Of(1), TopologyLevel.Product)
+                     .Concat(topology.GetDescendants(TopologyAddress.Of(1), TopologyLevel.Layer)))
+            Assert.Equal(node.Address, rebuilt.GetNode(node.Id).Value.Address);
+
+        Assert.Equal(At(topology, 2, 1).Id, At(rebuilt, 2, 1).Id);
+        Assert.False(rebuilt.TryGetNode(At(topology, 2, 2).Id, out _));
+        Assert.Equal(3, rebuilt.GetDescendants(TopologyAddress.Of(2), TopologyLevel.Product).Count);
+        Assert.Equal(2, rebuilt.GetDescendants(TopologyAddress.Of(1), TopologyLevel.Layer).Count);
+    }
+
+    [Fact]
+    public void ChildLayout_FlattensCustomizedStructure()
+    {
+        // 层位 1、3（2 号拆走了）：按 2 个层位重建后是 1、2，3 号被删除、2 号新增
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+            [Node(1, Node(1, Node(1, Node(1, Node(1)))), Node(3, Node(1, Node(1, Node(1)))))])).Value;
+        var cabinet = At(topology, 1);
+
+        var rebuilt = topology.WithChildLayout(cabinet.Id, [2, 1, 1, 1]).Value;
+
+        Assert.Equal([1, 2], rebuilt.GetNode(cabinet.Id).Value.Children.Select(c => c.Ordinal));
+        Assert.Equal(At(topology, 1, 1).Id, At(rebuilt, 1, 1).Id);
+        Assert.False(rebuilt.TryGetNode(At(topology, 1, 3).Id, out _));
+    }
+
+    [Fact]
+    public void ChildLayout_InvalidRequests_AreRejected()
+    {
+        var topology = Layout(1, 1, 1, 1, 1);
+        var cabinet = At(topology, 1);
+
+        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithChildLayout(At(topology, 1, 1, 1, 1, 1).Id, []).Error.Code);
+        Assert.Contains("有 4 层", topology.WithChildLayout(cabinet.Id, [1, 1, 1]).Error.Message);
+        Assert.Contains("槽位数量", topology.WithChildLayout(cabinet.Id, [1, 0, 1, 1]).Error.Message);
+        Assert.Equal(TopologyErrors.NodeNotFoundCode, topology.WithChildLayout(TopologyNodeId.New(), [1]).Error.Code);
+
+        // 约 1e15 个节点：必须在生成之前按数量拦住
+        var huge = topology.WithChildLayout(topology.Root.Id, [999, 999, 999, 999, 999]);
+        Assert.Contains("超过上限", huge.Error.Message);
+    }
+
+    [Fact]
+    public void UniformChildCounts_ReportsEachLevel()
+    {
+        var uniform = Layout(2, 3, 1, 1, 2);
+        Assert.Equal([2, 3, 1, 1, 2], uniform.GetUniformChildCounts(uniform.Root.Id));
+        Assert.Equal([3, 1, 1, 2], uniform.GetUniformChildCounts(At(uniform, 2).Id));
+        Assert.Equal([2], uniform.GetUniformChildCounts(At(uniform, 1, 1, 1, 1).Id));
+        Assert.Empty(uniform.GetUniformChildCounts(At(uniform, 1, 1, 1, 1, 1).Id));
+    }
+
+    [Fact]
+    public void UniformChildCounts_MixedGappedOrEmptyLevels_AreNull()
+    {
+        // 1 号柜 2 层、2 号柜 1 层；3 号柜的层位编号是 1、3
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            Node(1, Node(1, Node(1, Node(1, Node(1)))), Node(2, Node(1, Node(1, Node(1))))),
+            Node(2, Node(1, Node(1, Node(1, Node(1))))),
+        ])).Value;
+
+        Assert.Equal([2, null, 1, 1, 1], topology.GetUniformChildCounts(topology.Root.Id));
+
+        var gapped = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Node(1, Node(1), Node(3))])).Value;
+        Assert.Equal([null, null, null, null], gapped.GetUniformChildCounts(At(gapped, 1).Id));
     }
 
     // ---------- 下级数量 ----------

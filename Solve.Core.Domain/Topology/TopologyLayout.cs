@@ -87,8 +87,9 @@ public sealed record TopologyLayout(
 
     /// <summary>
     /// 每个节点独立生成定义：Id 必须全树唯一，不能像纯结构那样整层共享子列表。
+    /// 也供 <see cref="EquipmentTopology.WithChildLayout"/> 以任意节点为起点重建下级。
     /// </summary>
-    private static TopologyNodeDefinition[] BuildLevel(
+    internal static TopologyNodeDefinition[] BuildLevel(
         TopologyAddress parent,
         int[] counts,
         int depth,

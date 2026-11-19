@@ -83,6 +83,17 @@ public sealed class TopologyService : ITopologyService
         return PlanEdit(id, (topology, node) => ApplyEdit(topology, node, edit), node => DescribeEdit(node, edit));
     }
 
+    public Result<TopologyChangePlan> PlanChildLayout(TopologyNodeId id, IReadOnlyList<int> counts)
+    {
+        ArgumentNullException.ThrowIfNull(counts);
+
+        // 先复制：调用方之后改动原列表不能让预览与日志里的布局对不上
+        var layout = counts.ToArray();
+        return PlanEdit(id,
+            (topology, _) => topology.WithChildLayout(id, layout),
+            node => $"按布局重建 {node} 的下级：{string.Join(" × ", layout)}");
+    }
+
     public Result<TopologyChangePlan> PlanRemove(TopologyNodeId id)
         => PlanEdit(id, (topology, _) => topology.WithNodeRemoved(id), node => $"删除 {node} 及其全部下级");
 

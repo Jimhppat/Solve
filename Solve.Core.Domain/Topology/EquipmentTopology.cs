@@ -112,6 +112,100 @@ public sealed class EquipmentTopology
     // 再经 Create 整树校验：序号范围、同级重复、Id 唯一、节点上限的规则只有一份。
 
     /// <summary>
+    /// 按统一布局重建节点的下级（一键拓扑）：<paramref name="counts"/> 依次是它下面每一层每个节点的下级数，一直到产品位。
+    /// 对系统根使用即整机重建。
+    /// </summary>
+    /// <remarks>
+    /// 与现有拓扑按位置编码对齐：同一位置沿用原 Id、名称与启用状态（维护屏蔽不会因重建被清掉）；
+    /// 布局里有、现有拓扑没有的位置分配新 Id 并启用；现有拓扑多出的位置连同子树删除。
+    /// 因此重建会抹平这个节点下的个性化结构，调用方须先预览并让操作员确认增删的位置。
+    /// </remarks>
+    public Result<EquipmentTopology> WithChildLayout(TopologyNodeId id, IReadOnlyList<int> counts)
+    {
+        ArgumentNullException.ThrowIfNull(counts);
+
+        if (!TryGetNode(id, out var node))
+            return Result<EquipmentTopology>.Failure(TopologyErrors.NodeNotFound(id));
+
+        var levelsBelow = (int)TopologyLevel.Product - (int)node.Level;
+        if (levelsBelow == 0)
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit($"{node.Address} 是产品位（最底层），没有下级。"));
+
+        if (counts.Count != levelsBelow)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"{node.Level.DisplayName()}下面有 {levelsBelow} 层，布局给了 {counts.Count} 层。"));
+        }
+
+        long subtree = 0;
+        long levelCount = 1;
+        for (var i = 0; i < counts.Count; i++)
+        {
+            if (counts[i] is < 1 or > TopologyAddress.MaxOrdinal)
+            {
+                var level = node.Level + i + 1;
+                return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                    $"{level.DisplayName()}数量必须在 [1, {TopologyAddress.MaxOrdinal}] 之间，当前为 {counts[i]}。"));
+            }
+
+            levelCount *= counts[i];
+            subtree += levelCount;
+        }
+
+        // 先按数量估算再生成：各层都填 999 时有上万亿个节点，必须在分配内存之前拦住
+        var total = NodeCount - (SubtreeNodeCount(node) - 1) + subtree;
+        if (total > MaxNodeCount)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"生成后共 {total} 个节点，超过上限 {MaxNodeCount}。"));
+        }
+
+        var children = TopologyLayout.BuildLevel(node.Address, counts.ToArray(), depth: 0, current: this);
+        return Rewrite(id, _ => children);
+    }
+
+    /// <summary>
+    /// 节点下面每一层的统一下级数，供一键拓扑预填：这一层的每个上级都有相同个数的下级、且序号从 1 连续编号时为该个数，
+    /// 否则为 null（不统一，按任何数字重建都会改动现有结构，须由操作员给出）。产品位或节点不存在时返回空列表。
+    /// </summary>
+    public IReadOnlyList<int?> GetUniformChildCounts(TopologyNodeId id)
+    {
+        if (!TryGetNode(id, out var node))
+            return [];
+
+        var counts = new List<int?>();
+        IReadOnlyList<TopologyNode> parents = [node];
+        for (var level = node.Level; level < TopologyLevel.Product; level++)
+        {
+            int? count = parents.Count == 0 ? null : parents[0].Children.Count;
+            foreach (var parent in parents)
+            {
+                if (parent.Children.Count != count || !IsNumberedFromOne(parent.Children))
+                {
+                    count = null;
+                    break;
+                }
+            }
+
+            counts.Add(count == 0 ? null : count);
+            parents = GetDescendants(node.Address, level + 1);
+        }
+
+        return counts;
+
+        static bool IsNumberedFromOne(IReadOnlyList<TopologyNode> children)
+        {
+            for (var i = 0; i < children.Count; i++)
+            {
+                if (children[i].Ordinal != i + 1)
+                    return false;
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
     /// 把 <paramref name="parentId"/> 的下级数量改为 <paramref name="count"/>，数量不变时返回本实例。
     /// </summary>
     /// <remarks>

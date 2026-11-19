@@ -81,45 +81,39 @@
 
     <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
 
-      <!-- StackPanel 只在可见的子元素之间留间距：提示区、布局卡隐藏时不会多出空隙 -->
+      <!-- StackPanel 只在可见的子元素之间留间距 -->
       <StackPanel Grid.Row="0" Spacing="20">
 
-        <!-- 页面标题；尚未建档时右侧是建档按钮 -->
         <Border Classes="panel" Padding="20,10">
-            <DockPanel LastChildFill="True">
-                <Button DockPanel.Dock="Right"
-                        Classes="Primary" Theme="{DynamicResource SolidButton}"
-                        Content="建档"
-                        MinWidth="72"
-                        IsVisible="{Binding !IsConfigured}"
-                        Command="{Binding SaveCommand}" />
-                <TextBlock Text="{Binding PageTitle}"
-                           FontSize="15"
-                           FontWeight="SemiBold"
-                           Foreground="{DynamicResource SemiColorText0}"
-                           VerticalAlignment="Center" />
-            </DockPanel>
+            <TextBlock Text="{Binding PageTitle}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource SemiColorText0}"
+                       VerticalAlignment="Center" />
         </Border>
 
-        <!-- 尚未建档或读取失败时的结果；建档后结果显示在节点表单的保存按钮旁 -->
-        <Border Classes="panel" Padding="20,10" IsVisible="{Binding HasPageMessage}">
-            <TextBlock Classes="muted"
-                       Classes.error="{Binding IsSaveError}"
-                       Text="{Binding SaveMessage}" />
-        </Border>
-
-        <!-- 设备布局：只用于首次建档，按统一布局一次生成全部节点 -->
-        <Border Classes="panel" Padding="20,16" IsVisible="{Binding !IsConfigured}">
+        <!-- 一键拓扑：按统一布局生成整机（尚未建档时即建档）或选中节点的下级；同一位置保留原 Id、名称与启用状态 -->
+        <Border Classes="panel" Padding="20,16">
             <StackPanel Spacing="12">
 
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14"
+                <WrapPanel ItemSpacing="8" LineSpacing="8">
+                    <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14" VerticalAlignment="Center"
                               Foreground="{DynamicResource SemiColorPrimary}" />
-                    <TextBlock Classes="section" Text="设备布局" />
+                    <TextBlock Classes="section" Text="一键拓扑" />
+                    <!-- 生成范围：整机，或选中的柜体 / 层位 / 槽位 / 治具位 -->
+                    <StackPanel Orientation="Horizontal" Spacing="16" Margin="12,0,4,0"
+                                IsVisible="{Binding ShowScope}"
+                                IsEnabled="{Binding IsLayoutInputEnabled}">
+                        <RadioButton GroupName="TopologyLayoutScope" Content="整机"
+                                     IsChecked="{Binding IsWholeDeviceScope}" />
+                        <RadioButton GroupName="TopologyLayoutScope" Content="{Binding NodeScopeText}"
+                                     IsChecked="{Binding IsNodeScope}"
+                                     IsEnabled="{Binding CanScopeToNode}" />
+                    </StackPanel>
                     <TextBlock Classes="muted" VerticalAlignment="Center" Margin="8,0,0,0"
-                               Classes.error="{Binding IsSummaryError}"
-                               Text="{Binding SummaryText}" />
-                </StackPanel>
+                               Classes.error="{Binding IsLayoutSummaryError}"
+                               Text="{Binding LayoutSummaryText}" />
+                </WrapPanel>
                 <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
 
                 <!-- 读取失败：禁止保存，提供重试 -->
@@ -132,49 +126,63 @@
                     </StackPanel>
                 </Border>
 
-                <Grid ColumnDefinitions="88,*" ColumnSpacing="12">
+                <!-- 系统名称只在建档时填写；建档后选中系统根修改 -->
+                <Grid ColumnDefinitions="88,*" ColumnSpacing="12" IsVisible="{Binding ShowSystemNameInput}">
                     <TextBlock Grid.Column="0" Classes="label" Text="系统名称" />
                     <TextBox Grid.Column="1"
                              AutomationProperties.Name="系统名称"
                              MaxWidth="420" HorizontalAlignment="Left" MinWidth="260"
                              PlaceholderText="如 老化房 1#"
                              Text="{Binding SystemNameInput}"
-                             IsEnabled="{Binding IsInputEnabled}" />
+                             IsEnabled="{Binding IsLayoutInputEnabled}" />
                 </Grid>
 
-                <!-- 五层数量：系统之下自上而下 -->
-                <WrapPanel ItemSpacing="28" LineSpacing="12">
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Classes="label" Text="柜体数" />
-                        <NumericUpDown Classes="count" Value="{Binding CabinetsInput}" AutomationProperties.Name="柜体数"
-                                       Minimum="{Binding MinCount}" Maximum="{Binding MaxCount}"
-                                       IsEnabled="{Binding IsInputEnabled}" />
+                <!-- 生成对象下面每一层的数量；某层现有结构不统一时留空，须填写后才能生成 -->
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" VerticalAlignment="Top"
+                            Classes="Primary" Theme="{DynamicResource SolidButton}"
+                            Content="一键生成"
+                            Command="{Binding GenerateCommand}" />
+                    <ItemsControl ItemsSource="{Binding LayoutInputs}" IsEnabled="{Binding IsLayoutInputEnabled}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel ItemSpacing="28" LineSpacing="12" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TopologyCountInputViewModel">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <TextBlock Classes="label" Text="{Binding Label}" />
+                                    <NumericUpDown Classes="count"
+                                                   AutomationProperties.Name="{Binding Label}"
+                                                   PlaceholderText="{Binding Placeholder}"
+                                                   Value="{Binding Value}"
+                                                   Minimum="1" Maximum="999" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </DockPanel>
+
+                <TextBlock Classes="muted"
+                           Classes.error="{Binding IsSaveError}"
+                           IsVisible="{Binding HasLayoutMessage}"
+                           Text="{Binding SaveMessage}" />
+
+                <!-- 生成会删除位置或新增可用位置：先列出影响，确认后才写库 -->
+                <Border Classes="notice danger" IsVisible="{Binding IsLayoutAwaitingConfirmation}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="{Binding PendingConfirmationText}"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SemiColorText0}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                            <Button Content="取消" Command="{Binding CancelCommand}" />
+                            <Button Classes="Danger" Theme="{DynamicResource SolidButton}"
+                                    Content="确认生成"
+                                    Command="{Binding ConfirmCommand}" />
+                        </StackPanel>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Classes="label" Text="每柜层位" />
-                        <NumericUpDown Classes="count" Value="{Binding LayersPerCabinetInput}" AutomationProperties.Name="每柜层位"
-                                       Minimum="{Binding MinCount}" Maximum="{Binding MaxCount}"
-                                       IsEnabled="{Binding IsInputEnabled}" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Classes="label" Text="每层槽位" />
-                        <NumericUpDown Classes="count" Value="{Binding SlotsPerLayerInput}" AutomationProperties.Name="每层槽位"
-                                       Minimum="{Binding MinCount}" Maximum="{Binding MaxCount}"
-                                       IsEnabled="{Binding IsInputEnabled}" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Classes="label" Text="每槽治具位" />
-                        <NumericUpDown Classes="count" Value="{Binding FixturesPerSlotInput}" AutomationProperties.Name="每槽治具位"
-                                       Minimum="{Binding MinCount}" Maximum="{Binding MaxCount}"
-                                       IsEnabled="{Binding IsInputEnabled}" />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Classes="label" Text="每治具产品位" />
-                        <NumericUpDown Classes="count" Value="{Binding ProductsPerFixtureInput}" AutomationProperties.Name="每治具产品位"
-                                       Minimum="{Binding MinCount}" Maximum="{Binding MaxCount}"
-                                       IsEnabled="{Binding IsInputEnabled}" />
-                    </StackPanel>
-                </WrapPanel>
+                </Border>
             </StackPanel>
         </Border>
       </StackPanel>
@@ -283,7 +291,7 @@
                                        Text="{Binding SaveMessage}" />
 
                             <!-- 删除位置、改变位置编码、新增或重新启用位置：先列出影响，确认后才写库 -->
-                            <Border Classes="notice danger" IsVisible="{Binding IsAwaitingConfirmation}">
+                            <Border Classes="notice danger" IsVisible="{Binding IsNodeAwaitingConfirmation}">
                                 <StackPanel Spacing="10">
                                     <TextBlock Text="{Binding PendingConfirmationText}"
                                                TextWrapping="Wrap"
@@ -298,7 +306,7 @@
                             </Border>
 
                             <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right"
-                                        IsVisible="{Binding !IsAwaitingConfirmation}">
+                                        IsVisible="{Binding !IsNodeAwaitingConfirmation}">
                                 <Button Content="还原" Command="{Binding RevertNodeCommand}" />
                                 <Button Classes="Primary" Theme="{DynamicResource SolidButton}"
                                         Content="保存"

@@ -384,6 +384,33 @@ public sealed class TopologyServiceTests
         Assert.Equal(2, _repository.Saves.Count);
     }
 
+    [Fact]
+    public async Task PlanChildLayout_OfNode_ConfirmsRemovals_AndDescribesLayout()
+    {
+        var current = FakeTopologyRepository.Layout(2, 2, 1, 1, 1);
+        await LoadedAsync(current);
+        var cabinet = current.GetNode(TopologyAddress.Of(2)).Value;
+
+        var plan = _service.PlanChildLayout(cabinet.Id, [1, 1, 1, 2]).Value;
+
+        Assert.True(plan.RequiresConfirmation);
+        Assert.Equal([TopologyAddress.Of(2, 2)], plan.RemovedRoots);
+        Assert.Equal(4, plan.RemovedCount);
+        Assert.Equal(1, plan.AddedEnabledCount); // C02-L01-S01-F01-P02
+        Assert.Contains($"按布局重建 柜体 C02 [{cabinet.Id}] 的下级：1 × 1 × 1 × 2", plan.Operation);
+    }
+
+    [Fact]
+    public async Task PlanChildLayout_SameLayout_HasNoChanges()
+    {
+        var current = FakeTopologyRepository.Layout(2, 2, 1, 1, 1);
+        await LoadedAsync(current);
+
+        var plan = _service.PlanChildLayout(current.Root.Id, [2, 2, 1, 1, 1]).Value;
+
+        Assert.False(plan.HasChanges);
+    }
+
     // ---------- 保存 ----------
 
     [Fact]
