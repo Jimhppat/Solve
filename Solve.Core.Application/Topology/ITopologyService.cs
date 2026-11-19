@@ -34,19 +34,12 @@ public interface ITopologyService
     /// </summary>
     Result<TopologyChangePlan> PlanLayout(string systemName, TopologyLayout layout);
 
-    /// <summary>
-    /// 修改单个节点的显示名与启用状态，生成变更预览（重新启用会要求确认）。纯计算，不写库；
-    /// 需要重建整棵拓扑，大型拓扑耗时数百毫秒，界面应在线程池上调用。
-    /// </summary>
-    Result<TopologyChangePlan> PlanNodeSettings(TopologyNodeId id, string? name, bool enabled);
-
-    // 以下四个结构编辑与 PlanNodeSettings 相同：纯计算、不写库，需要重建整棵拓扑，界面应在线程池上调用。
+    // 以下三个单节点编辑：纯计算、不写库，需要重建整棵拓扑，大型拓扑耗时数百毫秒，界面应在线程池上调用。
 
     /// <summary>
-    /// 在节点下新增 <paramref name="count"/> 个下级（序号接在现有最大序号之后），每个按 <paramref name="template"/> 带上下级。
+    /// 一次修改一个节点的名称、启用状态、序号与下级数量，合成一份变更预览，保存时只需确认一次。
     /// </summary>
-    /// <param name="enabled">新位置是否直接启用；启用时保存前要求确认</param>
-    Result<TopologyChangePlan> PlanAddChildren(TopologyNodeId parentId, int count, TopologyTemplate template, bool enabled);
+    Result<TopologyChangePlan> PlanNodeEdit(TopologyNodeId id, TopologyNodeEdit edit);
 
     /// <summary>
     /// 删除节点及其整棵子树（保存前要求确认）。系统根不能删除。
@@ -54,15 +47,9 @@ public interface ITopologyService
     Result<TopologyChangePlan> PlanRemove(TopologyNodeId id);
 
     /// <summary>
-    /// 修改节点在上级中的序号：整棵子树的位置编码随之改变，Id 不变（保存前要求确认）。
-    /// </summary>
-    Result<TopologyChangePlan> PlanRenumber(TopologyNodeId id, int ordinal);
-
-    /// <summary>
     /// 把节点连同子树复制为一个同级节点（全部新 Id），放在现有最大序号之后。
     /// </summary>
-    /// <param name="enabled">副本是否直接启用；启用时保存前要求确认</param>
-    Result<TopologyChangePlan> PlanCopy(TopologyNodeId id, bool enabled);
+    Result<TopologyChangePlan> PlanCopy(TopologyNodeId id);
 
     /// <summary>
     /// 保存预览中的拓扑并使其生效。多次调用串行执行；磁盘 I/O 在线程池上执行。

@@ -77,42 +77,24 @@ public sealed class TopologyService : ITopologyService
             : Result<TopologyChangePlan>.Failure(candidate.Error);
     }
 
-    public Result<TopologyChangePlan> PlanNodeSettings(TopologyNodeId id, string? name, bool enabled)
-        => PlanEdit(id,
-            topology => topology.WithNodeSettings(id, name, enabled),
-            node => $"设置 {node}：名称 {(name is null ? "（未命名）" : $"「{name}」")}，{(enabled ? "启用" : "停用")}");
-
-    public Result<TopologyChangePlan> PlanAddChildren(TopologyNodeId parentId, int count, TopologyTemplate template, bool enabled)
+    public Result<TopologyChangePlan> PlanNodeEdit(TopologyNodeId id, TopologyNodeEdit edit)
     {
-        ArgumentNullException.ThrowIfNull(template);
-
-        return PlanEdit(parentId,
-            topology => topology.WithChildrenAdded(parentId, count, template, enabled),
-            parent =>
-            {
-                var childLevel = parent.Level.TryGetChildLevel(out var level) ? level.DisplayName() : "下级";
-                var counts = template.CountsBelow.Count == 0 ? "无下级" : string.Join(" × ", template.CountsBelow);
-                return $"在 {parent} 下新增 {count} 个{childLevel}（下级模板 {counts}，{(enabled ? "直接启用" : "停用")}）";
-            });
+        ArgumentNullException.ThrowIfNull(edit);
+        return PlanEdit(id, (topology, node) => ApplyEdit(topology, node, edit), node => DescribeEdit(node, edit));
     }
 
     public Result<TopologyChangePlan> PlanRemove(TopologyNodeId id)
-        => PlanEdit(id, topology => topology.WithNodeRemoved(id), node => $"删除 {node} 及其全部下级");
+        => PlanEdit(id, (topology, _) => topology.WithNodeRemoved(id), node => $"删除 {node} 及其全部下级");
 
-    public Result<TopologyChangePlan> PlanRenumber(TopologyNodeId id, int ordinal)
-        => PlanEdit(id, topology => topology.WithOrdinal(id, ordinal), node => $"{node} 改为序号 {ordinal}");
-
-    public Result<TopologyChangePlan> PlanCopy(TopologyNodeId id, bool enabled)
-        => PlanEdit(id,
-            topology => topology.WithNodeCopied(id, enabled),
-            node => $"复制 {node} 为同级（{(enabled ? "直接启用" : "停用")}）");
+    public Result<TopologyChangePlan> PlanCopy(TopologyNodeId id)
+        => PlanEdit(id, (topology, _) => topology.WithNodeCopied(id), node => $"复制 {node} 为同级");
 
     /// <summary>
     /// 基于当前拓扑做一次编辑并生成预览。操作说明在编辑前按原节点生成：删除、重新编号后节点已不在原位置。
     /// </summary>
     private Result<TopologyChangePlan> PlanEdit(
         TopologyNodeId id,
-        Func<EquipmentTopology, Result<EquipmentTopology>> edit,
+        Func<EquipmentTopology, TopologyNode, Result<EquipmentTopology>> edit,
         Func<TopologyNode, string> describe)
     {
         if (_loadError is { } loadError)
@@ -122,11 +104,55 @@ public sealed class TopologyService : ITopologyService
         if (_current is not { } current || !current.TryGetNode(id, out var node))
             return Result<TopologyChangePlan>.Failure(TopologyErrors.NodeNotFound(id));
 
-        var candidate = edit(current);
+        var candidate = edit(current, node);
         return candidate.IsSuccess
             ? Result<TopologyChangePlan>.Success(TopologyChangePlan.Compare(current, candidate.Value, describe(node)))
             : Result<TopologyChangePlan>.Failure(candidate.Error);
     }
+
+    /// <summary>
+    /// 依次应用名称与启用、序号、下级数量，只改有变化的项；任一步失败即整体失败，拓扑不变。
+    /// 都按 Id 定位，前一步改了位置编码不影响后一步。
+    /// </summary>
+    private static Result<EquipmentTopology> ApplyEdit(EquipmentTopology topology, TopologyNode node, TopologyNodeEdit edit)
+    {
+        var result = Result<EquipmentTopology>.Success(topology);
+        if (NormalizeName(edit.Name) != node.Name || edit.Enabled != node.IsEnabled)
+            result = topology.WithNodeSettings(node.Id, edit.Name, edit.Enabled);
+
+        if (result.IsSuccess && edit.Ordinal is { } ordinal && ordinal != node.Ordinal)
+            result = result.Value.WithOrdinal(node.Id, ordinal);
+
+        if (result.IsSuccess && edit.ChildCount is { } count && count != node.Children.Count)
+            result = result.Value.WithChildCount(node.Id, count);
+
+        return result;
+    }
+
+    private static string DescribeEdit(TopologyNode node, TopologyNodeEdit edit)
+    {
+        var parts = new List<string>();
+        var name = NormalizeName(edit.Name);
+        if (name != node.Name)
+            parts.Add(name is null ? "清除名称" : $"名称改为「{name}」");
+
+        if (edit.Enabled != node.IsEnabled)
+            parts.Add(edit.Enabled ? "启用" : "停用");
+
+        if (edit.Ordinal is { } ordinal && ordinal != node.Ordinal)
+            parts.Add($"序号 {node.Ordinal} → {ordinal}");
+
+        if (edit.ChildCount is { } count && count != node.Children.Count)
+            parts.Add($"下级数量 {node.Children.Count} → {count}");
+
+        return $"修改 {node}：{(parts.Count == 0 ? "无变化" : string.Join("，", parts))}";
+    }
+
+    /// <summary>
+    /// 与领域层一致：去除首尾空白，空白名视为未命名
+    /// </summary>
+    private static string? NormalizeName(string? name)
+        => string.IsNullOrWhiteSpace(name) ? null : name.Trim();
 
     public async Task<Result> SaveAsync(TopologyChangePlan plan, CancellationToken cancellationToken)
     {

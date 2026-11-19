@@ -3,7 +3,7 @@ using Solve.Core.Domain.Topology;
 namespace Solve.Core.Tests.Topology;
 
 /// <summary>
-/// 结构编辑：新增下级（带子树模板）、删除、重新编号、复制。每次得到新拓扑，未涉及的节点 Id、序号、名称与启用状态原样保留。
+/// 结构编辑：增减下级数量、删除、重新编号、复制。每次得到新拓扑，未涉及的节点 Id、序号、名称与启用状态原样保留。
 /// </summary>
 public sealed class TopologyStructureEditTests
 {
@@ -31,112 +31,124 @@ public sealed class TopologyStructureEditTests
         }
     }
 
-    // ---------- 新增下级 ----------
+    // ---------- 下级数量 ----------
 
     [Fact]
-    public void Add_AppendsAfterMaxOrdinal_WithTemplate_AndNewIds()
+    public void ChildCount_Grow_CopiesStructureOfLastChild_UnnamedAndEnabled()
     {
-        var topology = Layout(1, 2, 1, 1, 1);
+        // 1 号柜：L01 有 2 个槽，L02 有 3 个槽且已命名、停用（其中一个槽也停用）
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+        [
+            Node(1,
+                Node(1, Node(1), Node(2)),
+                Node(2, Node(1), Node(2) with { Enabled = false }, Node(3)) with { Name = "高温层", Enabled = false }),
+        ])).Value;
         var cabinet = At(topology, 1);
 
-        var result = topology.WithChildrenAdded(cabinet.Id, 2, new TopologyTemplate([3, 1, 2]), enabled: true);
+        var grown = topology.WithChildCount(cabinet.Id, 4).Value;
 
-        var added = result.Value;
-        Assert.Equal(topology.NodeCount + 2 * 13, added.NodeCount);
-        AssertKeptUnchanged(topology, added);
-        Assert.Equal([1, 2, 3, 4], added.GetNode(cabinet.Id).Value.Children.Select(c => c.Ordinal));
-
-        var newLayer = At(added, 1, 4);
-        Assert.Equal(3, newLayer.Children.Count);
-        Assert.All(newLayer.Children, slot => Assert.Equal(2, Assert.Single(slot.Children).Children.Count));
-        Assert.DoesNotContain(newLayer.Id, AllNodes(topology).Select(n => n.Id));
-        Assert.True(newLayer.IsEffectivelyEnabled);
+        AssertKeptUnchanged(topology, grown);
+        Assert.Equal([1, 2, 3, 4], grown.GetNode(cabinet.Id).Value.Children.Select(c => c.Ordinal));
+        foreach (var layer in new[] { At(grown, 1, 3), At(grown, 1, 4) })
+        {
+            // 照抄最后一个层位的结构；名称与停用属于具体的物理位置，不照抄
+            Assert.Equal(3, layer.Children.Count);
+            Assert.Null(layer.Name);
+            Assert.True(layer.IsEffectivelyEnabled);
+            Assert.All(layer.Children, slot => Assert.True(slot.IsEnabled));
+            Assert.DoesNotContain(layer.Id, AllNodes(topology).Select(n => n.Id));
+        }
     }
 
     [Fact]
-    public void Add_DoesNotFillGaps()
+    public void ChildCount_Grow_DoesNotFillGaps()
     {
         // 现场只有 1 号和 3 号柜（2 号拆走了）：新增的柜体排在 4 号，不顶替 2 号
         var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Node(1), Node(3)])).Value;
 
-        var added = topology.WithChildrenAdded(topology.Root.Id, 1, TopologyTemplate.Empty, enabled: true).Value;
+        var grown = topology.WithChildCount(topology.Root.Id, 3).Value;
 
-        Assert.Equal([1, 3, 4], added.Root.Children.Select(c => c.Ordinal));
-        Assert.Empty(At(added, 4).Children);
+        Assert.Equal([1, 3, 4], grown.Root.Children.Select(c => c.Ordinal));
     }
 
     [Fact]
-    public void Add_Disabled_MasksWholeNewSubtree_AndKeepsOriginalUnchanged()
+    public void ChildCount_Grow_FromEmpty_AddsBareNodes()
     {
-        var topology = Layout(1, 1, 1, 1, 1);
-
-        var added = topology.WithChildrenAdded(topology.Root.Id, 1, new TopologyTemplate([1, 1, 1, 2]), enabled: false).Value;
-
-        var cabinet = At(added, 2);
-        Assert.False(cabinet.IsEnabled);
-        Assert.All(added.GetDescendants(cabinet.Address, TopologyLevel.Product), p =>
-        {
-            Assert.True(p.IsEnabled);
-            Assert.False(p.IsEffectivelyEnabled);
-        });
-        Assert.True(added.CheckEnabled(TopologyAddress.Of(2, 1, 1, 1, 2)).IsFailure);
-
-        // 原实例不变
-        Assert.Equal(6, topology.NodeCount);
-        Assert.False(topology.TryGetNode(TopologyAddress.Of(2), out _));
-    }
-
-    [Fact]
-    public void Add_Products_UnderFixture_WithEmptyTemplate()
-    {
-        var topology = Layout(1, 1, 1, 1, 2);
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+            [Node(1, Node(1, Node(1, Node(1))))])).Value;
         var fixture = At(topology, 1, 1, 1, 1);
 
-        var added = topology.WithChildrenAdded(fixture.Id, 3, TopologyTemplate.Empty, enabled: true).Value;
+        var grown = topology.WithChildCount(fixture.Id, 2).Value;
 
-        Assert.Equal([1, 2, 3, 4, 5], added.GetNode(fixture.Id).Value.Children.Select(c => c.Ordinal));
-        Assert.Equal(TopologyLevel.Product, At(added, 1, 1, 1, 1, 5).Level);
+        Assert.Equal(2, grown.CountAt(TopologyLevel.Product));
+        Assert.Equal(TopologyLevel.Product, At(grown, 1, 1, 1, 1, 2).Level);
     }
 
     [Fact]
-    public void Add_InvalidRequests_AreRejected()
+    public void ChildCount_Shrink_RemovesHighestOrdinals_AndKeepsOriginalUnchanged()
     {
-        var topology = Layout(1, 1, 1, 1, 1);
-        var product = At(topology, 1, 1, 1, 1, 1);
+        var topology = Layout(1, 4, 1, 1, 2);
+        var cabinet = At(topology, 1);
+
+        var shrunk = topology.WithChildCount(cabinet.Id, 2).Value;
+
+        Assert.Equal([1, 2], shrunk.GetNode(cabinet.Id).Value.Children.Select(c => c.Ordinal));
+        Assert.Equal(topology.NodeCount - 10, shrunk.NodeCount);
+        Assert.Equal(At(topology, 1, 2).Id, At(shrunk, 1, 2).Id);
+        Assert.Equal(4, topology.GetNode(cabinet.Id).Value.Children.Count);
+    }
+
+    [Fact]
+    public void ChildCount_ToZero_LeavesEmptyContainer()
+    {
+        var topology = Layout(1, 1, 1, 1, 3);
         var fixture = At(topology, 1, 1, 1, 1);
 
-        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithChildrenAdded(product.Id, 1, TopologyTemplate.Empty, true).Error.Code);
-        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithChildrenAdded(fixture.Id, 0, TopologyTemplate.Empty, true).Error.Code);
-        Assert.Equal(TopologyErrors.NodeNotFoundCode, topology.WithChildrenAdded(TopologyNodeId.New(), 1, TopologyTemplate.Empty, true).Error.Code);
+        var emptied = topology.WithChildCount(fixture.Id, 0).Value;
 
-        // 产品位下面没有层了，模板却给了一层
-        var tooDeep = topology.WithChildrenAdded(fixture.Id, 1, new TopologyTemplate([1]), true);
-        Assert.Equal(TopologyErrors.InvalidEditCode, tooDeep.Error.Code);
-        Assert.Contains("只有 0 层", tooDeep.Error.Message);
-
-        var zero = topology.WithChildrenAdded(topology.Root.Id, 1, new TopologyTemplate([2, 0]), true);
-        Assert.Contains("槽位数量", zero.Error.Message);
+        Assert.Empty(emptied.GetNode(fixture.Id).Value.Children);
+        Assert.Equal(0, emptied.CountAt(TopologyLevel.Product));
     }
 
     [Fact]
-    public void Add_OrdinalsExhausted_IsRejected()
+    public void ChildCount_Unchanged_ReturnsSameInstance()
+    {
+        var topology = Layout(1, 2, 1, 1, 1);
+
+        Assert.Same(topology, topology.WithChildCount(At(topology, 1).Id, 2).Value);
+    }
+
+    [Fact]
+    public void ChildCount_InvalidRequests_AreRejected()
+    {
+        var topology = Layout(1, 1, 1, 1, 1);
+        var cabinet = At(topology, 1);
+
+        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithChildCount(At(topology, 1, 1, 1, 1, 1).Id, 1).Error.Code);
+        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithChildCount(cabinet.Id, -1).Error.Code);
+        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithChildCount(cabinet.Id, TopologyAddress.MaxOrdinal + 1).Error.Code);
+        Assert.Equal(TopologyErrors.NodeNotFoundCode, topology.WithChildCount(TopologyNodeId.New(), 1).Error.Code);
+    }
+
+    [Fact]
+    public void ChildCount_OrdinalsExhausted_IsRejected()
     {
         var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S", [Node(997)])).Value;
 
-        var result = topology.WithChildrenAdded(topology.Root.Id, 3, TopologyTemplate.Empty, true);
+        var result = topology.WithChildCount(topology.Root.Id, 4);
 
         Assert.Equal(TopologyErrors.InvalidEditCode, result.Error.Code);
-        Assert.Contains("最多还能新增 2 个", result.Error.Message);
-        Assert.True(topology.WithChildrenAdded(topology.Root.Id, 2, TopologyTemplate.Empty, true).IsSuccess);
+        Assert.Contains("柜体数量最多为 3", result.Error.Message);
+        Assert.True(topology.WithChildCount(topology.Root.Id, 3).IsSuccess);
     }
 
     [Fact]
-    public void Add_OverNodeLimit_IsRejectedBeforeBuilding()
+    public void ChildCount_OverNodeLimit_IsRejectedBeforeBuilding()
     {
-        var topology = Layout(1, 1, 1, 1, 1);
+        // 每个柜体约 3000 个节点，扩到 999 个柜体约 300 万个：必须在生成之前按数量拦住
+        var topology = Layout(1, 1, 999, 1, 1);
 
-        // 约 1e12 个节点：必须在生成之前按数量拦住，否则进程内存耗尽
-        var result = topology.WithChildrenAdded(topology.Root.Id, 2, new TopologyTemplate([999, 999, 999, 999]), true);
+        var result = topology.WithChildCount(topology.Root.Id, 999);
 
         Assert.Equal(TopologyErrors.InvalidEditCode, result.Error.Code);
         Assert.Contains("超过上限", result.Error.Message);
@@ -235,15 +247,15 @@ public sealed class TopologyStructureEditTests
         ])).Value;
         var source = At(topology, 1);
 
-        var copied = topology.WithNodeCopied(source.Id, enabled: false).Value;
+        var copied = topology.WithNodeCopied(source.Id).Value;
 
         var copy = At(copied, 5);
         AssertKeptUnchanged(topology, copied);
         Assert.Equal(topology.NodeCount + 7, copied.NodeCount);
 
-        // 副本自身不带名称（另一个物理位置）、按参数停用；下级的名称与启用状态照抄
+        // 副本自身不带名称（另一个物理位置）；启用状态与下级的名称、启用状态照抄
         Assert.Null(copy.Name);
-        Assert.False(copy.IsEnabled);
+        Assert.True(copy.IsEnabled);
         Assert.Equal("高温层", At(copied, 5, 1).Name);
         Assert.False(At(copied, 5, 2).IsEnabled);
         Assert.Equal(2, At(copied, 5, 1, 1, 1).Children.Count);
@@ -259,8 +271,20 @@ public sealed class TopologyStructureEditTests
         var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
             [Node(1), Node(TopologyAddress.MaxOrdinal)])).Value;
 
-        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithNodeCopied(topology.Root.Id, true).Error.Code);
-        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithNodeCopied(At(topology, 1).Id, true).Error.Code);
+        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithNodeCopied(topology.Root.Id).Error.Code);
+        Assert.Equal(TopologyErrors.InvalidEditCode, topology.WithNodeCopied(At(topology, 1).Id).Error.Code);
+    }
+
+    [Fact]
+    public void Copy_OfDisabledNode_StaysDisabled()
+    {
+        var topology = EquipmentTopology.Create(new TopologyDefinition(TopologyNodeId.New(), "S",
+            [Node(1, Node(1)) with { Enabled = false }])).Value;
+
+        var copied = topology.WithNodeCopied(At(topology, 1).Id).Value;
+
+        Assert.False(At(copied, 2).IsEnabled);
+        Assert.False(At(copied, 2, 1).IsEffectivelyEnabled);
     }
 
     // ---------- 下一个序号 ----------

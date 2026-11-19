@@ -108,52 +108,73 @@ public sealed class EquipmentTopology
     }
 
     // ---------- 结构编辑 ----------
-    // 每次得到一份新拓扑（本实例不变）。四种编辑都只改写某一个上级的下级列表，其余节点的 Id、序号、名称与启用状态原样导出，
+    // 每次得到一份新拓扑（本实例不变）。几种编辑都只改写某一个上级的下级列表，其余节点的 Id、序号、名称与启用状态原样导出，
     // 再经 Create 整树校验：序号范围、同级重复、Id 唯一、节点上限的规则只有一份。
 
     /// <summary>
-    /// 在 <paramref name="parentId"/> 下新增 <paramref name="count"/> 个下级，序号从 <see cref="TopologyNode.NextChildOrdinal"/> 起连续编号，
-    /// 每个新节点按 <paramref name="template"/> 带上下级。
+    /// 把 <paramref name="parentId"/> 的下级数量改为 <paramref name="count"/>，数量不变时返回本实例。
     /// </summary>
-    /// <param name="enabled">
-    /// 新节点自身是否启用。新位置在现场调试完成前应保持停用（故障安全方向），由操作员确认后再启用；
-    /// 新节点的下级都是启用，统一由新节点屏蔽。
-    /// </param>
-    public Result<EquipmentTopology> WithChildrenAdded(TopologyNodeId parentId, int count, TopologyTemplate template, bool enabled)
+    /// <remarks>
+    /// <para>调小：删除序号最大的几个下级（连同子树）。要删中间的某一个，用 <see cref="WithNodeRemoved"/>。</para>
+    /// <para>调大：从 <see cref="TopologyNode.NextChildOrdinal"/> 起追加，每个新下级照抄最后一个下级的结构
+    /// （全部新 Id、未命名、启用：名称与维护屏蔽属于具体的物理位置，不随结构复制）；原来没有下级时只新增节点本身。</para>
+    /// </remarks>
+    public Result<EquipmentTopology> WithChildCount(TopologyNodeId parentId, int count)
     {
-        ArgumentNullException.ThrowIfNull(template);
-
         if (!TryGetNode(parentId, out var parent))
             return Result<EquipmentTopology>.Failure(TopologyErrors.NodeNotFound(parentId));
 
         if (!parent.Level.TryGetChildLevel(out var childLevel))
-            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit($"{parent.Address} 是产品位（最底层），不能新增下级。"));
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit($"{parent.Address} 是产品位（最底层），没有下级。"));
 
-        if (count < 1)
-            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit($"新增数量至少为 1，当前为 {count}。"));
+        if (count is < 0 or > TopologyAddress.MaxOrdinal)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"{childLevel.DisplayName()}数量必须在 [0, {TopologyAddress.MaxOrdinal}] 之间，当前为 {count}。"));
+        }
 
-        var templateCheck = template.Validate(childLevel);
-        if (templateCheck.IsFailure)
-            return Result<EquipmentTopology>.Failure(templateCheck.Error);
+        var existing = parent.Children.Count;
+        if (count == existing)
+            return Result<EquipmentTopology>.Success(this);
 
+        if (count < existing)
+        {
+            // 下级按序号升序：保留前 count 个，即删掉序号最大的几个
+            var kept = parent.Children.Take(count).Select(child => child.Id).ToHashSet();
+            return Rewrite(parentId, children => Array.FindAll(children, child => kept.Contains(child.Id)));
+        }
+
+        var added = count - existing;
         var first = parent.NextChildOrdinal;
-        var available = Math.Max(0, TopologyAddress.MaxOrdinal - first + 1);
-        if (count > available)
+        if (first + added - 1 > TopologyAddress.MaxOrdinal)
         {
             return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
-                $"{parent.Address} 下的{childLevel.DisplayName()}序号已用到 {first - 1}，最多还能新增 {available} 个。"));
+                $"{parent.Address} 下的{childLevel.DisplayName()}序号已用到 {first - 1}，" +
+                $"{childLevel.DisplayName()}数量最多为 {existing + TopologyAddress.MaxOrdinal - first + 1}。"));
         }
 
-        // 先按数量估算再生成：模板各层都填 999 时会有上万亿个节点，必须在分配内存之前拦住
-        var added = count * template.NodeCountPerInstance;
-        if (NodeCount + added > MaxNodeCount)
+        // 先按数量估算再生成：照抄的子树可能很大，必须在分配内存之前拦住超限
+        var sample = existing == 0 ? null : parent.Children[^1];
+        var total = NodeCount + (long)added * (sample is null ? 1 : SubtreeNodeCount(sample));
+        if (total > MaxNodeCount)
         {
             return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
-                $"新增 {added} 个节点后共 {NodeCount + added} 个，超过上限 {MaxNodeCount}。"));
+                $"改为 {count} 个{childLevel.DisplayName()}后共 {total} 个节点，超过上限 {MaxNodeCount}。"));
         }
 
-        var nodes = template.Build(parent.Address, first, count, enabled);
-        return Rewrite(parentId, children => [.. children, .. nodes]);
+        return Rewrite(parentId, children =>
+        {
+            var template = sample is null ? null : Array.Find(children, child => child.Id == sample.Id);
+            var nodes = new TopologyNodeDefinition[added];
+            for (var i = 0; i < added; i++)
+            {
+                nodes[i] = template is null
+                    ? new TopologyNodeDefinition(TopologyNodeId.New(), first + i, [])
+                    : Clone(template, keepSettings: false) with { Ordinal = first + i };
+            }
+
+            return [.. children, .. nodes];
+        });
     }
 
     /// <summary>
@@ -197,9 +218,9 @@ public sealed class EquipmentTopology
 
     /// <summary>
     /// 把节点连同整棵子树复制为一个同级节点，放在 <see cref="TopologyNode.NextChildOrdinal"/>。
-    /// 副本全部分配新 Id；下级的名称与启用状态照抄，副本自身不带名称（它是另一个物理位置），启用状态由 <paramref name="enabled"/> 决定。
+    /// 副本全部分配新 Id，名称与启用状态照抄；副本自身不带名称（它是另一个物理位置）。
     /// </summary>
-    public Result<EquipmentTopology> WithNodeCopied(TopologyNodeId id, bool enabled)
+    public Result<EquipmentTopology> WithNodeCopied(TopologyNodeId id)
     {
         if (!TryGetNonRoot(id, "复制", out var node, out var parent, out var error))
             return Result<EquipmentTopology>.Failure(error);
@@ -215,15 +236,30 @@ public sealed class EquipmentTopology
         return Rewrite(parent.Id, children =>
         {
             var source = Array.Find(children, child => child.Id == node.Id)!;
-            return [.. children, CloneWithNewIds(source) with { Ordinal = ordinal, Name = null, Enabled = enabled }];
+            return [.. children, Clone(source, keepSettings: true) with { Ordinal = ordinal, Name = null }];
         });
+    }
 
-        static TopologyNodeDefinition CloneWithNewIds(TopologyNodeDefinition source)
-            => new(TopologyNodeId.New(), source.Ordinal, source.Children.Select(CloneWithNewIds).ToArray())
-            {
-                Name = source.Name,
-                Enabled = source.Enabled,
-            };
+    /// <summary>
+    /// 复制一棵子树并全部换新 Id。<paramref name="keepSettings"/> 为 false 时只照抄结构：未命名、全部启用。
+    /// </summary>
+    private static TopologyNodeDefinition Clone(TopologyNodeDefinition source, bool keepSettings)
+        => new(TopologyNodeId.New(), source.Ordinal, source.Children.Select(child => Clone(child, keepSettings)).ToArray())
+        {
+            Name = keepSettings ? source.Name : null,
+            Enabled = !keepSettings || source.Enabled,
+        };
+
+    /// <summary>
+    /// 节点连同全部下级的个数
+    /// </summary>
+    private int SubtreeNodeCount(TopologyNode node)
+    {
+        var count = 1;
+        for (var level = node.Level + 1; level <= TopologyLevel.Product; level++)
+            count += GetDescendants(node.Address, level).Count;
+
+        return count;
     }
 
     /// <summary>
