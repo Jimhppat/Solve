@@ -106,7 +106,8 @@ public static class ProductStates
     };
 
     /// <summary>
-    /// 需要操作员关注：故障、报警、不合格、无数据
+    /// 告警类状态：故障、报警、不合格，容器上用红字单独计数。
+    /// "无数据"虽然严重度更高于正常状态，但没接数据源时会遍布全屏，用灰色格子与完整统计体现，不进红字。
     /// </summary>
-    public static bool NeedsAttention(this ProductState state) => state.Severity() >= ProductState.Unknown.Severity();
+    public static bool IsAlarm(this ProductState state) => state is ProductState.Fault or ProductState.Alarm or ProductState.Failed;
 }

@@ -59,7 +59,23 @@ public sealed class TwinBoardViewModelTests
         Assert.Equal(16, nodes.OfType<ProductNodeViewModel>().Count());
         Assert.All(nodes.Where(n => n is not ProductNodeViewModel), n => Assert.True(n.IsExpanded));
         Assert.Equal(["系统 老化房"], board.Breadcrumb.Select(b => b.Text));
+        Assert.True(Assert.Single(board.Breadcrumb).IsCurrent);
         Assert.False(board.FocusParentCommand.CanExecute(null));
+
+        // 等分网格的行列数：柜体 1 个一行；每治具 4 个产品位，一行放满 4 个
+        Assert.Equal(1, system.ChildCount);
+        Assert.All(nodes.OfType<FixtureNodeViewModel>(), fixture => Assert.Equal(4, fixture.ProductColumns));
+    }
+
+    [Fact]
+    public void FixtureWithFewProducts_UsesAllColumnsForThem()
+    {
+        var (board, _) = Attached(Twins.Layout(1, 1, 1, 1, 2));
+
+        var fixture = Flatten(board.Focus!).OfType<FixtureNodeViewModel>().Single();
+
+        // 只有 2 个产品位时一行 2 列，格子铺满整行，不留两个空位
+        Assert.Equal(2, fixture.ProductColumns);
     }
 
     [Fact]
@@ -99,6 +115,7 @@ public sealed class TwinBoardViewModelTests
         Assert.IsType<LayerNodeViewModel>(board.Focus);
         Assert.Equal(TopologyAddress.Of(2, 1), board.Focus!.Node.Address);
         Assert.Equal(["系统 老化房", "C02", "C02-L01"], board.Breadcrumb.Select(b => b.Text));
+        Assert.Equal([false, false, true], board.Breadcrumb.Select(b => b.IsCurrent));
         Assert.Equal("层位 C02-L01", board.SelectedTitle);
 
         // 层位下 1 + 2 槽 + 4 治具位 = 7，再加 16 个产品位超过上限 20：治具位为摘要模式
@@ -152,7 +169,7 @@ public sealed class TwinBoardViewModelTests
         Assert.Equal(ProductState.Fault, product.State);
         var slot = nodes.OfType<SlotNodeViewModel>().First();
         Assert.Equal(ProductState.Fault, slot.Worst);
-        Assert.Contains("故障 1", slot.AttentionText);
+        Assert.Contains("故障 1", slot.AlarmText);
         Assert.Equal(ProductState.Fault, board.Focus!.Worst);
 
         // 另一个槽位没有变化

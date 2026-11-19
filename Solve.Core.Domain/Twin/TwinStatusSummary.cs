@@ -61,31 +61,31 @@ public sealed class TwinStatusSummary
     }
 
     /// <summary>
-    /// 需要关注的状态计数，如"故障 1 · 报警 2"；没有时为空串
+    /// 告警类计数，如"故障 1 · 报警 2 · 不合格 3"；没有时为空串
     /// </summary>
-    public string DescribeAttention() => Describe(attentionOnly: true);
+    public string DescribeAlarms() => Describe(alarmsOnly: true);
 
     /// <summary>
     /// 全部非零计数，按严重度排列，如"故障 1 · 测试中 30 · 合格 5 · 停用 8"
     /// </summary>
-    public string DescribeAll() => Describe(attentionOnly: false);
+    public string DescribeAll() => Describe(alarmsOnly: false);
 
     public bool SameAs(TwinStatusSummary other)
         => ReferenceEquals(this, other) || (Disabled == other.Disabled && _counts.AsSpan().SequenceEqual(other._counts));
 
     public override string ToString() => DescribeAll();
 
-    private string Describe(bool attentionOnly)
+    private string Describe(bool alarmsOnly)
     {
         var parts = new List<string>();
         foreach (var state in ProductStates.BySeverity)
         {
             var count = _counts[(int)state];
-            if (count > 0 && (!attentionOnly || state.NeedsAttention()))
+            if (count > 0 && (!alarmsOnly || state.IsAlarm()))
                 parts.Add($"{state.DisplayName()} {count.ToString(CultureInfo.InvariantCulture)}");
         }
 
-        if (!attentionOnly && Disabled > 0)
+        if (!alarmsOnly && Disabled > 0)
             parts.Add($"停用 {Disabled.ToString(CultureInfo.InvariantCulture)}");
 
         return string.Join(" · ", parts);

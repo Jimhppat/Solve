@@ -11,7 +11,11 @@ namespace Solve.UI.ViewModels.Twin;
 /// <summary>
 /// 路径导航上的一级
 /// </summary>
-public sealed record TwinBreadcrumbItem(string Text, RelayCommand Command);
+/// <param name="IsCurrent">当前焦点：显示为普通文字，不是可点的按钮</param>
+public sealed record TwinBreadcrumbItem(string Text, RelayCommand Command, bool IsCurrent)
+{
+    public bool IsLink => !IsCurrent;
+}
 
 /// <summary>
 /// 主控台显示区：以一个节点为焦点，按显示数量上限逐层展开，显示六层节点的产品状态。
@@ -355,7 +359,7 @@ public sealed class TwinBoardViewModel : ViewModelBase
                 ? $"系统 {node.DisplayName}"
                 : node.Name is null ? node.Address.ToString() : $"{node.Address} {node.Name}";
             var id = node.Id;
-            items.Add(new TwinBreadcrumbItem(text, new RelayCommand(() => FocusOn(id), () => id != _focusId)));
+            items.Add(new TwinBreadcrumbItem(text, new RelayCommand(() => FocusOn(id), () => id != _focusId), IsCurrent: level == focus.Level));
         }
 
         return items;

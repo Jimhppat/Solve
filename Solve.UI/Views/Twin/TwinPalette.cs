@@ -88,4 +88,13 @@ public static class TwinConverters
     /// </summary>
     public static readonly IValueConverter SelectionThickness =
         new FuncValueConverter<bool, Thickness>(selected => selected ? new Thickness(2) : new Thickness(0));
+
+    /// <summary>
+    /// 产品格宽、高都放得下状态名时才显示第二行；格子小时只显示序号，不会把序号挤掉、也不会撑大格子
+    /// </summary>
+    public static readonly IValueConverter FitsStateText =
+        new FuncValueConverter<Rect, bool>(bounds => bounds.Width >= StateTextWidth && bounds.Height >= StateTextHeight);
+
+    private const double StateTextWidth = 44;
+    private const double StateTextHeight = 34;
 }

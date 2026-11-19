@@ -5,19 +5,29 @@
              x:Class="Solve.UI.Views.Twin.ProductNodeView"
              x:DataType="tvm:ProductNodeViewModel"
              x:CompileBindings="True"
+             MinWidth="20"
+             MinHeight="18"
              Cursor="Hand"
              Tapped="OnTapped">
-    <!-- 产品位（叶子）：一个色块 + 序号。显示区可能同时有上千个，只用最少的元素，不放样式表、不放悬停提示；
-         详情点选后在控制区查看 -->
-    <Border Width="30" Height="22" Margin="1" CornerRadius="3"
+    <!-- 产品位（叶子）：铺满治具网格中的一格。最小 20×18（两位序号刚好放得下），再小就让显示区出现滚动条而不是继续压缩。
+         格子够高时在序号下显示状态名；显示区可能同时有上千个，不放样式表、不放悬停提示，详情点选后在控制区查看 -->
+    <Border Margin="1" CornerRadius="3" ClipToBounds="True"
             Background="{Binding State, Converter={x:Static tv:TwinConverters.StateBrush}}"
             BorderBrush="{DynamicResource SemiColorText0}"
             BorderThickness="{Binding IsSelected, Converter={x:Static tv:TwinConverters.SelectionThickness}}"
             Opacity="{Binding ContentOpacity}">
-        <TextBlock Text="{Binding OrdinalText}"
-                   FontSize="10"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Foreground="{Binding State, Converter={x:Static tv:TwinConverters.StateForeground}}" />
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock Text="{Binding OrdinalText}"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center"
+                       Foreground="{Binding State, Converter={x:Static tv:TwinConverters.StateForeground}}" />
+            <TextBlock Text="{Binding StateText}"
+                       FontSize="10"
+                       HorizontalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"
+                       IsVisible="{Binding $parent[Border].Bounds, Converter={x:Static tv:TwinConverters.FitsStateText}}"
+                       Foreground="{Binding State, Converter={x:Static tv:TwinConverters.StateForeground}}" />
+        </StackPanel>
     </Border>
 </UserControl>

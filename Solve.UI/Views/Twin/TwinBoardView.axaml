@@ -8,7 +8,7 @@
              x:Class="Solve.UI.Views.Twin.TwinBoardView"
              x:DataType="tvm:TwinBoardViewModel"
              x:CompileBindings="True">
-    <!-- 主控台显示区：路径导航 + 图例，下面是当前焦点节点。
+    <!-- 主控台显示区：路径导航 + 图例，下面是当前焦点节点，铺满剩余空间。
          六层控件按视图模型类型在这里统一登记，各层控件互不引用，可单独修改 -->
 
     <Design.DataContext>
@@ -72,13 +72,21 @@
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
+                        <!-- 上级可点（按钮）；当前焦点是普通粗体文字，不是灰掉的按钮 -->
                         <DataTemplate x:DataType="tvm:TwinBreadcrumbItem">
                             <StackPanel Orientation="Horizontal">
                                 <PathIcon Data="{DynamicResource SemiIconChevronRight}" Width="10" Height="10"
                                           Foreground="{DynamicResource SemiColorText2}" />
                                 <Button Classes="Tertiary" Padding="6,0" Height="28"
+                                        IsVisible="{Binding IsLink}"
                                         Content="{Binding Text}"
                                         Command="{Binding Command}" />
+                                <TextBlock IsVisible="{Binding IsCurrent}"
+                                           Text="{Binding Text}"
+                                           Margin="6,0"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SemiColorText0}" />
                             </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -98,14 +106,25 @@
             <TextBlock Text="{Binding RefreshError}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
         </Border>
 
-        <TextBlock DockPanel.Dock="Top"
-                   IsVisible="{Binding ShowEmpty}"
-                   Text="{Binding EmptyText}"
-                   FontSize="13"
-                   Foreground="{DynamicResource SemiColorText2}" />
+        <Grid>
+            <!-- 铺满：可滚动区域给内容的可用空间是无限大，内容自己不知道该多大；
+                 把内容的最小尺寸绑到可见区域尺寸，节点少时正好铺满，节点多到低于各层最小尺寸时才出现滚动条 -->
+            <ScrollViewer x:Name="Scroller"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <ContentControl Content="{Binding Focus}"
+                                MinWidth="{Binding #Scroller.Viewport.Width}"
+                                MinHeight="{Binding #Scroller.Viewport.Height}"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+            </ScrollViewer>
 
-        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
-            <ContentControl Content="{Binding Focus}" HorizontalAlignment="Left" VerticalAlignment="Top" />
-        </ScrollViewer>
+            <TextBlock IsVisible="{Binding ShowEmpty}"
+                       Text="{Binding EmptyText}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       FontSize="13"
+                       Foreground="{DynamicResource SemiColorText2}" />
+        </Grid>
     </DockPanel>
 </UserControl>

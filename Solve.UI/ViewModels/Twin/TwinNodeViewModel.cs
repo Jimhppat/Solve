@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Solve.Core.Application.Twin;
@@ -79,6 +80,11 @@ public abstract class TwinNodeViewModel : ViewModelBase
     public IReadOnlyList<TwinNodeViewModel> Children { get; private set; } = [];
 
     /// <summary>
+    /// 画出的下级个数，决定等分网格的行数或列数
+    /// </summary>
+    public int ChildCount => Children.Count;
+
+    /// <summary>
     /// 其下产品位的状态统计（产品位为只含自身的统计）
     /// </summary>
     public TwinStatusSummary Summary
@@ -93,11 +99,11 @@ public abstract class TwinNodeViewModel : ViewModelBase
     public ProductState? Worst => _summary.Worst;
 
     /// <summary>
-    /// 需要关注的计数，如"故障 1 · 报警 2"
+    /// 告警类计数（红字），如"故障 1 · 报警 2"
     /// </summary>
-    public string AttentionText => _summary.DescribeAttention();
+    public string AlarmText => _summary.DescribeAlarms();
 
-    public bool HasAttention => AttentionText.Length > 0;
+    public bool HasAlarm => AlarmText.Length > 0;
 
     /// <summary>
     /// 全部计数（悬停提示）
@@ -134,8 +140,8 @@ public abstract class TwinNodeViewModel : ViewModelBase
 
         Summary = summary;
         OnPropertyChanged(nameof(Worst));
-        OnPropertyChanged(nameof(AttentionText));
-        OnPropertyChanged(nameof(HasAttention));
+        OnPropertyChanged(nameof(AlarmText));
+        OnPropertyChanged(nameof(HasAlarm));
         OnPropertyChanged(nameof(SummaryText));
     }
 
@@ -151,34 +157,39 @@ public abstract class TwinNodeViewModel : ViewModelBase
 }
 
 /// <summary>
-/// 系统：柜体横向排开，放不下时换行
+/// 系统：柜体排成一行，等分宽度
 /// </summary>
 public sealed class SystemNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
 
 /// <summary>
-/// 柜体：层位上下堆叠，层位 1 在最上面
+/// 柜体：层位上下堆叠、等分高度，层位 1 在最上面
 /// </summary>
 public sealed class CabinetNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
 
 /// <summary>
-/// 层位：槽位从左到右排成一行
+/// 层位：槽位从左到右排成一行、等分宽度
 /// </summary>
 public sealed class LayerNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
 
 /// <summary>
-/// 槽位：治具位上下排列
+/// 槽位：治具位上下排列、等分高度
 /// </summary>
 public sealed class SlotNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board);
 
 /// <summary>
-/// 治具位：产品位按每行 4 个排列
+/// 治具位：产品位按网格铺满，每行最多 4 个
 /// </summary>
 public sealed class FixtureNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node, board)
 {
     /// <summary>
-    /// 每行产品位数（默认值，按现场治具调整）
+    /// 每行最多的产品位数（默认值，按现场治具调整）
     /// </summary>
-    public int ProductColumns => 4;
+    public const int MaxProductColumns = 4;
+
+    /// <summary>
+    /// 每行产品位数：不足 4 个时按实际个数，格子铺满整行而不是留空
+    /// </summary>
+    public int ProductColumns => Math.Clamp(ChildCount, 1, MaxProductColumns);
 }
 
 /// <summary>
@@ -192,8 +203,17 @@ public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel b
     public ProductState State
     {
         get => _state;
-        private set => SetProperty(ref _state, value);
+        private set
+        {
+            if (SetProperty(ref _state, value))
+                OnPropertyChanged(nameof(StateText));
+        }
     }
+
+    /// <summary>
+    /// 状态名，格子放得下时显示在序号下面
+    /// </summary>
+    public string StateText => _state.DisplayName();
 
     public string? SerialNumber
     {

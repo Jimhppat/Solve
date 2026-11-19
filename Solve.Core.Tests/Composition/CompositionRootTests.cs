@@ -239,7 +239,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Start_InSimulation_TwinFollowsTopology_AndFeedProducesStates()
+    public async Task Start_TwinFollowsTopology_AndShowsNoDataWithoutASource()
     {
         var saved = EquipmentTopology.Create(new TopologyLayout(1, 1, 1, 1, 4).ToDefinition("老化房").Value).Value;
         Assert.True((await new SqliteTopologyRepository(await OpenSeedDatabaseAsync(), NullLogger.Instance)
@@ -254,12 +254,9 @@ public sealed class CompositionRootTests : IAsyncLifetime
         Assert.Equal(saved.Root.Id, twin.Topology!.Root.Id);
         Assert.Equal(4, twin.ProductIds.Count);
 
-        // 仿真状态源每 250 ms 一个周期：心跳会把"无数据"推进为其他状态
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (twin.GetSummary(saved.Root.Id)[Core.Domain.Twin.ProductState.Unknown] == 4 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-
-        Assert.True(twin.GetSummary(saved.Root.Id)[Core.Domain.Twin.ProductState.Unknown] < 4);
+        // 不运行任何假数据：等过一个仿真周期（250 ms）的时长，产品位仍全部是"无数据"
+        await Task.Delay(600);
+        Assert.Equal(4, twin.GetSummary(saved.Root.Id)[Core.Domain.Twin.ProductState.Unknown]);
     }
 
     [Fact]

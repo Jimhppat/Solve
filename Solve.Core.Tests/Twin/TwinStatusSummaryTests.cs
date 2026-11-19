@@ -26,11 +26,12 @@ public sealed class TwinStatusSummaryTests
     }
 
     [Fact]
-    public void NeedsAttention_CoversFaultAlarmFailedAndUnknown()
+    public void Alarms_AreFaultAlarmAndFailed_NotUnknown()
     {
+        // 无数据不进红字：没接数据源时它会遍布全屏
         Assert.Equal(
-            [ProductState.Fault, ProductState.Alarm, ProductState.Failed, ProductState.Unknown],
-            ProductStates.BySeverity.Where(state => state.NeedsAttention()));
+            [ProductState.Fault, ProductState.Alarm, ProductState.Failed],
+            ProductStates.BySeverity.Where(state => state.IsAlarm()));
     }
 
     [Fact]
@@ -45,12 +46,13 @@ public sealed class TwinStatusSummaryTests
     [Fact]
     public void Describe_ListsBySeverity()
     {
-        var summary = Summary(3, (ProductState.Passed, 5), (ProductState.Fault, 1), (ProductState.Running, 30), (ProductState.Alarm, 2));
+        var summary = Summary(3, (ProductState.Passed, 5), (ProductState.Fault, 1), (ProductState.Running, 30),
+            (ProductState.Alarm, 2), (ProductState.Unknown, 4));
 
-        Assert.Equal("故障 1 · 报警 2", summary.DescribeAttention());
-        Assert.Equal("故障 1 · 报警 2 · 测试中 30 · 合格 5 · 停用 3", summary.DescribeAll());
-        Assert.Equal(38, summary.Active);
-        Assert.Equal(41, summary.Total);
+        Assert.Equal("故障 1 · 报警 2", summary.DescribeAlarms());
+        Assert.Equal("故障 1 · 报警 2 · 无数据 4 · 测试中 30 · 合格 5 · 停用 3", summary.DescribeAll());
+        Assert.Equal(42, summary.Active);
+        Assert.Equal(45, summary.Total);
     }
 
     [Fact]
