@@ -80,13 +80,7 @@ public sealed class SqliteDatabase
     {
         DatabasePath = databasePath;
         CommandTimeoutSeconds = commandTimeoutSeconds;
-        _connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            DefaultTimeout = commandTimeoutSeconds,
-            Pooling = true,
-        }.ToString();
+        _connectionString = BuildConnectionString(databasePath, commandTimeoutSeconds);
     }
 
     public string DatabasePath { get; }
@@ -165,6 +159,38 @@ public sealed class SqliteDatabase
 
     public CommandDefinition Command(string sql, CancellationToken cancellationToken, object? parameters = null, SqliteTransaction? transaction = null)
         => new(sql, parameters, transaction, CommandTimeoutSeconds, cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// 关闭指定配置库在连接池中的句柄：空闲连接立即关闭，使用中的连接归还时关闭、不再入池。
+    /// 只影响该库文件，不触碰进程内其他库的连接池。用于移动 / 删除库文件之前（例如测试清理临时目录）。
+    /// </summary>
+    /// <remarks>
+    /// <para>不要改用进程级的 <see cref="SqliteConnection.ClearAllPools"/>：它会波及进程内所有库的连接池。
+    /// Microsoft.Data.Sqlite 10.0.13 之前它还会把其他线程"刚从池中取出、尚未登记所有者"的连接误判为泄漏并关闭其原生句柄
+    /// （dotnet/efcore#39008），曾使并行测试偶发 ObjectDisposedException。依赖已升级到修复版本，按库清池仍是正确的隔离边界。</para>
+    /// <para>应在本库的使用者都结束后调用：使用中的连接要等归还时才关闭，在此之前文件句柄仍被占用。</para>
+    /// </remarks>
+    /// <param name="options">必须与打开该库时的参数一致：连接池按连接字符串分组，参数不同即是另一个池。</param>
+    public static void ClearPool(SqliteStorageOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.DatabasePath);
+
+        // 未打开的连接已能定位到所属的池组，不会创建或打开库文件
+        using var connection = new SqliteConnection(
+            BuildConnectionString(Path.GetFullPath(options.DatabasePath), options.CommandTimeoutSeconds));
+        SqliteConnection.ClearPool(connection);
+    }
+
+    // 构造函数与 ClearPool 共用：两处字符串只要差一个字符，清掉的就是另一个空池，句柄仍被占用
+    private static string BuildConnectionString(string fullPath, int commandTimeoutSeconds)
+        => new SqliteConnectionStringBuilder
+        {
+            DataSource = fullPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            DefaultTimeout = commandTimeoutSeconds,
+            Pooling = true,
+        }.ToString();
 
     private static async Task<Result> MigrateAsync(
         SqliteDatabase database,

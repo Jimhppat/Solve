@@ -27,6 +27,8 @@ public sealed class SqliteBusConfigurationRepositoryTests : IAsyncLifetime
 
     private string DatabasePath => Path.Combine(_directory, "nested", "config", "solve.db");
 
+    private SqliteStorageOptions StorageOptions => new(DatabasePath);
+
     public async Task InitializeAsync()
     {
         _database = (await OpenDatabaseAsync()).Value;
@@ -35,15 +37,16 @@ public sealed class SqliteBusConfigurationRepositoryTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
-        // 连接池会保持文件句柄，删除临时文件前必须清空
-        SqliteConnection.ClearAllPools();
+        // 连接池会保持文件句柄，删除临时文件前必须清空。只清本库的池：进程级 ClearAllPools
+        // 会关掉并行测试类正在打开的连接（见 SqliteDatabase.ClearPool 的说明）
+        SqliteDatabase.ClearPool(StorageOptions);
         if (Directory.Exists(_directory))
             Directory.Delete(_directory, recursive: true);
         return Task.CompletedTask;
     }
 
     private Task<Result<SqliteDatabase>> OpenDatabaseAsync()
-        => SqliteDatabase.OpenAsync(new SqliteStorageOptions(DatabasePath), NullLogger.Instance, CancellationToken.None);
+        => SqliteDatabase.OpenAsync(StorageOptions, NullLogger.Instance, CancellationToken.None);
 
     private async Task ExecuteRawAsync(string sql, object? parameters = null)
     {
@@ -85,7 +88,7 @@ public sealed class SqliteBusConfigurationRepositoryTests : IAsyncLifetime
     {
         var descriptor = Tcp();
         Assert.True((await _repository.SaveAsync(descriptor, CancellationToken.None)).IsSuccess);
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
 
         var reopened = await OpenDatabaseAsync();
 
@@ -99,12 +102,24 @@ public sealed class SqliteBusConfigurationRepositoryTests : IAsyncLifetime
     public async Task Open_NewerSchemaVersion_IsRefused()
     {
         await ExecuteRawAsync("PRAGMA user_version = 99;");
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
 
         var result = await OpenDatabaseAsync();
 
         Assert.Equal(BusErrors.StorageFailedCode, result.Error.Code);
         Assert.Contains("v99", result.Error.Message);
+    }
+
+    [Fact]
+    public async Task ClearPool_ReleasesAllHandles_SoFileCanBeDeleted()
+    {
+        Assert.True((await _repository.SaveAsync(Tcp(), CancellationToken.None)).IsSuccess);
+
+        SqliteDatabase.ClearPool(StorageOptions);
+
+        // Windows 上仍被连接池占用的库文件删不掉；ClearPool 与构造函数的连接字符串一旦不一致，这里会抛 IOException
+        File.Delete(DatabasePath);
+        Assert.False(File.Exists(DatabasePath));
     }
 
     [Fact]

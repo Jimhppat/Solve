@@ -1,5 +1,4 @@
 using Dapper;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.Persistence.Buses;
 using Solve.Adapters.Persistence.Settings;
@@ -23,6 +22,9 @@ public sealed class CompositionRootTests : IAsyncLifetime
 
     private string DatabasePath => Path.Combine(_directory, "config", "solve.db");
 
+    // AppHost 也用默认参数打开同一路径，与种子库共用同一个连接池，清这一个池即可释放全部句柄
+    private SqliteStorageOptions StorageOptions => new(DatabasePath);
+
     private string LogDirectory => Path.Combine(_directory, "logs");
 
     public Task InitializeAsync() => Task.CompletedTask;
@@ -32,7 +34,8 @@ public sealed class CompositionRootTests : IAsyncLifetime
         foreach (var host in _hosts)
             await host.DisposeAsync();
 
-        SqliteConnection.ClearAllPools();
+        // 只清本库的池：进程级 ClearAllPools 会关掉并行测试类正在打开的连接（见 SqliteDatabase.ClearPool）
+        SqliteDatabase.ClearPool(StorageOptions);
         if (Directory.Exists(_directory))
             Directory.Delete(_directory, recursive: true);
     }
@@ -45,7 +48,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
     }
 
     private async Task<SqliteDatabase> OpenSeedDatabaseAsync()
-        => (await SqliteDatabase.OpenAsync(new SqliteStorageOptions(DatabasePath), NullLogger.Instance, CancellationToken.None)).Value;
+        => (await SqliteDatabase.OpenAsync(StorageOptions, NullLogger.Instance, CancellationToken.None)).Value;
 
     private async Task SeedAsync(string? hardwareEnabled, params BusDescriptor[] descriptors)
     {
@@ -60,7 +63,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
             Assert.True((await settings.SetAsync(TransportModePolicy.HardwareEnabledKey, hardwareEnabled, CancellationToken.None)).IsSuccess);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
     }
 
     // 回环地址 + 未使用端口：即使误连也不会触达现场设备
@@ -179,7 +182,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         {
             await connection.ExecuteAsync("DROP TABLE app_settings; PRAGMA user_version = 1;");
         }
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
 
         var reopened = await SqliteDatabase.OpenAsync(new SqliteStorageOptions(DatabasePath), NullLogger.Instance, CancellationToken.None);
 
@@ -274,7 +277,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         {
             await connection.ExecuteAsync("UPDATE buses SET port = 0 WHERE id = @Id;", new { Id = bad.Id.ToString() });
         }
-        SqliteConnection.ClearAllPools();
+        SqliteDatabase.ClearPool(StorageOptions);
         var host = CreateHost();
 
         var report = await host.Start();
