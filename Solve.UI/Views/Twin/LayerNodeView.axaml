@@ -7,7 +7,7 @@
              x:CompileBindings="True"
              Margin="0,5">
     <!-- 层位（只展示，不可选中）：一个带明显边框（中灰）的分区，把自己的层号和下属全部槽位包在里面，层与层之间留 10 px 空白。
-         左侧是浅底色的层号栏（小圆点 = 这一层最严重的状态、名称、告警计数），竖线隔开右侧的槽位区；
+         左侧是浅底色的层号栏（小圆点 = 这一层最严重的状态、层号、告警计数；不显示配置的层名称，层号栏保持简洁），竖线隔开右侧的槽位区；
          槽位从左到右等分宽度（货架）。摘要模式右侧画状态条 -->
     <Border CornerRadius="6"
             BorderThickness="1"
@@ -30,11 +30,6 @@
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource SemiColorText0}" />
                     </StackPanel>
-                    <TextBlock Text="{Binding Name}"
-                               IsVisible="{Binding HasName}"
-                               FontSize="11"
-                               TextTrimming="CharacterEllipsis"
-                               Foreground="{DynamicResource SemiColorText2}" />
                     <TextBlock Text="{Binding AlarmText}"
                                IsVisible="{Binding HasAlarm}"
                                FontSize="10"
