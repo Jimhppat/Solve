@@ -132,7 +132,7 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             root, packages.Count, packages.Count(p => p.Status == DriverPackageStatus.Loaded),
             packages.Count(p => p.Status == DriverPackageStatus.PendingApproval), drivers.Count);
 
-        return new DeviceLibraryManager(root, settings, logger, new DriverCatalog(descriptors), drivers, packages);
+        return new DeviceLibraryManager(root, settings, logger, new DriverCatalog(descriptors, drivers), drivers, packages);
     }
 
     public async Task<Result<IReadOnlyList<DriverPackageInfo>>> RescanAsync(CancellationToken cancellationToken)

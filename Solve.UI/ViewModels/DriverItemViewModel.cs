@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using Solve.Core.Domain.Drivers;
+using Solve.Device.Sdk;
 
 namespace Solve.UI.ViewModels;
 
@@ -9,13 +11,17 @@ namespace Solve.UI.ViewModels;
 /// </summary>
 public sealed class DriverItemViewModel
 {
-    public DriverItemViewModel(DriverDescriptor driver)
+    /// <param name="parameters">驱动声明的模块参数；内置驱动与未加载的驱动没有参数</param>
+    public DriverItemViewModel(DriverDescriptor driver, IReadOnlyList<ParameterInfo>? parameters = null)
     {
         Driver = driver ?? throw new ArgumentNullException(nameof(driver));
+        Parameters = parameters ?? [];
         AddressRange = string.Create(CultureInfo.InvariantCulture, $"{driver.MinAddress} – {driver.MaxAddress}");
     }
 
     public DriverDescriptor Driver { get; }
+
+    public IReadOnlyList<ParameterInfo> Parameters { get; }
 
     public string Name => Driver.Name;
 

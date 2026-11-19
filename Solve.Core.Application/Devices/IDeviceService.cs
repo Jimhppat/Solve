@@ -22,6 +22,16 @@ public interface IDeviceService
     IDriverCatalog Drivers { get; }
 
     /// <summary>
+    /// 各模块与驱动的当前绑定（驱动是否就绪）；增删改成功后已重新绑定
+    /// </summary>
+    IDeviceBindings Bindings { get; }
+
+    /// <summary>
+    /// 各模块的通信状态与点位实时值（由轮询调度写入）
+    /// </summary>
+    Runtime.IModuleStatusSource Statuses { get; }
+
+    /// <summary>
     /// 一条总线上的全部模块，按地址升序
     /// </summary>
     Task<Result<IReadOnlyList<DeviceDescriptor>>> ListAsync(BusId busId, CancellationToken cancellationToken);

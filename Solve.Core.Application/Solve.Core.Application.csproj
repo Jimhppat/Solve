@@ -9,6 +9,8 @@
 
     <ItemGroup>
       <ProjectReference Include="..\Solve.Core.Domain\Solve.Core.Domain.csproj" />
+      <!-- 驱动 SDK 是内核对外的契约（零依赖），应用层据此绑定并调度驱动；内核永远不引用任何协议包或驱动包 -->
+      <ProjectReference Include="..\Solve.Device.Sdk\Solve.Device.Sdk.csproj" />
     </ItemGroup>
 
     <ItemGroup>

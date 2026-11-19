@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using Solve.Core.Application.Devices;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Devices;
@@ -20,8 +21,13 @@ namespace Solve.UI.ViewModels;
 /// 线程：命令由 UI 线程发起；存储调用（同步磁盘 I/O）经 Task.Run 放到线程池，await 后回到 UI 线程更新列表。
 /// 添加、保存、删除使用 AsyncRelayCommand，执行期间按钮不可再次点击，防止重复提交。
 /// </remarks>
-public sealed class BusDevicesViewModel : ViewModelBase
+public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
 {
+    private static readonly TimeSpan StatusRefreshInterval = TimeSpan.FromMilliseconds(500);
+
+    private DispatcherTimer? _statusTimer;
+    private bool _disposed;
+
     private const string UnknownDriverName = "未知驱动";
 
     private readonly IDeviceService? _service;
@@ -75,7 +81,10 @@ public sealed class BusDevicesViewModel : ViewModelBase
         _bus = bus;
         _busId = bus.Id;
         _service = service;
-        _allDrivers = service.Drivers.All.Select(d => new DriverItemViewModel(d)).ToList();
+        // 有实现（来自驱动包）的驱动带上参数声明，添加与编辑表单据此生成参数输入项
+        _allDrivers = service.Drivers.All
+            .Select(d => new DriverItemViewModel(d, service.Drivers.TryGetImplementation(d.Id, out var implementation) ? implementation.Info.Parameters : null))
+            .ToList();
         Categories = BuildCategories(_allDrivers);
 
         AddCommand = new AsyncRelayCommand(AddAsync, () => BatchForm.HasDriver);
@@ -298,7 +307,37 @@ public sealed class BusDevicesViewModel : ViewModelBase
         }
 
         PageError = null;
-        Show(listed.Value);
+
+        // 绑定在增删改成功后已由服务重新计算；这里只读取内存中的快照，不触发绑定
+        var bindings = service.Bindings.Get(busId).ToDictionary(b => b.Device.Id);
+        Show(listed.Value, bindings);
+        RefreshStatuses();
+
+        // 通信状态与读数按固定频率从内存快照刷新（不随每次轮询刷新，限制界面重绘频率）
+        if (_statusTimer is null && !_disposed)
+        {
+            _statusTimer = new DispatcherTimer(StatusRefreshInterval, DispatcherPriority.Background, (_, _) => RefreshStatuses());
+            _statusTimer.Start();
+        }
+    }
+
+    /// <summary>
+    /// 窗口关闭：停止刷新。须在 UI 线程上调用，幂等。
+    /// </summary>
+    public void Dispose()
+    {
+        _disposed = true;
+        _statusTimer?.Stop();
+        _statusTimer = null;
+    }
+
+    private void RefreshStatuses()
+    {
+        if (_service is null)
+            return;
+
+        foreach (var item in Devices)
+            item.ApplyStatus(_service.Statuses.Get(item.Device.Id));
     }
 
     private static IReadOnlyList<DriverCategoryItem> BuildCategories(IReadOnlyList<DriverItemViewModel> drivers)
@@ -310,13 +349,15 @@ public sealed class BusDevicesViewModel : ViewModelBase
         return items;
     }
 
-    private void Show(IReadOnlyList<DeviceDescriptor> devices)
+    private void Show(IReadOnlyList<DeviceDescriptor> devices, IReadOnlyDictionary<DeviceId, DriverBinding>? bindings = null)
     {
         Devices.Clear();
         foreach (var device in devices)
         {
+            // 绑定按模块 Id 对应，并要求配置一致：库里的模块刚被改过而绑定尚未刷新时，显示为未绑定而不是旧状态
+            var binding = bindings is not null && bindings.TryGetValue(device.Id, out var found) && found.Device == device ? found : null;
             Devices.Add(new DeviceItemViewModel(
-                device, DriverOf(device), OpenEdit, item => PendingDelete = [item], OnCheckedChanged));
+                device, DriverOf(device), binding, OpenEdit, item => PendingDelete = [item], OnCheckedChanged));
         }
 
         OnPropertyChanged(nameof(IsEmpty));

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.DeviceLibrary;
 using Solve.Core.Application.Devices;
+using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Devices.Ports;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
@@ -12,6 +13,22 @@ namespace Solve.Core.Tests.Devices;
 
 public sealed class DeviceServiceTests
 {
+    /// <summary>
+    /// 只记录"哪条总线被要求重新绑定"
+    /// </summary>
+    private sealed class RecordingBindings : IDeviceBindings
+    {
+        public List<BusId> Refreshed { get; } = [];
+
+        public IReadOnlyList<DriverBinding> Get(BusId busId) => [];
+
+        public Task RefreshAsync(BusId busId, CancellationToken cancellationToken)
+        {
+            Refreshed.Add(busId);
+            return Task.CompletedTask;
+        }
+    }
+
     /// <summary>
     /// 内存仓储：记录写入，按地址判断冲突，验证服务的预检与无效输入不触达存储
     /// </summary>
@@ -60,7 +77,9 @@ public sealed class DeviceServiceTests
     private readonly MemoryRepository _repository = new();
     private readonly BusId _busId = BusId.New();
 
-    private DeviceService CreateService() => new(_repository, Catalog, NullLogger<DeviceService>.Instance);
+    private readonly RecordingBindings _bindings = new();
+
+    private DeviceService CreateService() => new(_repository, Catalog, _bindings, new ModuleStatusStore(), NullLogger<DeviceService>.Instance);
 
     private Task<Result<IReadOnlyList<DeviceDescriptor>>> AddAsync(DriverId driver, string name, int start, int count)
         => CreateService().AddBatchAsync(new DeviceBatchRequest(_busId, driver, name, start, count), CancellationToken.None);

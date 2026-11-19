@@ -37,6 +37,11 @@ public sealed record DeviceDescriptor(DeviceId Id, BusId BusId, DriverId Driver,
     public string? Remark { get; init; }
 
     /// <summary>
+    /// 模块参数（操作员填写过的值）；取值是否合法由应用服务按驱动声明校验
+    /// </summary>
+    public ParameterValues Parameters { get; init; } = ParameterValues.Empty;
+
+    /// <summary>
     /// 校验全部字段并一次性返回所有错误。空列表表示有效。
     /// </summary>
     public IReadOnlyList<Error> Validate()
@@ -63,6 +68,11 @@ public sealed record DeviceDescriptor(DeviceId Id, BusId BusId, DriverId Driver,
 
         if (Remark is { Length: > MaxRemarkLength })
             errors.Add(DeviceErrors.InvalidField("Remark", $"备注不能超过 {MaxRemarkLength} 个字符。"));
+
+        if (Parameters is null)
+            errors.Add(DeviceErrors.InvalidField("Parameters", "模块参数不能为 null。"));
+        else
+            Parameters.CollectErrors(errors);
 
         return errors;
     }

@@ -18,6 +18,11 @@ public sealed class ModuleBatchFormViewModel : ViewModelBase
     private string _remark = string.Empty;
     private string? _errorMessage;
 
+    /// <summary>
+    /// 所选驱动声明的模块参数；同一批的模块都使用这组值
+    /// </summary>
+    public ParameterFormViewModel Parameters { get; } = new();
+
     public DriverItemViewModel? Driver
     {
         get => _driver;
@@ -115,6 +120,7 @@ public sealed class ModuleBatchFormViewModel : ViewModelBase
             Name = driver.Name;
             CountText = "1";
             Remark = string.Empty;
+            Parameters.Load(driver.Parameters, ParameterValues.Empty);
         }
 
         StartAddressText = suggestedStartAddress.ToString(CultureInfo.InvariantCulture);
@@ -140,9 +146,17 @@ public sealed class ModuleBatchFormViewModel : ViewModelBase
         if (!TryParse(_countText, out var count))
             return Fail(DeviceErrors.InvalidField("Count", "数量必须是整数。"));
 
+        var parameters = Parameters.Collect();
+        if (parameters.IsFailure)
+            return Fail(parameters.Error);
+
         ErrorMessage = null;
         return Result<DeviceBatchRequest>.Success(
-            new DeviceBatchRequest(busId, _driver.Driver.Id, _name?.Trim() ?? string.Empty, start, count) { Remark = _remark });
+            new DeviceBatchRequest(busId, _driver.Driver.Id, _name?.Trim() ?? string.Empty, start, count)
+            {
+                Remark = _remark,
+                Parameters = parameters.Value,
+            });
     }
 
     private Result<DeviceBatchRequest> Fail(Error error)

@@ -16,6 +16,7 @@ using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
+using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
@@ -56,6 +57,8 @@ public sealed class AppHost : IAsyncDisposable
     private BusManagementService? _busService;
     private DeviceService? _devices;
     private DeviceLibraryManager? _deviceLibrary;
+    private DeviceBindingRegistry? _bindings;
+    private DevicePollingService? _polling;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
     private bool _disposed;
@@ -266,13 +269,45 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         BusManager? buses;
+        DeviceBindingRegistry? bindings;
+        DevicePollingService? polling;
         lock (_gate)
         {
             buses = _buses;
+            bindings = _bindings;
+            polling = _polling;
             _buses = null;
             _busService = null;
+            _bindings = null;
+            _polling = null;
             _topology = null;
             _twin = null;
+        }
+
+        // 先停轮询：之后不再有新的交互进入总线（在途交互随程序退出被取消）
+        if (polling is not null)
+        {
+            try
+            {
+                await polling.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "停止轮询调度失败，继续关停");
+            }
+        }
+
+        // 再停绑定监听：总线释放时会发出注销事件，此时不需要再重新绑定
+        if (bindings is not null)
+        {
+            try
+            {
+                await bindings.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "释放模块绑定登记表失败，继续关停");
+            }
         }
 
         if (buses is not null)
@@ -367,16 +402,36 @@ public sealed class AppHost : IAsyncDisposable
                     libraryDirectory, settings, _loggerFactory.CreateLogger<DeviceLibraryManager>(), cancellationToken).ConfigureAwait(false);
             }
 
-            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除
-            var devices = new DeviceService(
-                new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>()),
-                library?.Catalog ?? new DriverCatalog(),
-                _loggerFactory.CreateLogger<DeviceService>());
+            // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除。
+            // 绑定登记表为每个模块找驱动、建会话（只绑定、不通信），跟随总线与模块的变化重新绑定
+            var catalog = library?.Catalog ?? new DriverCatalog();
+            var deviceRepository = new SqliteDeviceRepository(database.Value, _loggerFactory.CreateLogger<SqliteDeviceRepository>());
+            var bindings = new DeviceBindingRegistry(
+                deviceRepository,
+                service,
+                new DriverBinder(catalog, _loggerFactory.CreateLogger<DriverBinder>()),
+                _loggerFactory.CreateLogger<DeviceBindingRegistry>());
+            // 轮询调度：总线已连接时用绑定好的驱动会话收发报文，写入模块通信状态与点位实时值
+            var statuses = new ModuleStatusStore();
+            var polling = new DevicePollingService(
+                service,
+                bindings,
+                new ExchangeExecutor(_loggerFactory.CreateLogger<ExchangeExecutor>()),
+                statuses,
+                DevicePollingOptions.Default,
+                TimeProvider.System,
+                _loggerFactory.CreateLogger<DevicePollingService>());
+            var devices = new DeviceService(deviceRepository, catalog, bindings, statuses, _loggerFactory.CreateLogger<DeviceService>());
             lock (_gate)
             {
+                if (_disposed)
+                    return StartupReport.Failed(mode, Cancelled());
+
                 _busService = service;
                 _devices = devices;
                 _deviceLibrary = library;
+                _bindings = bindings;
+                _polling = polling;
             }
 
             var snapshot = await repository.LoadAllAsync(cancellationToken).ConfigureAwait(false);
@@ -399,6 +454,10 @@ public sealed class AppHost : IAsyncDisposable
                     _logger.LogError("总线 {BusId} {Name} 注册失败：{Error}", descriptor.Id, descriptor.Name, registered.Error);
                 }
             }
+
+            // 总线注册完成后再绑定：链路类型取自已注册总线的配置；绑定好之后才开始轮询
+            await bindings.StartAsync(cancellationToken).ConfigureAwait(false);
+            polling.Start();
 
             var report = new StartupReport(
                 mode,
