@@ -107,16 +107,178 @@ public sealed class EquipmentTopology
         return Create(Export(node => node.Id == id ? (name, enabled) : (node.Name, node.IsEnabled)));
     }
 
-    private TopologyDefinition Export(Func<TopologyNode, (string? Name, bool Enabled)> settings)
+    // ---------- 结构编辑 ----------
+    // 每次得到一份新拓扑（本实例不变）。四种编辑都只改写某一个上级的下级列表，其余节点的 Id、序号、名称与启用状态原样导出，
+    // 再经 Create 整树校验：序号范围、同级重复、Id 唯一、节点上限的规则只有一份。
+
+    /// <summary>
+    /// 在 <paramref name="parentId"/> 下新增 <paramref name="count"/> 个下级，序号从 <see cref="TopologyNode.NextChildOrdinal"/> 起连续编号，
+    /// 每个新节点按 <paramref name="template"/> 带上下级。
+    /// </summary>
+    /// <param name="enabled">
+    /// 新节点自身是否启用。新位置在现场调试完成前应保持停用（故障安全方向），由操作员确认后再启用；
+    /// 新节点的下级都是启用，统一由新节点屏蔽。
+    /// </param>
+    public Result<EquipmentTopology> WithChildrenAdded(TopologyNodeId parentId, int count, TopologyTemplate template, bool enabled)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+
+        if (!TryGetNode(parentId, out var parent))
+            return Result<EquipmentTopology>.Failure(TopologyErrors.NodeNotFound(parentId));
+
+        if (!parent.Level.TryGetChildLevel(out var childLevel))
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit($"{parent.Address} 是产品位（最底层），不能新增下级。"));
+
+        if (count < 1)
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit($"新增数量至少为 1，当前为 {count}。"));
+
+        var templateCheck = template.Validate(childLevel);
+        if (templateCheck.IsFailure)
+            return Result<EquipmentTopology>.Failure(templateCheck.Error);
+
+        var first = parent.NextChildOrdinal;
+        var available = Math.Max(0, TopologyAddress.MaxOrdinal - first + 1);
+        if (count > available)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"{parent.Address} 下的{childLevel.DisplayName()}序号已用到 {first - 1}，最多还能新增 {available} 个。"));
+        }
+
+        // 先按数量估算再生成：模板各层都填 999 时会有上万亿个节点，必须在分配内存之前拦住
+        var added = count * template.NodeCountPerInstance;
+        if (NodeCount + added > MaxNodeCount)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"新增 {added} 个节点后共 {NodeCount + added} 个，超过上限 {MaxNodeCount}。"));
+        }
+
+        var nodes = template.Build(parent.Address, first, count, enabled);
+        return Rewrite(parentId, children => [.. children, .. nodes]);
+    }
+
+    /// <summary>
+    /// 删除节点及其整棵子树。被删节点的 Id 作废，引用它们的历史数据只能按原 Id 追溯。系统根不能删除。
+    /// </summary>
+    public Result<EquipmentTopology> WithNodeRemoved(TopologyNodeId id)
+    {
+        if (!TryGetNonRoot(id, "删除", out var node, out var parent, out var error))
+            return Result<EquipmentTopology>.Failure(error);
+
+        return Rewrite(parent.Id, children => Array.FindAll(children, child => child.Id != node.Id));
+    }
+
+    /// <summary>
+    /// 修改节点在上级中的序号：它和整棵子树的位置编码随之改变，Id 不变。新序号已被同级占用时拒绝，不做自动对调。
+    /// 序号与原来相同时返回本实例。
+    /// </summary>
+    public Result<EquipmentTopology> WithOrdinal(TopologyNodeId id, int ordinal)
+    {
+        if (!TryGetNonRoot(id, "重新编号", out var node, out var parent, out var error))
+            return Result<EquipmentTopology>.Failure(error);
+
+        if (ordinal is < 1 or > TopologyAddress.MaxOrdinal)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"序号必须在 [1, {TopologyAddress.MaxOrdinal}] 之间，当前为 {ordinal}。"));
+        }
+
+        if (ordinal == node.Ordinal)
+            return Result<EquipmentTopology>.Success(this);
+
+        if (parent.TryGetChild(ordinal, out var occupant))
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"{parent.Address} 下已有{occupant.Level.DisplayName()} {occupant.Address}，序号 {ordinal} 已被占用。"));
+        }
+
+        return Rewrite(parent.Id, children => Array.ConvertAll(children,
+            child => child.Id == node.Id ? child with { Ordinal = ordinal } : child));
+    }
+
+    /// <summary>
+    /// 把节点连同整棵子树复制为一个同级节点，放在 <see cref="TopologyNode.NextChildOrdinal"/>。
+    /// 副本全部分配新 Id；下级的名称与启用状态照抄，副本自身不带名称（它是另一个物理位置），启用状态由 <paramref name="enabled"/> 决定。
+    /// </summary>
+    public Result<EquipmentTopology> WithNodeCopied(TopologyNodeId id, bool enabled)
+    {
+        if (!TryGetNonRoot(id, "复制", out var node, out var parent, out var error))
+            return Result<EquipmentTopology>.Failure(error);
+
+        var ordinal = parent.NextChildOrdinal;
+        if (ordinal > TopologyAddress.MaxOrdinal)
+        {
+            return Result<EquipmentTopology>.Failure(TopologyErrors.InvalidEdit(
+                $"{parent.Address} 下的{node.Level.DisplayName()}序号已用到 {TopologyAddress.MaxOrdinal}，不能再复制。"));
+        }
+
+        // 子树规模不超过现有拓扑，生成后由 Create 检查节点上限
+        return Rewrite(parent.Id, children =>
+        {
+            var source = Array.Find(children, child => child.Id == node.Id)!;
+            return [.. children, CloneWithNewIds(source) with { Ordinal = ordinal, Name = null, Enabled = enabled }];
+        });
+
+        static TopologyNodeDefinition CloneWithNewIds(TopologyNodeDefinition source)
+            => new(TopologyNodeId.New(), source.Ordinal, source.Children.Select(CloneWithNewIds).ToArray())
+            {
+                Name = source.Name,
+                Enabled = source.Enabled,
+            };
+    }
+
+    /// <summary>
+    /// 找到要编辑的非根节点及其上级。系统根没有上级，不能删除、重新编号或复制。
+    /// </summary>
+    private bool TryGetNonRoot(
+        TopologyNodeId id,
+        string operation,
+        [NotNullWhen(true)] out TopologyNode? node,
+        [NotNullWhen(true)] out TopologyNode? parent,
+        [NotNullWhen(false)] out Error? error)
+    {
+        parent = null;
+        error = null;
+        if (!TryGetNode(id, out node))
+        {
+            error = TopologyErrors.NodeNotFound(id);
+            return false;
+        }
+
+        if (!node.Address.TryGetParent(out var parentAddress) || !TryGetNode(parentAddress, out parent))
+        {
+            error = TopologyErrors.InvalidEdit($"系统根不能{operation}。");
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 导出整棵树，只把 <paramref name="parentId"/> 的下级列表换成 <paramref name="rewrite"/> 的结果，再整树校验
+    /// </summary>
+    private Result<EquipmentTopology> Rewrite(
+        TopologyNodeId parentId,
+        Func<TopologyNodeDefinition[], TopologyNodeDefinition[]> rewrite)
+        => Create(Export(node => (node.Name, node.IsEnabled), parentId, rewrite));
+
+    private TopologyDefinition Export(
+        Func<TopologyNode, (string? Name, bool Enabled)> settings,
+        TopologyNodeId rewriteParent = default,
+        Func<TopologyNodeDefinition[], TopologyNodeDefinition[]>? rewriteChildren = null)
     {
         return new TopologyDefinition(Root.Id, settings(Root).Name ?? "", ExportChildren(Root));
 
         TopologyNodeDefinition[] ExportChildren(TopologyNode parent)
-            => Array.ConvertAll(parent.Children.ToArray(), node =>
+        {
+            var children = Array.ConvertAll(parent.Children.ToArray(), node =>
             {
                 var (name, enabled) = settings(node);
                 return new TopologyNodeDefinition(node.Id, node.Ordinal, ExportChildren(node)) { Name = name, Enabled = enabled };
             });
+
+            // 空 Id 不属于任何节点：不改写时 rewriteParent 为 default，永远匹配不上
+            return rewriteChildren is not null && parent.Id == rewriteParent ? rewriteChildren(children) : children;
+        }
     }
 
     // ---------- 按系统身份（机器用）查询 ----------

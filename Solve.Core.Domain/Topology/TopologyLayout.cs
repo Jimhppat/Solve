@@ -129,8 +129,9 @@ public sealed record TopologyLayout(
 
     /// <summary>
     /// 每个节点独立生成定义：Id 必须全树唯一，不能像纯结构那样整层共享子列表。
+    /// 也供 <see cref="TopologyTemplate"/> 生成新节点的下级（<paramref name="current"/> 为 null，全部分配新 Id）。
     /// </summary>
-    private static TopologyNodeDefinition[] BuildLevel(
+    internal static TopologyNodeDefinition[] BuildLevel(
         TopologyAddress parent,
         int[] counts,
         int depth,

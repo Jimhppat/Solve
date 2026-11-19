@@ -70,6 +70,13 @@ public sealed class TopologyNode
     /// </summary>
     public IReadOnlyList<TopologyNode> Children { get; }
 
+    /// <summary>
+    /// 新增下级时使用的第一个序号：现有最大序号 + 1，没有下级时为 1。
+    /// 不回填中间的空号：缺位通常是现场有意留空（如拆走的槽位），回填会让新位置顶替旧编号。
+    /// 结果可能超过 <see cref="TopologyAddress.MaxOrdinal"/>，表示序号已用尽。
+    /// </summary>
+    public int NextChildOrdinal => _children.Length == 0 ? 1 : _children[^1].Ordinal + 1;
+
     public bool TryGetChild(int ordinal, [NotNullWhen(true)] out TopologyNode? child)
     {
         var low = 0;
