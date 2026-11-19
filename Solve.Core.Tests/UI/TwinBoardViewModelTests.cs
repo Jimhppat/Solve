@@ -367,11 +367,7 @@ public sealed class TwinBoardViewModelTests
 
         // 没有收到任何上报的产品位默认空闲
         var products = Flatten(board.Root!).OfType<ProductNodeViewModel>().ToList();
-        Assert.All(products, product =>
-        {
-            Assert.Equal(ProductState.Idle, product.State);
-            Assert.Equal("空闲", product.StateText);
-        });
+        Assert.All(products, product => Assert.Equal(ProductState.Idle, product.State));
         Assert.Equal(ProductState.Idle, board.Root!.Worst);
         Assert.False(board.Root.HasAlarm);
         Assert.Equal("空闲 2", board.Root.SummaryText);

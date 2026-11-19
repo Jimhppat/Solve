@@ -241,7 +241,7 @@ public sealed class FixtureNodeViewModel(TopologyNode node) : TwinNodeViewModel(
 }
 
 /// <summary>
-/// 产品位：叶子，显示自身状态与序号；显示区中唯一可选中的节点
+/// 产品位：叶子，格子只显示序号，状态用格子颜色表示（状态名在选中后的控制区查看）；显示区中唯一可选中的节点
 /// </summary>
 public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel board) : TwinNodeViewModel(node)
 {
@@ -252,17 +252,8 @@ public sealed class ProductNodeViewModel(TopologyNode node, TwinBoardViewModel b
     public ProductState State
     {
         get => _state;
-        private set
-        {
-            if (SetProperty(ref _state, value))
-                OnPropertyChanged(nameof(StateText));
-        }
+        private set => SetProperty(ref _state, value);
     }
-
-    /// <summary>
-    /// 状态名，格子放得下时显示在序号下面
-    /// </summary>
-    public string StateText => _state.DisplayName();
 
     public string? SerialNumber
     {

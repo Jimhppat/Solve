@@ -25,15 +25,11 @@ namespace Solve.UI.Views.Twin;
 /// </remarks>
 public partial class FixtureNodeView : Control
 {
-    // 产品格：与原先产品位控件的外观一致（圆角 3、选中时 2 px 外框、序号 11 号半粗）
+    // 产品格：圆角 3、选中时 2 px 外框。格子里只画序号（11 号半粗），状态只用格子颜色表示：
+    // 状态名在小格子里放不下，大小格子显示的内容不一致反而难认；具体状态名点选后在控制区查看
     private const double CellCornerRadius = 3;
     private const double SelectionThickness = 2;
     private const double OrdinalFontSize = 11;
-    private const double StateFontSize = 10;
-
-    // 格子（不含外边距）宽、高都放得下状态名时才在序号下画第二行；格子小时只画序号
-    private const double StateTextMinWidth = 44;
-    private const double StateTextMinHeight = 34;
 
     // 摘要模式：小号编号 + 状态条，与槽位摘要的样式一致
     private const double SummaryPadding = 3;
@@ -42,7 +38,7 @@ public partial class FixtureNodeView : Control
     private const double SummaryBarHeight = 8;
     private const double SummaryBarMinWidth = 32;
 
-    // 序号、状态名、编号的排版结果按文字、字形、字号、颜色缓存：上千个产品格只有几十种不同的文字，重画时不必重新排版。
+    // 序号与编号的排版结果按文字、字形、字号、颜色缓存：上千个产品格只有几十种不同的文字，重画时不必重新排版。
     // 只在 UI 线程上使用；超过上限（字体或主题颜色反复变化）时整体释放重建，不会无限增长
     private const int TextCacheLimit = 512;
     private static readonly Dictionary<(string Text, Typeface Face, double Size, IBrush Brush), TextLayout> TextCache = [];
@@ -125,7 +121,6 @@ public partial class FixtureNodeView : Control
         var columns = fixture.ProductColumns;
         var scale = LayoutHelper.GetLayoutScale(this);
         var ordinalFace = FaceOf(FontWeight.SemiBold);
-        var stateFace = FaceOf(FontWeight.Normal);
         IPen? selectionPen = null;
 
         for (var i = 0; i < products.Count; i++)
@@ -140,18 +135,17 @@ public partial class FixtureNodeView : Control
             // 自身被停用的产品格变淡；上级停用时由上级整体变淡（与其他各层一致）
             if (product.Node.IsEnabled)
             {
-                DrawCell(context, cell, product, ordinalFace, stateFace, ref selectionPen);
+                DrawCell(context, cell, product, ordinalFace, ref selectionPen);
             }
             else
             {
                 using (context.PushOpacity(TwinNodeViewModel.DisabledOpacity))
-                    DrawCell(context, cell, product, ordinalFace, stateFace, ref selectionPen);
+                    DrawCell(context, cell, product, ordinalFace, ref selectionPen);
             }
         }
     }
 
-    private void DrawCell(DrawingContext context, Rect cell, ProductNodeViewModel product, Typeface ordinalFace, Typeface stateFace,
-        ref IPen? selectionPen)
+    private void DrawCell(DrawingContext context, Rect cell, ProductNodeViewModel product, Typeface ordinalFace, ref IPen? selectionPen)
     {
         context.DrawRectangle(TwinPalette.For(product.State), null, cell, CellCornerRadius, CellCornerRadius);
 
@@ -162,33 +156,20 @@ public partial class FixtureNodeView : Control
             context.DrawRectangle(null, selectionPen, cell.Deflate(inset), CellCornerRadius - inset, CellCornerRadius - inset);
         }
 
-        var foreground = TwinPalette.TextOn(product.State);
-        var ordinal = Text(product.OrdinalText, ordinalFace, OrdinalFontSize, foreground);
-        var state = cell.Width >= StateTextMinWidth && cell.Height >= StateTextMinHeight
-            ? Text(product.StateText, stateFace, StateFontSize, foreground)
-            : null;
-        if (state is not null && state.Width > cell.Width)
-            state = null;
+        // 序号居中；深色格子上用白字、浅色格子上用深字
+        var ordinal = Text(product.OrdinalText, ordinalFace, OrdinalFontSize, TwinPalette.TextOn(product.State));
+        var origin = new Point(cell.X + (cell.Width - ordinal.Width) / 2, cell.Y + (cell.Height - ordinal.Height) / 2);
 
-        var textHeight = ordinal.Height + (state?.Height ?? 0);
-        var top = cell.Y + (cell.Height - textHeight) / 2;
-
-        // 原先的格子会裁掉超出的内容：只有序号比格子还大时才需要裁剪，平时不多加绘制指令
-        if (ordinal.Width > cell.Width || textHeight > cell.Height)
+        // 只有序号比格子还大时才裁剪，平时不多加绘制指令
+        if (ordinal.Width > cell.Width || ordinal.Height > cell.Height)
         {
             using (context.PushClip(cell))
-                DrawText(context, cell, ordinal, state, top);
+                ordinal.Draw(context, origin);
         }
         else
         {
-            DrawText(context, cell, ordinal, state, top);
+            ordinal.Draw(context, origin);
         }
-    }
-
-    private static void DrawText(DrawingContext context, Rect cell, TextLayout ordinal, TextLayout? state, double top)
-    {
-        ordinal.Draw(context, new Point(cell.X + (cell.Width - ordinal.Width) / 2, top));
-        state?.Draw(context, new Point(cell.X + (cell.Width - state.Width) / 2, top + ordinal.Height));
     }
 
     private void RenderSummary(DrawingContext context, FixtureNodeViewModel fixture, Size size)
