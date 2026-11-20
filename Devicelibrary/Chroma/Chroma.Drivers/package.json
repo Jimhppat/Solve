@@ -1,0 +1,9 @@
+{
+  "id": "chroma.drivers",
+  "name": "Chroma 驱动包",
+  "version": "0.1.0",
+  "author": "Solve",
+  "sdkVersion": 1,
+  "entryAssembly": "Chroma.Drivers.dll",
+  "entryType": "Chroma.Drivers.ChromaDriverPackage"
+}
