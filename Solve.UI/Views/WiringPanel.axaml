@@ -93,6 +93,20 @@
                             <TextBlock Text="{Binding LabelText}" IsVisible="{Binding HasLabel}" Foreground="{DynamicResource SemiColorText1}" />
                             <TextBlock Text="{Binding Readings}" IsVisible="{Binding HasReadings}" TextWrapping="Wrap"
                                        FontFamily="Consolas, monospace" Foreground="{DynamicResource SemiColorText0}" />
+                            <!-- 这路通道可以下发的命令：先过联锁，高危（与实机下的输出动作）在下方确认后才执行 -->
+                            <ItemsControl ItemsSource="{Binding Commands}" IsVisible="{Binding HasCommands}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:WireCommandViewModel">
+                                        <Button Content="{Binding Name}" Padding="8,2" Margin="0,4,6,0"
+                                                Classes.Danger="{Binding IsHazardous}" Command="{Binding Command}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
                     </Border>
                 </DataTemplate>
@@ -108,6 +122,17 @@
                 <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                     <Button Content="取消" Command="{Binding CancelRemoveCommand}" />
                     <Button Classes="Danger" Theme="{DynamicResource SolidButton}" Content="确认拆除" Command="{Binding ConfirmRemoveCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- 命令确认：高危命令每次都要；实机模式下的输出动作也要。写明位置、通道、受影响的产品位数与传输模式 -->
+        <Border Classes="notice" Classes.danger="{Binding IsPendingHazardous}" IsVisible="{Binding IsCommandConfirmOpen}">
+            <StackPanel Spacing="10">
+                <TextBlock Text="{Binding CommandConfirmText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Content="取消" Command="{Binding CancelCommandCommand}" />
+                    <Button Classes="Danger" Theme="{DynamicResource SolidButton}" Content="确认执行" Command="{Binding ConfirmCommandCommand}" />
                 </StackPanel>
             </StackPanel>
         </Border>

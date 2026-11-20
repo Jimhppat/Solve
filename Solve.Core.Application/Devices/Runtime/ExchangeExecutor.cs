@@ -62,21 +62,53 @@ public sealed class ExchangeExecutor
     }
 
     /// <param name="label">日志中标识这次交互的文本，如"模块 电源-01（地址 1）轮询"</param>
-    public async Task<ExchangeOutcome> ExecuteAsync(
+    public Task<ExchangeOutcome> ExecuteAsync(
         BusRuntime bus,
         IExchange exchange,
         string label,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(exchange);
+        return ExecuteAsync(bus, () => exchange, label, cancellationToken);
+    }
+
+    /// <summary>
+    /// 在事务内先调用 <paramref name="begin"/>（如 <c>session.BeginPoll</c> / <c>BeginCommand</c>）创建交互，再推进它。
+    /// </summary>
+    /// <remarks>
+    /// SDK 约定内核保证同一会话的调用串行：会话属于一条总线，轮询与命令都在这条总线的通道锁内调用会话，
+    /// 创建交互这一步也必须在锁内，否则轮询线程的 BeginPoll 可能与命令线程正在推进的交互并发进入同一会话。
+    /// <paramref name="begin"/> 抛出的异常与交互中的异常一样，由总线运行时安全跳闸后原样抛出。
+    /// </remarks>
+    public async Task<ExchangeOutcome> ExecuteAsync(
+        BusRuntime bus,
+        Func<IExchange> begin,
+        string label,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(bus);
+        ArgumentNullException.ThrowIfNull(begin);
 
         var descriptor = bus.Descriptor;
         var result = await bus.ExecuteAsync(
-            (channel, tx) => RunAsync(channel, exchange, descriptor, label, tx),
+            (channel, tx) => BeginAndRunAsync(channel, begin, descriptor, label, tx),
             cancellationToken).ConfigureAwait(false);
 
         return result.IsSuccess ? result.Value : new ExchangeOutcome.BusUnavailable(result.Error);
+    }
+
+    private ValueTask<Result<ExchangeOutcome>> BeginAndRunAsync(
+        IBusChannel channel,
+        Func<IExchange> begin,
+        BusDescriptor descriptor,
+        string label,
+        CancellationToken tx)
+    {
+        var exchange = begin();
+        if (exchange is null)
+            return ValueTask.FromResult(Device("驱动没有返回交互。", FailureKind.Configuration));
+
+        return RunAsync(channel, exchange, descriptor, label, tx);
     }
 
     private async ValueTask<Result<ExchangeOutcome>> RunAsync(

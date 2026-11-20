@@ -17,6 +17,7 @@ using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
+using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
@@ -66,6 +67,7 @@ public sealed class AppHost : IAsyncDisposable
     private TwinStateStore? _twin;
     private WiringService? _wiring;
     private WiringInspector? _wiringInspector;
+    private DeviceCommandService? _commands;
     private bool _disposed;
 
     private AppHost(DesktopOptions options)
@@ -250,6 +252,20 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// 按拓扑位置下发设备命令（与轮询共用总线的通道锁）；启动完成前或配置库不可用时为 null
+    /// </summary>
+    public DeviceCommandService? Commands
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _commands;
+            }
+        }
+    }
+
+    /// <summary>
     /// 在线程池上启动总线系统，幂等。返回的任务不会以异常结束，结果见 <see cref="StartupReport"/>。
     /// </summary>
     public Task<StartupReport> Start()
@@ -311,6 +327,7 @@ public sealed class AppHost : IAsyncDisposable
             wiring = _wiring;
             _wiring = null;
             _wiringInspector = null;
+            _commands = null;
             bindings = _bindings;
             polling = _polling;
             _buses = null;
@@ -466,10 +483,11 @@ public sealed class AppHost : IAsyncDisposable
                 _loggerFactory.CreateLogger<DeviceBindingRegistry>());
             // 轮询调度：总线已连接时用绑定好的驱动会话收发报文，写入模块通信状态与点位实时值
             var statuses = new ModuleStatusStore();
+            var executor = new ExchangeExecutor(_loggerFactory.CreateLogger<ExchangeExecutor>());
             var polling = new DevicePollingService(
                 service,
                 bindings,
-                new ExchangeExecutor(_loggerFactory.CreateLogger<ExchangeExecutor>()),
+                executor,
                 statuses,
                 DevicePollingOptions.Default,
                 TimeProvider.System,
@@ -483,6 +501,15 @@ public sealed class AppHost : IAsyncDisposable
                 service,
                 _loggerFactory.CreateLogger<WiringService>());
             var wiringInspector = new WiringInspector(wiring, bindings, catalog, statuses, service);
+            // 按位置下发命令：经接线找到模块通道，过联锁后与轮询共用通道锁执行。实机模式下输出动作也要操作员确认
+            var commands = new DeviceCommandService(
+                wiringInspector,
+                bindings,
+                service,
+                executor,
+                new DeviceCommandOptions { IsHardware = mode.Mode == TransportMode.Hardware },
+                TimeProvider.System,
+                _loggerFactory.CreateLogger<DeviceCommandService>());
             var devices = new DeviceService(deviceRepository, catalog, bindings, statuses, _loggerFactory.CreateLogger<DeviceService>(), wiring);
             lock (_gate)
             {
@@ -529,7 +556,10 @@ public sealed class AppHost : IAsyncDisposable
             lock (_gate)
             {
                 if (!_disposed)
+                {
                     _wiringInspector = wiringInspector;
+                    _commands = commands;
+                }
             }
 
             var report = new StartupReport(
