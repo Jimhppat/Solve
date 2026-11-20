@@ -12,6 +12,10 @@
   <Folder Name="/sdk/">
     <Project Path="Solve.Device.Sdk/Solve.Device.Sdk.csproj" />
   </Folder>
+  <Folder Name="/drivers/">
+    <Project Path="Devicelibrary/Chroma/Chroma.Drivers/Chroma.Drivers.csproj" />
+    <Project Path="Devicelibrary/Chroma/Chroma.Drivers.Tests/Chroma.Drivers.Tests.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="Sample.DriverPackage/Sample.DriverPackage.csproj" />
   </Folder>

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        Chroma 驱动包：只引用 SDK，不引用任何内核程序集。
+        交付时把 Chroma.Drivers.dll 与 package.json 放进设备库下的一个子目录（如 DeviceLibrary/chroma/）。
+        SDK 由主程序提供，不随驱动包复制（Private=false），避免包里出现第二份契约程序集。
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>14</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\..\Solve.Device.Sdk\Solve.Device.Sdk.csproj" Private="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Chroma.Drivers.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="package.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>
