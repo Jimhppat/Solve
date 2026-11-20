@@ -32,7 +32,9 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
 
     private readonly IDeviceService? _service;
     private readonly BusId _busId;
-    private readonly IReadOnlyList<DriverItemViewModel> _allDrivers;
+    private IReadOnlyList<DriverItemViewModel> _allDrivers;
+    private IReadOnlyList<DriverCategoryItem> _categories;
+    private bool _reloadPending;
 
     private BusItemViewModel _bus;
     private DriverCategoryItem? _selectedCategory;
@@ -52,7 +54,7 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
             new DriverItemViewModel(new DriverDescriptor(DriverId.Of("generic.module"), "通用模块", HardwareCategory.General,
                 "不含通信协议，只登记模块名称与地址", DeviceDescriptor.MinAddress, DeviceDescriptor.MaxAddress)),
         ];
-        Categories = BuildCategories(_allDrivers);
+        _categories = BuildCategories(_allDrivers);
         AddCommand = new AsyncRelayCommand(() => Task.CompletedTask);
         CloseEditCommand = new RelayCommand(() => { });
         SaveEditCommand = new AsyncRelayCommand(() => Task.CompletedTask);
@@ -81,11 +83,8 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
         _bus = bus;
         _busId = bus.Id;
         _service = service;
-        // 有实现（来自驱动包）的驱动带上参数声明，添加与编辑表单据此生成参数输入项
-        _allDrivers = service.Drivers.All
-            .Select(d => new DriverItemViewModel(d, service.Drivers.TryGetImplementation(d.Id, out var implementation) ? implementation.Info.Parameters : null))
-            .ToList();
-        Categories = BuildCategories(_allDrivers);
+        _allDrivers = BuildDrivers(service);
+        _categories = BuildCategories(_allDrivers);
 
         AddCommand = new AsyncRelayCommand(AddAsync, () => BatchForm.HasDriver);
         CloseEditCommand = new RelayCommand(() => IsEditOpen = false);
@@ -99,6 +98,11 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
         // 默认选中第一个驱动：窗口一打开就能直接添加，不必先去左栏点选
         SelectedCategory = Categories[0];
         SelectedDriver = Drivers.FirstOrDefault();
+
+        // 设备库载入、撤销、停用驱动后驱动表随之刷新；绑定变化（驱动可用性变了）后模块的驱动状态随之刷新。
+        // 两个事件都来自后台线程，这里只投递到 UI 线程
+        service.Drivers.Changed += OnCatalogChanged;
+        service.Bindings.Changed += OnBindingsChanged;
     }
 
     /// <summary>
@@ -117,12 +121,23 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
 
     public BusId BusId => _busId;
 
+    /// <summary>
+    /// 驱动库入口（左栏标题的「驱动库」按钮、空分类处的「打开驱动库」）。全程序共用一个；设计器中为 null，入口不显示
+    /// </summary>
+    public DeviceLibraryViewModel? Library { get; init; }
+
+    public bool HasLibrary => Library is not null;
+
     // ==================== 左栏：分类与驱动表 ====================
 
     /// <summary>
     /// "全部" + 每个硬件分类（驱动数为 0 的分类也列出，表示该类硬件的驱动尚未接入）
     /// </summary>
-    public IReadOnlyList<DriverCategoryItem> Categories { get; }
+    public IReadOnlyList<DriverCategoryItem> Categories
+    {
+        get => _categories;
+        private set => SetProperty(ref _categories, value);
+    }
 
     /// <summary>
     /// 切换分类只筛选驱动表，不影响右侧表单已选的驱动：看别的分类时也能继续添加
@@ -132,20 +147,23 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
         get => _selectedCategory;
         set
         {
-            if (!SetProperty(ref _selectedCategory, value))
-                return;
-
-            var formDriver = BatchForm.Driver;
-            Drivers.Clear();
-            foreach (var driver in _allDrivers.Where(d => value?.Category is null || d.Driver.Category == value.Category))
-                Drivers.Add(driver);
-
-            OnPropertyChanged(nameof(HasDrivers));
-
-            // 表单所用的驱动仍在新列表里就保持高亮，不在就只取消高亮
-            _selectedDriver = formDriver is not null && Drivers.Contains(formDriver) ? formDriver : null;
-            OnPropertyChanged(nameof(SelectedDriver));
+            if (SetProperty(ref _selectedCategory, value))
+                FilterDrivers();
         }
+    }
+
+    private void FilterDrivers()
+    {
+        var formDriver = BatchForm.Driver;
+        Drivers.Clear();
+        foreach (var driver in _allDrivers.Where(d => _selectedCategory?.Category is null || d.Driver.Category == _selectedCategory.Category))
+            Drivers.Add(driver);
+
+        OnPropertyChanged(nameof(HasDrivers));
+
+        // 表单所用的驱动仍在新列表里就保持高亮（驱动表重建后按标识找回），不在就只取消高亮
+        _selectedDriver = formDriver is null ? null : Drivers.FirstOrDefault(d => d.Driver.Id == formDriver.Driver.Id);
+        OnPropertyChanged(nameof(SelectedDriver));
     }
 
     public ObservableCollection<DriverItemViewModel> Drivers { get; } = [];
@@ -327,6 +345,12 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _disposed = true;
+        if (_service is not null)
+        {
+            _service.Drivers.Changed -= OnCatalogChanged;
+            _service.Bindings.Changed -= OnBindingsChanged;
+        }
+
         _statusTimer?.Stop();
         _statusTimer = null;
     }
@@ -338,6 +362,71 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
 
         foreach (var item in Devices)
             item.ApplyStatus(_service.Statuses.Get(item.Device.Id));
+    }
+
+    /// <summary>
+    /// 有实现（来自驱动包）的驱动带上参数声明，添加与编辑表单据此生成参数输入项。
+    /// 先取一次 All 再逐个查实现：目录可能在运行中被整份替换，这样至少驱动列表本身是同一份快照
+    /// </summary>
+    private static IReadOnlyList<DriverItemViewModel> BuildDrivers(IDeviceService service)
+        => service.Drivers.All
+            .Select(d => new DriverItemViewModel(d, service.Drivers.TryGetImplementation(d.Id, out var implementation) ? implementation.Info.Parameters : null))
+            .ToList();
+
+    // 后台线程：只投递
+    private void OnCatalogChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(ReloadDrivers);
+
+    // 后台线程：只关心本总线；连续多次变化合并成一次重新读取
+    private void OnBindingsChanged(object? sender, BusId busId)
+    {
+        if (busId == _busId)
+            Dispatcher.UIThread.Post(ScheduleReload);
+    }
+
+    /// <summary>
+    /// 稍后重新读取模块列表（合并连续的多次请求）。须在 UI 线程上调用。
+    /// </summary>
+    private void ScheduleReload()
+    {
+        if (_disposed || _reloadPending)
+            return;
+
+        _reloadPending = true;
+        Dispatcher.UIThread.Post(async () =>
+        {
+            _reloadPending = false;
+            if (_disposed)
+                return;
+
+            // async void 回调：异常必须在这里处理，否则 UI 线程未处理异常会触发全站安全跳闸
+            try
+            {
+                await LoadAsync();
+            }
+            catch (Exception ex)
+            {
+                PageError = $"刷新模块列表失败：{ex.Message}";
+            }
+        }, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// 驱动目录变化后重建驱动表与分类计数，保持当前分类与表单所用驱动的高亮。须在 UI 线程上调用。
+    /// </summary>
+    private void ReloadDrivers()
+    {
+        if (_disposed || _service is null)
+            return;
+
+        var category = _selectedCategory?.Category;
+        _allDrivers = BuildDrivers(_service);
+        Categories = BuildCategories(_allDrivers);
+        _selectedCategory = Categories.FirstOrDefault(c => c.Category == category) ?? Categories[0];
+        OnPropertyChanged(nameof(SelectedCategory));
+        FilterDrivers();
+
+        // 模块行引用的驱动项也要换成新的（名称、参数声明可能变了，或驱动已不可用）：重新读取模块列表
+        ScheduleReload();
     }
 
     private static IReadOnlyList<DriverCategoryItem> BuildCategories(IReadOnlyList<DriverItemViewModel> drivers)

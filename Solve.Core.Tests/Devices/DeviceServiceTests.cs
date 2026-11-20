@@ -22,6 +22,10 @@ public sealed class DeviceServiceTests
 
         public IReadOnlyList<DriverBinding> Get(BusId busId) => [];
 
+        public int CountByDriver(DriverId driver) => 0;
+
+        public event EventHandler<BusId>? Changed { add { } remove { } }
+
         public Task RefreshAsync(BusId busId, CancellationToken cancellationToken)
         {
             Refreshed.Add(busId);

@@ -21,7 +21,7 @@ public enum DriverBindingStatus
     NoProtocol = 2,
 
     /// <summary>
-    /// 驱动未加载：驱动包不在设备库、未经确认或加载失败
+    /// 驱动未加载：驱动包不在设备库、未经信任、已停用或载入失败
     /// </summary>
     DriverNotLoaded = 3,
 
@@ -58,6 +58,11 @@ public sealed record DriverBinding(DeviceDescriptor Device, DriverBindingStatus 
     public DriverInfo? Driver { get; init; }
 
     public DeviceContext? Context { get; init; }
+
+    /// <summary>
+    /// 绑定时使用的驱动实现；没有实现时为 null。驱动目录变化后据此判断绑定是否过期（按引用比较）
+    /// </summary>
+    public IDeviceDriver? Implementation { get; init; }
 }
 
 /// <summary>
@@ -68,53 +73,82 @@ public sealed record DriverBinding(DeviceDescriptor Device, DriverBindingStatus 
 /// </remarks>
 public sealed class DriverBinder
 {
-    private readonly IDriverCatalog _catalog;
     private readonly ILogger _logger;
 
     public DriverBinder(IDriverCatalog catalog, ILogger<DriverBinder> logger)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(logger);
-        _catalog = catalog;
+        Catalog = catalog;
         _logger = logger;
     }
+
+    /// <summary>
+    /// 绑定所依据的驱动目录；目录变化（<see cref="IDriverCatalog.Changed"/>）后用 <see cref="IsCurrent"/> 找出过期的绑定
+    /// </summary>
+    public IDriverCatalog Catalog { get; }
 
     public DriverBinding Bind(DeviceDescriptor device, LinkKind link)
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        if (!_catalog.TryGetImplementation(device.Driver, out var driver))
+        if (!Catalog.TryGetImplementation(device.Driver, out var driver))
         {
-            return _catalog.TryGet(device.Driver, out var known)
+            return Catalog.TryGet(device.Driver, out var known)
                 ? new DriverBinding(device, DriverBindingStatus.NoProtocol, $"{known.Name}不含通信协议。")
                 : new DriverBinding(device, DriverBindingStatus.DriverNotLoaded,
-                    $"驱动「{device.Driver}」未加载：驱动包不在设备库、未经确认或加载失败。");
+                    $"驱动「{device.Driver}」未加载：驱动包不在设备库、未经信任、已停用或载入失败。");
         }
 
         var info = driver.Info;
         if (device.Address < info.MinAddress || device.Address > info.MaxAddress)
         {
             return new DriverBinding(device, DriverBindingStatus.AddressOutOfRange,
-                $"{info.Name}的地址必须在 [{info.MinAddress}, {info.MaxAddress}] 之间，当前为 {device.Address}。");
+                $"{info.Name}的地址必须在 [{info.MinAddress}, {info.MaxAddress}] 之间，当前为 {device.Address}。") { Implementation = driver };
         }
 
         var parameters = DriverParameters.Resolve(info, device.Parameters);
         if (parameters.IsFailure)
-            return new DriverBinding(device, DriverBindingStatus.InvalidParameters, parameters.Error.Message);
+            return new DriverBinding(device, DriverBindingStatus.InvalidParameters, parameters.Error.Message) { Implementation = driver };
 
         var context = new DeviceContext(device.Address, link, parameters.Value);
         try
         {
             var session = driver.CreateSession(context);
             if (session is null)
-                return new DriverBinding(device, DriverBindingStatus.SessionFailed, $"{info.Name}没有返回会话。");
+                return new DriverBinding(device, DriverBindingStatus.SessionFailed, $"{info.Name}没有返回会话。") { Implementation = driver };
 
-            return new DriverBinding(device, DriverBindingStatus.Ready, null) { Session = session, Context = context, Driver = info };
+            return new DriverBinding(device, DriverBindingStatus.Ready, null)
+            {
+                Session = session,
+                Context = context,
+                Driver = info,
+                Implementation = driver,
+            };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "驱动 {Driver} 为{Device}创建会话失败", device.Driver, device);
-            return new DriverBinding(device, DriverBindingStatus.SessionFailed, $"{info.Name}创建会话失败：{ex.Message}");
+            return new DriverBinding(device, DriverBindingStatus.SessionFailed, $"{info.Name}创建会话失败：{ex.Message}") { Implementation = driver };
         }
+    }
+
+    /// <summary>
+    /// 按当前驱动目录，这个绑定是否仍然有效：所用驱动实现没变（按引用），或仍然没有实现且"内置 / 未载入"的判断没变。
+    /// 有效的绑定可以原样保留，会话与轮询计数不必重建。
+    /// </summary>
+    public bool IsCurrent(DriverBinding binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+
+        if (Catalog.TryGetImplementation(binding.Device.Driver, out var implementation))
+            return ReferenceEquals(implementation, binding.Implementation);
+
+        if (binding.Implementation is not null)
+            return false;
+
+        return Catalog.TryGet(binding.Device.Driver, out _)
+            ? binding.Status == DriverBindingStatus.NoProtocol
+            : binding.Status == DriverBindingStatus.DriverNotLoaded;
     }
 }

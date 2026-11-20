@@ -13,4 +13,9 @@
       <ProjectReference Include="..\Solve.Device.Sdk\Solve.Device.Sdk.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <!-- 测试需要直接替换驱动目录快照（LiveDriverCatalog.Replace），验证重新绑定 -->
+      <InternalsVisibleTo Include="Solve.Core.Tests" />
+    </ItemGroup>
+
 </Project>

@@ -274,6 +274,75 @@ public sealed class DriverBindingTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Refresh_KeepsUnchangedBindings_SoSessionsSurvive()
+    {
+        var bus = await CreateSerialBusAsync();
+        await _registry.StartAsync(CancellationToken.None);
+        Assert.True((await AddAsync(bus.Id, Power, 1, 1)).IsSuccess);
+        var first = Assert.Single(_registry.Get(bus.Id));
+
+        Assert.True((await AddAsync(bus.Id, Power, 2, 1)).IsSuccess);
+
+        // 新增别的模块不应重建已有模块的会话（协议状态与轮询计数都挂在绑定对象上）
+        Assert.Same(first, _registry.Get(bus.Id)[0]);
+        Assert.Equal(2, _registry.CountByDriver(Power));
+    }
+
+    [Fact]
+    public async Task CatalogChange_RebindsOnlyAffectedModules()
+    {
+        var bus = await CreateSerialBusAsync();
+        Assert.True((await _devices.AddRangeAsync(
+            [Module(Power) with { BusId = bus.Id }, Module(DriverCatalog.GenericModule, address: 2) with { BusId = bus.Id }],
+            CancellationToken.None)).IsSuccess);
+
+        // 起初只有内置驱动：电源模块"驱动未加载"
+        var live = new LiveDriverCatalog(new DriverCatalog());
+        var changes = 0;
+        await using var registry = new DeviceBindingRegistry(_devices, _buses, new DriverBinder(live, NullLogger<DriverBinder>.Instance),
+            NullLogger<DeviceBindingRegistry>.Instance);
+        registry.Changed += (_, id) =>
+        {
+            if (id == bus.Id)
+                Interlocked.Increment(ref changes);
+        };
+        await registry.StartAsync(CancellationToken.None);
+        Assert.Equal([DriverBindingStatus.DriverNotLoaded, DriverBindingStatus.NoProtocol], registry.Get(bus.Id).Select(b => b.Status));
+        var generic = registry.Get(bus.Id)[1];
+
+        // 载入驱动包：电源模块就绪，通用模块的绑定原样保留
+        live.Replace(CreateCatalog());
+        await WaitUntilAsync(() => registry.Get(bus.Id)[0].Status == DriverBindingStatus.Ready);
+        Assert.Same(generic, registry.Get(bus.Id)[1]);
+        Assert.True(Volatile.Read(ref changes) >= 2);
+
+        // 撤销 / 停用：回到未加载
+        live.Replace(new DriverCatalog());
+        await WaitUntilAsync(() => registry.Get(bus.Id)[0].Status == DriverBindingStatus.DriverNotLoaded);
+        Assert.Same(generic, registry.Get(bus.Id)[1]);
+    }
+
+    [Fact]
+    public async Task CatalogChange_WithoutAffectedModules_KeepsEveryBinding()
+    {
+        var bus = await CreateSerialBusAsync();
+        Assert.True((await _devices.AddRangeAsync([Module(Power) with { BusId = bus.Id }], CancellationToken.None)).IsSuccess);
+
+        var live = new LiveDriverCatalog(CreateCatalog());
+        await using var registry = new DeviceBindingRegistry(_devices, _buses, new DriverBinder(live, NullLogger<DriverBinder>.Instance),
+            NullLogger<DeviceBindingRegistry>.Instance);
+        await registry.StartAsync(CancellationToken.None);
+        var before = Assert.Single(registry.Get(bus.Id));
+        var power = live.Current.Implementations[Power];
+
+        // 换一份目录，但电源驱动还是同一个实现（例如别的包被载入）：已就绪的模块不受影响
+        live.Replace(new DriverCatalog(live.Current.All, new Dictionary<DriverId, IDeviceDriver> { [Power] = power }));
+        await Task.Delay(200);
+
+        Assert.Same(before, Assert.Single(registry.Get(bus.Id)));
+    }
+
+    [Fact]
     public async Task BusDeleted_RemovesItsBindings()
     {
         var bus = await CreateSerialBusAsync();

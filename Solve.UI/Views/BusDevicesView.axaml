@@ -139,7 +139,19 @@
                 <Border Grid.Column="0" Classes="panel">
                     <DockPanel>
                         <Border DockPanel.Dock="Top" Classes="panel-title">
-                            <TextBlock Text="驱动" />
+                            <DockPanel>
+                                <!-- 驱动库入口：导入、信任驱动包后，驱动表随之刷新；有待确认的包时按钮上直接写出数量 -->
+                                <Button DockPanel.Dock="Right" Classes="Primary" VerticalAlignment="Center"
+                                        IsVisible="{Binding HasLibrary}"
+                                        Command="{Binding Library.OpenCommand, FallbackValue={x:Null}}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <PathIcon Data="{DynamicResource SemiIconPuzzle}" Width="14" Height="14" />
+                                        <TextBlock Text="{Binding Library.EntryText, FallbackValue='驱动库'}"
+                                                   FontSize="14" FontWeight="Normal" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                                <TextBlock Text="驱动" />
+                            </DockPanel>
                         </Border>
 
                         <Grid ColumnDefinitions="180,*">
@@ -175,6 +187,9 @@
                                         <TextBlock Text="该分类暂无驱动" FontSize="14" FontWeight="Medium"
                                                    Foreground="{DynamicResource SemiColorText2}"
                                                    HorizontalAlignment="Center" />
+                                        <Button HorizontalAlignment="Center" Content="打开驱动库"
+                                                IsVisible="{Binding HasLibrary}"
+                                                Command="{Binding Library.OpenCommand, FallbackValue={x:Null}}" />
                                     </StackPanel>
                                 </Border>
 

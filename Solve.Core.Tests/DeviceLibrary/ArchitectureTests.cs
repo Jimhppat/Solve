@@ -1,4 +1,5 @@
 using System.Reflection;
+using Solve.Adapters.DeviceLibrary;
 using Solve.Core.Application.Buses;
 using Solve.Core.Domain.Buses;
 using Solve.Device.Sdk;
@@ -41,6 +42,16 @@ public sealed class ArchitectureTests
         => Assert.Equal(
             ["Solve.Core.Domain", "Solve.Device.Sdk"],
             SolveReferences(typeof(BusRuntime).Assembly).Order(StringComparer.Ordinal));
+
+    /// <summary>
+    /// SDK 每追加一个分类，内核都必须同时追加映射：否则声明了新分类的驱动包会整体判为不兼容
+    /// </summary>
+    [Fact]
+    public void EverySdkCategory_MapsToKernelCategory()
+    {
+        foreach (var category in Enum.GetValues<DeviceCategory>())
+            Assert.True(CategoryMap.TryMap(category, out _), $"SDK 分类 {category} 没有对应的内核分类");
+    }
 
     [Fact]
     public void NoSolveAssembly_ReferencesProtocolOrDriverPackages()

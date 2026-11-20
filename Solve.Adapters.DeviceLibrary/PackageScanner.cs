@@ -32,18 +32,27 @@ internal static class PackageScanner
     /// </summary>
     public const long MaxTotalBytes = 64L * 1024 * 1024;
 
-    public static IReadOnlyList<ScannedPackage> Scan(string rootDirectory)
+    /// <summary>
+    /// 设备库根目录下以 '.' 开头的子目录是导入时的临时目录，不作为驱动包
+    /// </summary>
+    public const char ReservedPrefix = '.';
+
+    public static IReadOnlyList<ScannedPackage> Scan(string rootDirectory, CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(rootDirectory))
             return [];
 
         return Directory.EnumerateDirectories(rootDirectory)
+            .Where(d => !Path.GetFileName(d).StartsWith(ReservedPrefix))
             .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
-            .Select(ScanPackage)
+            .Select(d => ScanPackage(d, cancellationToken))
             .ToList();
     }
 
-    private static ScannedPackage ScanPackage(string directory)
+    /// <summary>
+    /// 把一个目录作为驱动包读取（目录名即包所在目录名）。只读文件，不加载任何代码。
+    /// </summary>
+    public static ScannedPackage ScanPackage(string directory, CancellationToken cancellationToken = default)
     {
         var directoryName = Path.GetFileName(directory);
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -57,6 +66,7 @@ internal static class PackageScanner
             long total = 0;
             foreach (var path in paths)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 total += new FileInfo(path).Length;
                 if (total > MaxTotalBytes)
                     return Invalid(directoryName, $"包的总大小超过 {MaxTotalBytes / 1024 / 1024} MB。");

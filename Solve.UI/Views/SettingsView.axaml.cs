@@ -52,32 +52,6 @@ public partial class SettingsView : UserControl
         }
     }
 
-    private async void OnOpenDeviceLibrary(object? sender, RoutedEventArgs e)
-    {
-        if (ViewModel?.DeviceLibrary is not { IsAvailable: true } library)
-            return;
-
-        try
-        {
-            // 设备库目录在启动时已创建；被删掉时提示，不在这里重建
-            if (!Directory.Exists(library.RootDirectory))
-            {
-                library.ReportError($"目录不存在：{library.RootDirectory}（重启程序后会重新创建）");
-                return;
-            }
-
-            if (TopLevel.GetTopLevel(this)?.Launcher is { } launcher
-                && !await launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(library.RootDirectory)))
-            {
-                library.ReportError($"系统未能打开目录：{library.RootDirectory}");
-            }
-        }
-        catch (Exception ex)
-        {
-            library.ReportError($"无法打开目录 {library.RootDirectory}：{ex.Message}");
-        }
-    }
-
     private async void OnOpenDirectory(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is not { } vm)

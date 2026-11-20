@@ -157,6 +157,11 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
     // ==================== 模块配置窗口 ====================
 
     /// <summary>
+    /// 驱动库：模块配置窗口的「驱动库」按钮打开它。全程序共用一个，由主视图模型创建后设置
+    /// </summary>
+    public DeviceLibraryViewModel? DeviceLibrary { get; init; }
+
+    /// <summary>
     /// 请求显示一条总线的模块配置窗口（在 UI 线程上触发）。同一条总线只有一个页模型：
     /// 已打开时再次请求传入的是同一个实例，由窗口宿主激活已有窗口，不重复创建。
     /// 窗口关闭后宿主须调用 <see cref="ReleaseModulePage"/>。
@@ -302,7 +307,7 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var page = new BusDevicesViewModel(item, _deviceService);
+        var page = new BusDevicesViewModel(item, _deviceService) { Library = DeviceLibrary };
         _modulePages.Add(item.Id, page);
         ModuleWindowRequested?.Invoke(this, page);
         await page.LoadAsync();

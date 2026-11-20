@@ -7,7 +7,8 @@ using Solve.Device.Sdk;
 namespace Solve.Adapters.DeviceLibrary;
 
 /// <summary>
-/// 驱动目录：程序自带的驱动 + 设备库中已加载的驱动包。构造后不可变，可被任意线程无锁读取。
+/// 驱动目录的一份快照：程序自带的驱动 + 设备库中已载入的驱动。构造后不可变，可被任意线程无锁读取。
+/// 运行中的变化由 <see cref="LiveDriverCatalog"/> 以整份快照替换实现。
 /// </summary>
 public sealed class DriverCatalog : IDriverCatalog
 {
@@ -70,6 +71,20 @@ public sealed class DriverCatalog : IDriverCatalog
 
     public bool TryGetImplementation(DriverId id, [NotNullWhen(true)] out IDeviceDriver? implementation)
         => _implementations.TryGetValue(id, out implementation);
+
+    /// <summary>
+    /// 驱动实现（按驱动标识），只读
+    /// </summary>
+    public IReadOnlyDictionary<DriverId, IDeviceDriver> Implementations => _implementations;
+
+    /// <summary>
+    /// 快照不可变，永远不会触发
+    /// </summary>
+    public event EventHandler? Changed
+    {
+        add { }
+        remove { }
+    }
 
     private static int CategoryOrder(HardwareCategory category)
     {
