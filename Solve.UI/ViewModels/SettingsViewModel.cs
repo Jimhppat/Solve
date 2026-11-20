@@ -72,9 +72,6 @@ public sealed class SettingsViewModel : ViewModelBase
         SaveCommand = new AsyncRelayCommand(SaveAsync, () => _settings is not null && _state == SettingsSaveState.Idle);
         ConfirmDeletionCommand = new AsyncRelayCommand(ConfirmDeletionAsync, () => _state == SettingsSaveState.AwaitingConfirmation);
         CancelDeletionCommand = new RelayCommand(CancelDeletion, () => _state == SettingsSaveState.AwaitingConfirmation);
-        RestoreDefaultLibraryCommand = new RelayCommand(
-            () => LibraryDirectoryInput = _library?.DefaultDirectory ?? string.Empty,
-            () => _library is not null && _state == SettingsSaveState.Idle);
     }
 
     public string PageTitle => "系统设置";
@@ -215,11 +212,6 @@ public sealed class SettingsViewModel : ViewModelBase
     // ==================== 驱动库 ====================
 
     /// <summary>
-    /// 恢复默认的驱动库目录（只改输入框，点「保存」后才生效）
-    /// </summary>
-    public RelayCommand RestoreDefaultLibraryCommand { get; }
-
-    /// <summary>
     /// 已接入驱动库目录设置（设计器中、配置库不可用时为 false）
     /// </summary>
     public bool IsLibraryAvailable => _library is not null;
@@ -313,7 +305,7 @@ public sealed class SettingsViewModel : ViewModelBase
             return;
         }
 
-        // 同样不把留空当作恢复默认：要用默认目录请点「恢复默认」
+        // 同样不把留空当作恢复默认：要用默认目录就填写或浏览到默认目录，保存时识别为"跟随默认"
         if (_library is not null && _libraryDirectoryInput.Trim().Length == 0)
         {
             ReportError("驱动库目录不能为空");
@@ -479,7 +471,6 @@ public sealed class SettingsViewModel : ViewModelBase
         SaveCommand.RaiseCanExecuteChanged();
         ConfirmDeletionCommand.RaiseCanExecuteChanged();
         CancelDeletionCommand.RaiseCanExecuteChanged();
-        RestoreDefaultLibraryCommand.RaiseCanExecuteChanged();
     }
 
     private void RaiseStartupFallbackChanged()
