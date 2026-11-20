@@ -78,6 +78,61 @@ public partial class SettingsView : UserControl
         }
     }
 
+    private async void OnBrowseLibraryDirectory(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { IsLibraryAvailable: true } vm || TopLevel.GetTopLevel(this)?.StorageProvider is not { } storage)
+            return;
+
+        try
+        {
+            var start = await FindExistingDirectoryAsync(vm.LibraryDirectoryInput) ?? vm.CurrentLibraryDirectory;
+            var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择驱动库目录",
+                AllowMultiple = false,
+                SuggestedStartLocation = start is null ? null : await storage.TryGetFolderFromPathAsync(start),
+            });
+
+            if (folders.Count == 0)
+                return;
+
+            if (folders[0].TryGetLocalPath() is { } path)
+                vm.LibraryDirectoryInput = path;
+            else
+                vm.ReportError("所选文件夹不是本机磁盘上的目录，不能作为驱动库目录");
+        }
+        catch (Exception ex)
+        {
+            vm.ReportError($"无法打开文件夹选择框：{ex.Message}");
+        }
+    }
+
+    private async void OnOpenLibraryDirectory(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { IsLibraryAvailable: true } vm)
+            return;
+
+        var input = vm.LibraryDirectoryInput.Trim();
+        try
+        {
+            if (await FindExistingDirectoryAsync(input) is not { } directory)
+            {
+                vm.ReportError(input.Length == 0 ? "驱动库目录为空" : $"目录不存在：{input}（保存时会自动创建）");
+                return;
+            }
+
+            if (TopLevel.GetTopLevel(this)?.Launcher is { } launcher
+                && !await launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(directory)))
+            {
+                vm.ReportError($"系统未能打开目录：{directory}");
+            }
+        }
+        catch (Exception ex)
+        {
+            vm.ReportError($"无法打开目录 {input}：{ex.Message}");
+        }
+    }
+
     /// <summary>
     /// 输入是已存在目录的完整路径时返回它，否则返回 null。
     /// 存在性检查放到线程池：手填的网络路径不可达时可能卡住数秒，不能占用 UI 线程。

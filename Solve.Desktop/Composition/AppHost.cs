@@ -57,6 +57,7 @@ public sealed class AppHost : IAsyncDisposable
     private BusManagementService? _busService;
     private DeviceService? _devices;
     private DeviceLibraryManager? _deviceLibrary;
+    private DeviceLibraryLocation? _deviceLibraryLocation;
     private DeviceBindingRegistry? _bindings;
     private DevicePollingService? _polling;
     private TopologyService? _topology;
@@ -184,6 +185,20 @@ public sealed class AppHost : IAsyncDisposable
             lock (_gate)
             {
                 return _deviceLibrary;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 驱动库目录（设置页查看与修改，重启后生效）；启动完成前、配置库不可用或未配置驱动库目录时为 null
+    /// </summary>
+    public IDeviceLibraryLocation? LibraryLocation
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _deviceLibraryLocation;
             }
         }
     }
@@ -393,13 +408,16 @@ public sealed class AppHost : IAsyncDisposable
             var service = new BusManagementService(
                 manager, repository, _loggerFactory.CreateLogger<BusManagementService>());
 
-            // 设备库：只加载经操作员确认且文件未变的第三方驱动包；单个包出错只影响它自己。
-            // 未配置设备库目录时只有程序内置驱动
+            // 驱动库：目录取设置页保存的目录（不可用时退回默认目录）；只载入经操作员信任且文件未变的第三方驱动包，
+            // 单个包出错只影响它自己。未配置驱动库目录时只有程序内置驱动
             DeviceLibraryManager? library = null;
-            if (Options.DeviceLibraryDirectory is { } libraryDirectory)
+            DeviceLibraryLocation? location = null;
+            if (Options.DeviceLibraryDirectory is { } defaultLibrary)
             {
+                location = await DeviceLibraryLocation.ResolveAsync(
+                    settings, defaultLibrary, _loggerFactory.CreateLogger<DeviceLibraryLocation>(), cancellationToken).ConfigureAwait(false);
                 library = await DeviceLibraryManager.LoadAsync(
-                    libraryDirectory, settings, _loggerFactory.CreateLogger<DeviceLibraryManager>(), cancellationToken).ConfigureAwait(false);
+                    location.CurrentDirectory, settings, _loggerFactory.CreateLogger<DeviceLibraryManager>(), cancellationToken).ConfigureAwait(false);
             }
 
             // 挂载模块只是配置，不访问硬件；与总线共用配置库，删除总线时其下模块由库级联删除。
@@ -430,6 +448,7 @@ public sealed class AppHost : IAsyncDisposable
                 _busService = service;
                 _devices = devices;
                 _deviceLibrary = library;
+                _deviceLibraryLocation = location;
                 _bindings = bindings;
                 _polling = polling;
             }

@@ -37,8 +37,10 @@ internal static class PackageImporter
             return Failed($"目录不存在：{source}");
 
         var rootPath = Path.TrimEndingDirectorySeparator(root);
-        if (IsSameOrInside(source, rootPath))
-            return Failed("所选目录已经在驱动库中，不需要导入。");
+        // 驱动库根目录下的一级子目录就是驱动包本身，不需要导入；更深的目录（如与驱动库同根的源码的编译输出）可以导入
+        var parent = Path.GetDirectoryName(source);
+        if (parent is not null && string.Equals(Path.TrimEndingDirectorySeparator(parent), rootPath, StringComparison.OrdinalIgnoreCase))
+            return Failed("所选目录已经是驱动库中的驱动包，不需要导入。");
         if (IsSameOrInside(rootPath, source))
             return Failed("所选目录包含驱动库本身，请选择驱动包自己的目录。");
 

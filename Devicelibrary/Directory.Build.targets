@@ -1,0 +1,38 @@
+<Project>
+
+  <!--
+      驱动库根目录的公共构建规则（对 Devicelibrary 下的全部项目生效）：
+      驱动包项目（项目目录里有 package.json）每次编译完成后，把入口程序集、包内依赖与清单复制到
+      Devicelibrary/<包标识>/，驱动库扫描即可发现；源码目录（如 Devicelibrary/Chroma）在扫描时自动跳过。
+
+      - 输出目录整体重建：先删除再复制，删掉的依赖不会残留在包里。
+      - SDK 由主程序提供（项目引用 Private="false"），不会被复制进包。
+      - 输出目录里写一个只含 "*" 的 .gitignore：生成物不进版本库；扫描时 '.' 开头的文件不属于驱动包，不影响指纹。
+      - 每次重新编译程序集都会变，指纹随之改变，需要在驱动库中重新信任（信任按指纹记忆，这是有意的）。
+  -->
+
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)/package.json')">
+    <_DriverManifest>$(MSBuildProjectDirectory)/package.json</_DriverManifest>
+    <!-- 包标识取清单中第一个 "id"（清单约定把包的 id 写在 drivers 之前）；格式不对时下面的目标报错 -->
+    <DriverPackageId>$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(_DriverManifest)')), '(?s)^.*?"id"\s*:\s*"([^"]*)".*$', '$1'))</DriverPackageId>
+    <DriverPackageOutput>$(MSBuildThisFileDirectory)$(DriverPackageId)</DriverPackageOutput>
+  </PropertyGroup>
+
+  <Target Name="OutputDriverPackageToLibrary" AfterTargets="Build" Condition="'$(_DriverManifest)' != ''">
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(DriverPackageId)', '^[a-z0-9._-]{1,64}$'))"
+           Text="无法从 $(_DriverManifest) 读出有效的包标识（只能含小写字母、数字、'.'、'-'、'_'，最长 64 个字符，且须写在 drivers 之前）。" />
+
+    <ItemGroup>
+      <_DriverPackageFile Include="$(TargetPath)" />
+      <_DriverPackageFile Include="$(_DriverManifest)" />
+      <_DriverPackageFile Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+    </ItemGroup>
+
+    <RemoveDir Directories="$(DriverPackageOutput)" />
+    <Copy SourceFiles="@(_DriverPackageFile)" DestinationFolder="$(DriverPackageOutput)" />
+    <WriteLinesToFile File="$(DriverPackageOutput)/.gitignore" Lines="*" Overwrite="true" />
+
+    <Message Importance="high" Text="驱动包 $(DriverPackageId) 已输出到 $(DriverPackageOutput)：在驱动库中扫描并信任后载入" />
+  </Target>
+
+</Project>

@@ -157,6 +157,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public void AttachDeviceLibrary(IDeviceLibrary library) => DeviceLibrary.Attach(library);
 
     /// <summary>
+    /// 接入驱动库目录设置（设置页的「驱动库」卡片）。须在 UI 线程上调用。
+    /// </summary>
+    public void AttachLibraryLocation(IDeviceLibraryLocation location) => Settings.AttachLibraryLocation(location);
+
+    /// <summary>
     /// 接入孪生状态库（主控台显示区）。须在 UI 线程上调用，只能调用一次。
     /// </summary>
     public void AttachTwin(TwinStateStore twin) => MasterConsole.Twin.Attach(twin);

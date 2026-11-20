@@ -413,6 +413,50 @@ public sealed class DeviceLibraryManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task Import_FromBuildOutputInsideLibrarySourceTree_IsAllowed()
+    {
+        // 驱动库与源码同根：Devicelibrary/Chroma/Chroma.Drivers/bin/... 是编译输出，可以导入
+        var project = Directory.CreateDirectory(Path.Combine(Root, "Chroma", "Chroma.Drivers")).FullName;
+        File.WriteAllText(Path.Combine(project, "Chroma.Drivers.csproj"), "<Project />");
+        var output = AddPackage("net10.0", parent: Path.Combine(project, "bin", "Debug"));
+        var library = await LoadAsync();
+
+        var imported = await library.ImportAsync(output, overwrite: false, CancellationToken.None);
+
+        Assert.True(imported.IsSuccess, imported.ToString());
+        Assert.Equal("sample.drivers", Assert.Single(imported.Value).Directory);
+    }
+
+    [Fact]
+    public async Task SourceDirectories_AreSkipped_NotReportedInvalid()
+    {
+        // 驱动源码与驱动包放在同一个根目录：厂家目录 / 项目目录 / *.csproj，根部没有清单
+        var project = Directory.CreateDirectory(Path.Combine(Root, "Chroma", "Chroma.Drivers")).FullName;
+        File.WriteAllText(Path.Combine(project, "Chroma.Drivers.csproj"), "<Project />");
+        File.WriteAllText(Path.Combine(project, "package.json"), "{}");
+        AddPackage("sample.drivers");
+
+        var package = Assert.Single((await LoadAsync()).Packages);
+
+        Assert.Equal("sample.drivers", package.Directory);
+        Assert.Equal(DriverPackageStatus.PendingApproval, package.Status);
+    }
+
+    [Fact]
+    public async Task HiddenFiles_AreNotPartOfPackage_AndDoNotChangeFingerprint()
+    {
+        var path = AddPackage("sample");
+        var before = Assert.Single((await LoadAsync()).Packages).Fingerprint;
+
+        // 编译后自动产出的包里会写一个 .gitignore；隐藏目录同理
+        File.WriteAllText(Path.Combine(path, ".gitignore"), "*");
+        Directory.CreateDirectory(Path.Combine(path, ".cache"));
+        File.WriteAllText(Path.Combine(path, ".cache", "x.dll"), "不是程序集");
+
+        Assert.Equal(before, Assert.Single((await LoadAsync()).Packages).Fingerprint);
+    }
+
+    [Fact]
     public async Task StagingDirectories_AreNotPackages()
     {
         Directory.CreateDirectory(Path.Combine(Root, ".import-leftover"));

@@ -33,9 +33,15 @@ internal static class PackageScanner
     public const long MaxTotalBytes = 64L * 1024 * 1024;
 
     /// <summary>
-    /// 设备库根目录下以 '.' 开头的子目录是导入时的临时目录，不作为驱动包
+    /// 以 '.' 开头的目录与文件不属于驱动包：根目录下是导入时的临时目录；包内是 .gitignore 之类的辅助文件，
+    /// 既不读取、不计入指纹，也不能被当作程序集载入
     /// </summary>
     public const char ReservedPrefix = '.';
+
+    /// <summary>
+    /// 判断"根目录下没有清单的子目录是不是驱动源码"时向下查找项目文件的深度：厂家目录 / 项目目录 / *.csproj
+    /// </summary>
+    private const int SourceProbeDepth = 2;
 
     public static IReadOnlyList<ScannedPackage> Scan(string rootDirectory, CancellationToken cancellationToken = default)
     {
@@ -44,9 +50,35 @@ internal static class PackageScanner
 
         return Directory.EnumerateDirectories(rootDirectory)
             .Where(d => !Path.GetFileName(d).StartsWith(ReservedPrefix))
+            .Where(d => !IsSourceDirectory(d))
             .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
             .Select(d => ScanPackage(d, cancellationToken))
             .ToList();
+    }
+
+    /// <summary>
+    /// 驱动源码目录（驱动库与源码放在同一个根目录时，如 Devicelibrary/Chroma）：根部没有清单、下面有项目文件。
+    /// 跳过它们，既不报"无效"，也不去读其中的 bin / obj（文件多、体积大）。根部有清单的一律按驱动包处理。
+    /// </summary>
+    internal static bool IsSourceDirectory(string directory)
+    {
+        if (File.Exists(Path.Combine(directory, SdkInfo.ManifestFileName)))
+            return false;
+
+        try
+        {
+            return Directory.EnumerateFiles(directory, "*.csproj", new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                MaxRecursionDepth = SourceProbeDepth,
+                IgnoreInaccessible = true,
+            }).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 判断不了就按驱动包处理：会显示为无效并写明原因，而不是悄悄消失
+            return false;
+        }
     }
 
     /// <summary>
@@ -59,7 +91,9 @@ internal static class PackageScanner
 
         try
         {
-            var paths = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).ToList();
+            var paths = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+                .Where(path => !IsHidden(Path.GetRelativePath(directory, path)))
+                .ToList();
             if (paths.Count > MaxFiles)
                 return Invalid(directoryName, $"包内文件超过 {MaxFiles} 个。");
 
@@ -94,6 +128,12 @@ internal static class PackageScanner
 
         return new ScannedPackage(directoryName, manifest, [], fingerprint, files);
     }
+
+    /// <summary>
+    /// 相对路径中任一段以 '.' 开头（隐藏文件或位于隐藏目录中）
+    /// </summary>
+    private static bool IsHidden(string relativePath)
+        => relativePath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).Any(segment => segment.StartsWith(ReservedPrefix));
 
     private static ScannedPackage Invalid(string directoryName, string problem)
         => new(directoryName, null, [problem], string.Empty, new Dictionary<string, byte[]>());
