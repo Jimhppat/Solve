@@ -52,6 +52,10 @@
         <DependentUpon>LevelFilterPanel.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\WiringPanel.axaml.cs">
+        <DependentUpon>WiringPanel.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
       <Compile Update="Views\LogDatePanel.axaml.cs">
         <DependentUpon>LogDatePanel.axaml</DependentUpon>
         <SubType>Code</SubType>

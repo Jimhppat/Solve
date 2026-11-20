@@ -32,7 +32,14 @@ public enum PointAccess
 /// <param name="Name">界面显示名，如"输出电压"</param>
 /// <param name="Unit">物理单位，如 "V"；无单位填空串。上报的数值已换算到该单位（已乘倍率、加偏移）</param>
 /// <param name="Access">读写权限</param>
-public sealed record PointInfo(string Key, string Name, string Unit, PointAccess Access);
+public sealed record PointInfo(string Key, string Name, string Unit, PointAccess Access)
+{
+    /// <summary>
+    /// 所属通道组（<see cref="ChannelGroupInfo.Key"/>）：每路通道各有一个该点位，上报时用 <see cref="PointSample.Channel"/> 区分。
+    /// 为 null 表示模块级点位（整台设备只有一个，如单输出电源的输出电压、设备温度）。
+    /// </summary>
+    public string? Group { get; init; }
+}
 
 /// <summary>
 /// 命令的安全等级：内核据此决定执行前的检查（安全联锁、仿真模式、二次确认），驱动无法绕过
@@ -61,7 +68,14 @@ public enum CommandSafety
 /// <param name="Key">驱动内唯一的稳定标识，如 "output.on"；一经发布不得改名</param>
 /// <param name="Name">界面显示名，如"打开输出"</param>
 /// <param name="Safety">安全等级，决定内核执行前的检查</param>
-public sealed record CommandInfo(string Key, string Name, CommandSafety Safety);
+public sealed record CommandInfo(string Key, string Name, CommandSafety Safety)
+{
+    /// <summary>
+    /// 作用的通道组：命令针对某一路通道（如"打开第 3 路继电器"），执行时用 <see cref="DeviceCommand.Channel"/> 指定通道号。
+    /// 为 null 表示模块级命令。
+    /// </summary>
+    public string? Group { get; init; }
+}
 
 /// <summary>
 /// 驱动说明：设备库据此在驱动表中列出驱动，并校验模块地址。
@@ -95,6 +109,11 @@ public sealed record DriverInfo(
     public IReadOnlyList<ParameterInfo> Parameters { get; init; } = [];
 
     /// <summary>
+    /// 通道（可以单独接线的端子），按组声明。没有声明通道的驱动不能接到设备拓扑上。
+    /// </summary>
+    public IReadOnlyList<ChannelGroupInfo> Channels { get; init; } = [];
+
+    /// <summary>
     /// 检查驱动说明是否有效（设备库加载驱动包时调用，驱动的测试也应调用）。返回全部问题，空列表表示有效。
     /// </summary>
     public IReadOnlyList<string> Validate()
@@ -121,7 +140,46 @@ public sealed record DriverInfo(
                 problems.AddRange(parameter.ValidateDeclaration());
         }
 
+        ValidateChannels(problems);
         return problems;
+    }
+
+    private void ValidateChannels(List<string> problems)
+    {
+        // 记录的 init 列表可被设成 null，这里不能信任可空注解
+        if (Channels is null)
+        {
+            problems.Add($"驱动 {Id} 的通道列表不能为 null。");
+            return;
+        }
+
+        CheckKeys("通道组", Channels.Select(g => (g?.Key, g is not null
+            && !string.IsNullOrWhiteSpace(g.Name) && g.Name.Length <= ChannelGroupInfo.MaxNameLength
+            && Enum.IsDefined(g.Function))), problems);
+
+        var groups = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in Channels)
+        {
+            if (group is null)
+                continue;
+            if (group.Key is not null)
+                groups.Add(group.Key);
+            if (group.Count is < 1 or > ChannelGroupInfo.MaxCount)
+                problems.Add($"驱动 {Id} 的通道组 {group.Key} 数量必须在 [1, {ChannelGroupInfo.MaxCount}] 之间，当前为 {group.Count}。");
+        }
+
+        // 点位、命令引用的通道组必须已声明：否则上报的通道号无从校验
+        foreach (var point in Points ?? [])
+        {
+            if (point?.Group is { } group && !groups.Contains(group))
+                problems.Add($"驱动 {Id} 的点位 {point.Key} 引用了未声明的通道组 {group}。");
+        }
+
+        foreach (var command in Commands ?? [])
+        {
+            if (command?.Group is { } group && !groups.Contains(group))
+                problems.Add($"驱动 {Id} 的命令 {command.Key} 引用了未声明的通道组 {group}。");
+        }
     }
 
     private void CheckKeys(string kind, IEnumerable<(string? Key, bool Complete)>? items, List<string> problems)

@@ -44,6 +44,24 @@
                 <TextBlock Text="更新于" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
                 <TextBlock Grid.Column="1" Text="{Binding SelectedUpdatedText}" Foreground="{DynamicResource SemiColorText0}" />
             </Grid>
+
+            <!-- 硬件：有效接线中最严重的一路（就绪 / 等待 / 故障 / 无效 / 未接线），下面每路接线一行 -->
+            <Grid ColumnDefinitions="52,*" ColumnSpacing="8" IsVisible="{Binding HasSelectedHardware}">
+                <TextBlock Text="硬件" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                <TextBlock Grid.Column="1" Text="{Binding SelectedHardwareText}" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SemiColorText0}" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding SelectedWires}" IsVisible="{Binding HasSelectedWires}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="tvm:TwinWireLine">
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                            <Ellipse Width="8" Height="8" Fill="{Binding HealthColor}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" MaxWidth="300"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </StackPanel>
     </StackPanel>
 </UserControl>

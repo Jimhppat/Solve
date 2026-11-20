@@ -731,8 +731,23 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             return null;
         }
 
+        var channels = new List<ChannelGroup>(info.Channels.Count);
+        foreach (var group in info.Channels)
+        {
+            if (!ChannelKindMap.TryMap(group.Function, out var kind))
+            {
+                problem = $"驱动 {info.Id} 的通道组 {group.Key} 功能未定义：{(int)group.Function}。";
+                return null;
+            }
+
+            channels.Add(new ChannelGroup(group.Key, group.Name.Trim(), kind, group.Count));
+        }
+
         var descriptor = new DriverDescriptor(id, info.Name?.Trim() ?? string.Empty, category,
-            info.Description?.Trim() ?? string.Empty, info.MinAddress, info.MaxAddress);
+            info.Description?.Trim() ?? string.Empty, info.MinAddress, info.MaxAddress)
+        {
+            Channels = channels,
+        };
         try
         {
             descriptor.EnsureValid();

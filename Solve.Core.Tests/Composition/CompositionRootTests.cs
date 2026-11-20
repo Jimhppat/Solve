@@ -182,7 +182,7 @@ public sealed class CompositionRootTests : IAsyncLifetime
         var database = await OpenSeedDatabaseAsync();
         await using (var connection = await database.OpenConnectionAsync(CancellationToken.None))
         {
-            await connection.ExecuteAsync("DROP TABLE bus_devices; DROP TABLE topology_nodes; DROP TABLE app_settings; PRAGMA user_version = 1;");
+            await connection.ExecuteAsync("DROP TABLE topology_wires; DROP TABLE bus_devices; DROP TABLE topology_nodes; DROP TABLE app_settings; PRAGMA user_version = 1;");
         }
         SqliteDatabase.ClearPool(StorageOptions);
 

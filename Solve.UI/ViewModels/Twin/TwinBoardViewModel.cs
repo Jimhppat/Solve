@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Solve.Core.Application.Twin;
+using Solve.Core.Application.Wiring;
 using Solve.Core.Domain.Topology;
 using Solve.Core.Domain.Twin;
 
@@ -42,6 +43,8 @@ public sealed class TwinBoardViewModel : ViewModelBase
     private TopologyNodeId? _cabinetId;
     private TwinNodeViewModel? _root;
     private string? _refreshError;
+    private WiringInspector? _wiring;
+    private IReadOnlyList<TwinWireLine> _selectedWires = [];
 
     public TwinBoardViewModel() : this(DefaultElementBudget)
     {
@@ -139,6 +142,30 @@ public sealed class TwinBoardViewModel : ViewModelBase
         ? product.UpdatedAt is { } at ? at.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) : "从未收到"
         : null;
 
+    /// <summary>
+    /// 选中产品位的硬件状态：有效接线中最严重的一路，如"就绪"、"故障"；没有接线为"未接线"；未接入接线服务时为 null（不显示这一行）
+    /// </summary>
+    public string? SelectedHardwareText => SelectedProduct is { } node && _wiring is { } wiring
+        ? wiring.Summarize(node.Id)?.DisplayName() ?? "未接线"
+        : null;
+
+    public bool HasSelectedHardware => SelectedHardwareText is not null;
+
+    /// <summary>
+    /// 选中产品位的有效接线（上级的在前），每路一行：功能、模块与通道、健康度、读数
+    /// </summary>
+    public IReadOnlyList<TwinWireLine> SelectedWires
+    {
+        get => _selectedWires;
+        private set
+        {
+            if (SetProperty(ref _selectedWires, value))
+                OnPropertyChanged(nameof(HasSelectedWires));
+        }
+    }
+
+    public bool HasSelectedWires => _selectedWires.Count > 0;
+
     private TopologyNode? SelectedProduct
         => _selectedId is { } id && _bound is { } topology && topology.TryGetNode(id, out var node) && node.Level == TopologyLevel.Product
             ? node
@@ -159,6 +186,16 @@ public sealed class TwinBoardViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsAttached));
         OnPropertyChanged(nameof(EmptyText));
         Refresh();
+    }
+
+    /// <summary>
+    /// 接入接线运行视图：产品信息卡片显示该产品位的接线、健康度与读数。须在 UI 线程上调用。
+    /// </summary>
+    public void AttachWiring(WiringInspector wiring)
+    {
+        ArgumentNullException.ThrowIfNull(wiring);
+        _wiring = wiring;
+        RaiseSelectionChanged();
     }
 
     /// <summary>
@@ -188,6 +225,10 @@ public sealed class TwinBoardViewModel : ViewModelBase
 
                 if (selectionChanged)
                     RaiseSelectionChanged();
+
+                // 接线的健康度与读数不经孪生状态库上报，选中期间随刷新周期更新（只在内容变了时通知界面）
+                if (!selectionChanged)
+                    RefreshSelectedWires();
             }
 
             RefreshError = null;
@@ -398,5 +439,24 @@ public sealed class TwinBoardViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedStateText));
         OnPropertyChanged(nameof(SelectedSerialText));
         OnPropertyChanged(nameof(SelectedUpdatedText));
+        OnPropertyChanged(nameof(SelectedHardwareText));
+        OnPropertyChanged(nameof(HasSelectedHardware));
+        RefreshSelectedWires();
+    }
+
+    private void RefreshSelectedWires()
+    {
+        if (SelectedProduct is not { } node || _wiring is not { } wiring)
+        {
+            SelectedWires = [];
+            return;
+        }
+
+        var lines = wiring.Inspect(node.Id).Select(TwinWireLine.From).ToList();
+        if (!lines.SequenceEqual(_selectedWires))
+        {
+            SelectedWires = lines;
+            OnPropertyChanged(nameof(SelectedHardwareText));
+        }
     }
 }

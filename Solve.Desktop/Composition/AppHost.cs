@@ -12,6 +12,7 @@ using Solve.Adapters.Persistence.Devices;
 using Solve.Adapters.Persistence.Settings;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Adapters.Persistence.Topology;
+using Solve.Adapters.Persistence.Wiring;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Application.DeviceLibrary;
@@ -20,6 +21,7 @@ using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
+using Solve.Core.Application.Wiring;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
 using Solve.Desktop.Logging;
@@ -62,6 +64,8 @@ public sealed class AppHost : IAsyncDisposable
     private DevicePollingService? _polling;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
+    private WiringService? _wiring;
+    private WiringInspector? _wiringInspector;
     private bool _disposed;
 
     private AppHost(DesktopOptions options)
@@ -232,6 +236,20 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// 接线（模块通道 → 拓扑位置）的运行视图，含接线用例服务；启动完成前或配置库不可用时为 null
+    /// </summary>
+    public WiringInspector? Wiring
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _wiringInspector;
+            }
+        }
+    }
+
+    /// <summary>
     /// 在线程池上启动总线系统，幂等。返回的任务不会以异常结束，结果见 <see cref="StartupReport"/>。
     /// </summary>
     public Task<StartupReport> Start()
@@ -286,9 +304,13 @@ public sealed class AppHost : IAsyncDisposable
         BusManager? buses;
         DeviceBindingRegistry? bindings;
         DevicePollingService? polling;
+        WiringService? wiring;
         lock (_gate)
         {
             buses = _buses;
+            wiring = _wiring;
+            _wiring = null;
+            _wiringInspector = null;
             bindings = _bindings;
             polling = _polling;
             _buses = null;
@@ -309,6 +331,19 @@ public sealed class AppHost : IAsyncDisposable
             catch (Exception ex)
             {
                 _logger.LogError(ex, "停止轮询调度失败，继续关停");
+            }
+        }
+
+        // 接线服务跟随绑定变化：先于绑定登记表停止监听
+        if (wiring is not null)
+        {
+            try
+            {
+                await wiring.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "释放接线服务失败，继续关停");
             }
         }
 
@@ -439,7 +474,16 @@ public sealed class AppHost : IAsyncDisposable
                 DevicePollingOptions.Default,
                 TimeProvider.System,
                 _loggerFactory.CreateLogger<DevicePollingService>());
-            var devices = new DeviceService(deviceRepository, catalog, bindings, statuses, _loggerFactory.CreateLogger<DeviceService>());
+            // 接线：模块的通道接到拓扑位置。删除模块时接线由库级联拆除，换驱动前由模块服务向接线服务核对
+            var wiring = new WiringService(
+                new SqliteWiringRepository(database.Value, _loggerFactory.CreateLogger<SqliteWiringRepository>()),
+                topology,
+                bindings,
+                catalog,
+                service,
+                _loggerFactory.CreateLogger<WiringService>());
+            var wiringInspector = new WiringInspector(wiring, bindings, catalog, statuses, service);
+            var devices = new DeviceService(deviceRepository, catalog, bindings, statuses, _loggerFactory.CreateLogger<DeviceService>(), wiring);
             lock (_gate)
             {
                 if (_disposed)
@@ -451,6 +495,7 @@ public sealed class AppHost : IAsyncDisposable
                 _deviceLibraryLocation = location;
                 _bindings = bindings;
                 _polling = polling;
+                _wiring = wiring;
             }
 
             var snapshot = await repository.LoadAllAsync(cancellationToken).ConfigureAwait(false);
@@ -477,6 +522,15 @@ public sealed class AppHost : IAsyncDisposable
             // 总线注册完成后再绑定：链路类型取自已注册总线的配置；绑定好之后才开始轮询
             await bindings.StartAsync(cancellationToken).ConfigureAwait(false);
             polling.Start();
+
+            // 绑定完成后读取接线：接线的通道要按模块绑定的驱动解析。读取失败已由服务记录并禁止修改接线
+            await wiring.LoadAsync(cancellationToken).ConfigureAwait(false);
+            wiring.Start();
+            lock (_gate)
+            {
+                if (!_disposed)
+                    _wiringInspector = wiringInspector;
+            }
 
             var report = new StartupReport(
                 mode,

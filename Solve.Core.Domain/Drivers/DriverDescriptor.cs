@@ -18,6 +18,25 @@ public sealed record DriverDescriptor(
     public const int MaxNameLength = 64;
 
     /// <summary>
+    /// 可以单独接线的通道，按组声明；没有通道的驱动（如通用模块）不能接到拓扑上
+    /// </summary>
+    public IReadOnlyList<ChannelGroup> Channels { get; init; } = [];
+
+    /// <summary>
+    /// 按组标识查通道组
+    /// </summary>
+    public ChannelGroup? FindChannelGroup(string? key)
+    {
+        foreach (var group in Channels)
+        {
+            if (string.Equals(group.Key, key, StringComparison.Ordinal))
+                return group;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// 该驱动允许的地址个数，即一次最多添加的模块数
     /// </summary>
     public int AddressCapacity => MaxAddress - MinAddress + 1;

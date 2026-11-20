@@ -56,6 +56,56 @@ public sealed class SdkContractTests
         Assert.Equal(3, driver.Validate().Count);
     }
 
+    // ---------- 通道声明 ----------
+
+    private static DriverInfo WithChannels() => Valid() with
+    {
+        Channels = [new ChannelGroupInfo("output", "输出", ChannelFunction.PowerSupply, 4)],
+        Points = [new PointInfo("voltage", "输出电压", "V", PointAccess.Read) { Group = "output" }],
+        Commands = [new CommandInfo("output.on", "打开输出", CommandSafety.Output) { Group = "output" }],
+    };
+
+    [Fact]
+    public void ChannelGroups_WithGroupedPointsAndCommands_AreValid() => Assert.Empty(WithChannels().Validate());
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(ChannelGroupInfo.MaxCount + 1)]
+    public void ChannelCountOutOfRange_IsReported(int count)
+        => Assert.Single((WithChannels() with { Channels = [new ChannelGroupInfo("output", "输出", ChannelFunction.PowerSupply, count)] }).Validate());
+
+    [Fact]
+    public void DuplicateGroupKey_And_UndefinedFunction_AreReported()
+    {
+        var driver = WithChannels() with
+        {
+            Channels =
+            [
+                new ChannelGroupInfo("output", "输出", ChannelFunction.PowerSupply, 4),
+                new ChannelGroupInfo("output", "输出 2", ChannelFunction.Load, 2),
+                new ChannelGroupInfo("relay", "继电器", (ChannelFunction)99, 2),
+            ],
+        };
+
+        Assert.Equal(2, driver.Validate().Count);
+    }
+
+    [Fact]
+    public void PointOrCommand_ReferencingUndeclaredGroup_IsReported()
+    {
+        var driver = WithChannels() with
+        {
+            Points = [new PointInfo("voltage", "电压", "V", PointAccess.Read) { Group = "missing" }],
+            Commands = [new CommandInfo("on", "打开", CommandSafety.Output) { Group = "missing" }],
+        };
+
+        Assert.Equal(2, driver.Validate().Count);
+    }
+
+    [Fact]
+    public void NullChannels_IsReported_NotThrown()
+        => Assert.Single((Valid() with { Channels = null! }).Validate());
+
     // ---------- 参数声明 ----------
 
     [Fact]

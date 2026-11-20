@@ -24,6 +24,12 @@ public sealed class DeviceServiceTests
 
         public int CountByDriver(DriverId driver) => 0;
 
+        public bool TryGet(DeviceId device, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out DriverBinding? binding)
+        {
+            binding = null;
+            return false;
+        }
+
         public event EventHandler<BusId>? Changed { add { } remove { } }
 
         public Task RefreshAsync(BusId busId, CancellationToken cancellationToken)

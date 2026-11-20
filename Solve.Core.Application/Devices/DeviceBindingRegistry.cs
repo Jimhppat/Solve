@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Solve.Core.Application.Buses;
@@ -25,6 +26,11 @@ public interface IDeviceBindings
     /// 全部总线上使用指定驱动的模块数。可被任意线程读取。
     /// </summary>
     int CountByDriver(DriverId driver);
+
+    /// <summary>
+    /// 按模块 Id 查绑定（任一总线）。模块不存在或所在总线尚未绑定时返回 false。可被任意线程读取。
+    /// </summary>
+    bool TryGet(DeviceId device, [NotNullWhen(true)] out DriverBinding? binding);
 
     /// <summary>
     /// 按存储中的模块与总线当前配置重新绑定一条总线。模块增删改后调用。
@@ -61,6 +67,9 @@ public sealed class DeviceBindingRegistry : IDeviceBindings, IAsyncDisposable
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
 
     private ImmutableDictionary<BusId, IReadOnlyList<DriverBinding>> _bindings = ImmutableDictionary<BusId, IReadOnlyList<DriverBinding>>.Empty;
+
+    // 按模块 Id 的索引，与 _bindings 一起在绑定互斥区内整体替换
+    private ImmutableDictionary<DeviceId, DriverBinding> _byDevice = ImmutableDictionary<DeviceId, DriverBinding>.Empty;
     private EventSubscription<BusRegistryEvent>? _subscription;
     private Task? _listener;
     private Task? _catalogListener;
@@ -88,6 +97,9 @@ public sealed class DeviceBindingRegistry : IDeviceBindings, IAsyncDisposable
 
     public int CountByDriver(DriverId driver)
         => Volatile.Read(ref _bindings).Values.Sum(list => list.Count(b => b.Device.Driver == driver));
+
+    public bool TryGet(DeviceId device, [NotNullWhen(true)] out DriverBinding? binding)
+        => Volatile.Read(ref _byDevice).TryGetValue(device, out binding);
 
     /// <summary>
     /// 绑定当前已注册的全部总线，并开始跟随总线注册表与驱动目录的变化。只调用一次。
@@ -146,6 +158,7 @@ public sealed class DeviceBindingRegistry : IDeviceBindings, IAsyncDisposable
             }
 
             Volatile.Write(ref _bindings, _bindings.SetItem(busId, bindings));
+            ReindexDevices();
 
             _logger.LogInformation("总线 {BusId} 绑定模块 {Total} 个（沿用 {Reused} 个）：就绪 {Ready}，未就绪 {NotReady}",
                 busId, bindings.Count, reused, bindings.Count(b => b.Status == DriverBindingStatus.Ready),
@@ -200,9 +213,16 @@ public sealed class DeviceBindingRegistry : IDeviceBindings, IAsyncDisposable
             return false;
 
         Volatile.Write(ref _bindings, _bindings.Remove(busId));
+        ReindexDevices();
         _logger.LogInformation("总线 {BusId} 已不存在，移除其模块绑定", busId);
         return true;
     }
+
+    /// <summary>
+    /// 按当前绑定重建模块索引（只在绑定互斥区内调用）
+    /// </summary>
+    private void ReindexDevices()
+        => Volatile.Write(ref _byDevice, _bindings.Values.SelectMany(list => list).ToImmutableDictionary(b => b.Device.Id));
 
     private void RaiseChanged(BusId busId)
     {

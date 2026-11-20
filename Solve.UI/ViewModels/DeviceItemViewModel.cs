@@ -112,23 +112,7 @@ public sealed class DeviceItemViewModel : ViewModelBase
             _ => ("-", "#94A3B8"),
         };
         CommProblem = status?.Problem ?? string.Empty;
-        Readings = status is null ? string.Empty : FormatReadings(status.Points);
-    }
-
-    private string FormatReadings(IReadOnlyList<PointValue> values)
-    {
-        // 按驱动声明的顺序显示，名称与单位取自声明
-        var parts = new List<string>(values.Count);
-        foreach (var point in _points)
-        {
-            foreach (var value in values)
-            {
-                if (value.Key == point.Key)
-                    parts.Add($"{point.Name} {value.Value.ToString("0.###", CultureInfo.InvariantCulture)}{(point.Unit.Length > 0 ? " " + point.Unit : string.Empty)}");
-            }
-        }
-
-        return string.Join(" · ", parts);
+        Readings = status is null ? string.Empty : ReadingFormat.Module(_points, status.Points);
     }
 
     /// <summary>

@@ -75,6 +75,10 @@ public partial class App : Application
                     if (_host.Devices is { } devices)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDevices(devices));
 
+                    // 接线：拓扑页的接线面板、主控台产品信息卡片的硬件状态（须在拓扑页与孪生显示区接入之后）
+                    if (_host.Wiring is { } wiring)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachWiring(wiring));
+
                     // 驱动库（从模块配置窗口打开）：扫描、导入、信任驱动包，启停驱动
                     if (_host.DeviceLibrary is { } library)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDeviceLibrary(library));

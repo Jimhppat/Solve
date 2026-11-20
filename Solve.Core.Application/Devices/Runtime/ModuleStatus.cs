@@ -45,7 +45,8 @@ public enum ModuleCommState
 /// </summary>
 /// <param name="Value">已换算到点位单位的工程值</param>
 /// <param name="Timestamp">读到该值的时间（UTC）</param>
-public readonly record struct PointValue(string Key, double Value, DateTimeOffset Timestamp);
+/// <param name="Channel">通道号：通道级点位为 1..通道数，模块级点位为 0</param>
+public readonly record struct PointValue(string Key, double Value, DateTimeOffset Timestamp, int Channel = 0);
 
 /// <summary>
 /// 一个模块的运行状态快照（不可变）

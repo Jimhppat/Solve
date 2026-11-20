@@ -386,21 +386,55 @@ public sealed class DevicePollingService : IAsyncDisposable
     }
 
     /// <summary>
-    /// 只接受驱动声明过的点位与有限数值；其余丢弃并告警（驱动缺陷，不能当成设备数据）
+    /// 只接受驱动声明过的点位、与声明相符的通道号与有限数值；其余丢弃并告警（驱动缺陷，不能当成设备数据，
+    /// 通道号错位会把一路通道的读数显示到另一个位置上）
     /// </summary>
     private IReadOnlyList<PointValue> ToPoints(DriverBinding binding, IReadOnlyList<PointSample> samples, DateTimeOffset now)
     {
-        var declared = binding.Driver?.Points.Select(p => p.Key).ToHashSet(StringComparer.Ordinal) ?? [];
+        var driver = binding.Driver;
         var points = new List<PointValue>(samples.Count);
         foreach (var sample in samples)
         {
-            if (sample.Key is not null && declared.Contains(sample.Key) && double.IsFinite(sample.Value))
-                points.Add(new PointValue(sample.Key, sample.Value, now));
+            if (driver is not null && IsDeclared(driver, sample) && double.IsFinite(sample.Value))
+            {
+                points.Add(new PointValue(sample.Key, sample.Value, now, sample.Channel));
+            }
             else
-                _logger.LogWarning("{Device} 的驱动上报了无效点位 {Key}={Value}，已丢弃", binding.Device, sample.Key, sample.Value);
+            {
+                _logger.LogWarning("{Device} 的驱动上报了无效点位 {Key}[{Channel}]={Value}，已丢弃",
+                    binding.Device, sample.Key, sample.Channel, sample.Value);
+            }
         }
 
         return points;
+    }
+
+    /// <summary>
+    /// 点位已声明；模块级点位通道号为 0，通道级点位通道号在所属组的 1..数量 之内
+    /// </summary>
+    public static bool IsDeclared(DriverInfo driver, PointSample sample)
+    {
+        if (sample.Key is null)
+            return false;
+
+        foreach (var point in driver.Points)
+        {
+            if (!string.Equals(point.Key, sample.Key, StringComparison.Ordinal))
+                continue;
+
+            if (point.Group is null)
+                return sample.Channel == 0;
+
+            foreach (var group in driver.Channels)
+            {
+                if (string.Equals(group.Key, point.Group, StringComparison.Ordinal))
+                    return sample.Channel >= 1 && sample.Channel <= group.Count;
+            }
+
+            return false;
+        }
+
+        return false;
     }
 
     private void Publish(Tracker tracker, ModuleStatus status)

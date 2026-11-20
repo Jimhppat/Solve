@@ -62,8 +62,19 @@ internal sealed class Chroma62000BDriver : IDeviceDriver
                     Maximum = 2000,
                 },
             ],
+
+            // 单路输出：一个输出端子，接到拓扑上作为供电。读数是模块级点位，接线面板按这一路显示
+            Channels =
+            [
+                new ChannelGroupInfo(OutputChannelKey, "输出", ChannelFunction.PowerSupply, Count: 1),
+            ],
         };
     }
+
+    /// <summary>
+    /// 输出通道组的标识，已有接线按它找回通道，一经发布不得改名
+    /// </summary>
+    public const string OutputChannelKey = "output";
 
     public DriverInfo Info { get; }
 
