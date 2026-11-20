@@ -18,8 +18,9 @@ public sealed class SampleDriverPackage : IDriverPackage
 /// 输出：请求 AA 地址 10 状态(0/1) 和校验  响应 55 地址 10 状态 和校验
 /// 和校验 = 前面所有字节之和的低 8 位
 /// </code>
+/// 同时演示可选的仿真能力（<see cref="IDeviceSimulatorProvider"/>）：仿真模式下由 <see cref="Simulator"/> 按同一协议应答。
 /// </summary>
-public sealed class SamplePowerDriver : IDeviceDriver
+public sealed class SamplePowerDriver : IDeviceDriver, IDeviceSimulatorProvider
 {
     public const string VoltageKey = "voltage";
     public const string CurrentKey = "current";
@@ -66,6 +67,61 @@ public sealed class SamplePowerDriver : IDeviceDriver
 
     public IDeviceSession CreateSession(DeviceContext context)
         => new Session((byte)context.Address, TimeSpan.FromMilliseconds(context.Parameters.GetInteger(SettleTimeKey)));
+
+    public ISimulatedDevice CreateSimulator(DeviceContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return new Simulator((byte)context.Address);
+    }
+
+    /// <summary>
+    /// 仿真设备：只应答发给自己地址、校验正确的请求。输出打开时读数为固定的
+    /// <see cref="SimulatedVoltage"/> / <see cref="SimulatedCurrent"/>，关闭时为 0；输出命令原样确认并记住输出状态。
+    /// 上电默认输出关闭，与真实电源一致。
+    /// </summary>
+    public sealed class Simulator(byte address) : ISimulatedDevice
+    {
+        /// <summary>
+        /// 输出打开时的仿真电压，V（编码为 1200，即 0.01 V 分辨率）
+        /// </summary>
+        public const double SimulatedVoltage = 12.0;
+
+        /// <summary>
+        /// 输出打开时的仿真电流，A（编码为 500，即 0.001 A 分辨率）
+        /// </summary>
+        public const double SimulatedCurrent = 0.5;
+
+        public bool OutputOn { get; private set; }
+
+        public byte[]? Respond(ReadOnlySpan<byte> request)
+        {
+            // 不是本协议的帧、校验错误或不是发给本机的：真实设备不会应答
+            if (request.Length < 4 || request[0] != 0xAA || request[1] != address || request[^1] != Sum(request[..^1]))
+                return null;
+
+            byte[] response;
+            switch (request[2])
+            {
+                case 0x01 when request.Length == 4:
+                    var voltage = OutputOn ? (int)Math.Round(SimulatedVoltage * 100) : 0;
+                    var current = OutputOn ? (int)Math.Round(SimulatedCurrent * 1000) : 0;
+                    response = [0x55, address, 0x01, (byte)(voltage >> 8), (byte)voltage, (byte)(current >> 8), (byte)current, 0];
+                    break;
+
+                case 0x10 when request.Length == 5 && request[3] is 0 or 1:
+                    OutputOn = request[3] == 1;
+                    response = [0x55, address, 0x10, request[3], 0];
+                    break;
+
+                // 不认识的功能码：示例设备不应答
+                default:
+                    return null;
+            }
+
+            response[^1] = Sum(response.AsSpan(0, response.Length - 1));
+            return response;
+        }
+    }
 
     private delegate IReadOnlyList<PointSample> FrameDecoder(ReadOnlySpan<byte> frame);
 
@@ -130,14 +186,14 @@ public sealed class SamplePowerDriver : IDeviceDriver
         }
 
         public ExchangeStep OnFrame(ReadOnlySpan<byte> frame) => new ExchangeStep.Completed(decode(frame));
+    }
 
-        private static byte Sum(ReadOnlySpan<byte> bytes)
-        {
-            var sum = 0;
-            foreach (var b in bytes)
-                sum += b;
-            return (byte)sum;
-        }
+    private static byte Sum(ReadOnlySpan<byte> bytes)
+    {
+        var sum = 0;
+        foreach (var b in bytes)
+            sum += b;
+        return (byte)sum;
     }
 
     private sealed class FailedExchange(string reason, FailureKind kind) : IExchange

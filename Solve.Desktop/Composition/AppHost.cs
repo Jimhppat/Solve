@@ -18,6 +18,7 @@ using Solve.Core.Application.Buses.Ports;
 using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
 using Solve.Core.Application.Devices.Runtime;
+using Solve.Core.Application.Devices.Simulation;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
@@ -62,6 +63,7 @@ public sealed class AppHost : IAsyncDisposable
     private DeviceLibraryLocation? _deviceLibraryLocation;
     private DeviceBindingRegistry? _bindings;
     private DevicePollingService? _polling;
+    private SimulatedDeviceDispatcher? _simulation;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
     private WiringService? _wiring;
@@ -305,9 +307,12 @@ public sealed class AppHost : IAsyncDisposable
         DeviceBindingRegistry? bindings;
         DevicePollingService? polling;
         WiringService? wiring;
+        SimulatedDeviceDispatcher? simulation;
         lock (_gate)
         {
             buses = _buses;
+            simulation = _simulation;
+            _simulation = null;
             wiring = _wiring;
             _wiring = null;
             _wiringInspector = null;
@@ -346,6 +351,9 @@ public sealed class AppHost : IAsyncDisposable
                 _logger.LogError(ex, "释放接线服务失败，继续关停");
             }
         }
+
+        // 仿真设备分派退订绑定变化；之后仿真通道上的请求一律不应答
+        simulation?.Dispose();
 
         // 再停绑定监听：总线释放时会发出注销事件，此时不需要再重新绑定
         if (bindings is not null)
@@ -426,8 +434,18 @@ public sealed class AppHost : IAsyncDisposable
             // 产品状态数据源尚未接入：不运行任何假数据，产品位保持默认的空闲
             _logger.LogInformation("产品状态暂未接入数据源，主控台的产品位保持默认的空闲");
 
+            // 仿真模式下总线上的"设备"由各模块驱动的仿真设备应答，模块才能上线、跑通命令流程；实机模式下不创建
+            var simulation = mode.Mode == TransportMode.Simulation
+                ? new SimulatedDeviceDispatcher(_loggerFactory.CreateLogger<SimulatedDeviceDispatcher>())
+                : null;
+            lock (_gate)
+            {
+                if (!_disposed)
+                    _simulation = simulation;
+            }
+
             var manager = new BusManager(
-                CreateTransportFactory(mode.Mode),
+                CreateTransportFactory(mode.Mode, simulation),
                 new NoSignalSafetyInterlock(_loggerFactory.CreateLogger<NoSignalSafetyInterlock>()),
                 _loggerFactory);
 
@@ -464,6 +482,7 @@ public sealed class AppHost : IAsyncDisposable
                 service,
                 new DriverBinder(catalog, _loggerFactory.CreateLogger<DriverBinder>()),
                 _loggerFactory.CreateLogger<DeviceBindingRegistry>());
+            simulation?.Attach(bindings);
             // 轮询调度：总线已连接时用绑定好的驱动会话收发报文，写入模块通信状态与点位实时值
             var statuses = new ModuleStatusStore();
             var polling = new DevicePollingService(
@@ -557,10 +576,13 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
-    private IBusTransportFactory CreateTransportFactory(TransportMode mode) => mode switch
+    /// <summary>
+    /// 实机模式只用真实通道，仿真设备分派不会接到任何通道上；其余情况一律仿真（默认安全路径）
+    /// </summary>
+    private IBusTransportFactory CreateTransportFactory(TransportMode mode, SimulatedDeviceDispatcher? simulation) => mode switch
     {
         TransportMode.Hardware => new HardwareTransportFactory(_loggerFactory),
-        _ => new SimulatedTransportFactory(),
+        _ => new SimulatedTransportFactory(simulation is null ? null : busId => request => simulation.Respond(busId, request.Span)),
     };
 
     private bool TryPublish(BusManager manager)

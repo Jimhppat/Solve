@@ -66,6 +66,30 @@ public sealed class ArchitectureTests
         }
     }
 
+    /// <summary>
+    /// 仿真设备只经应用层的分派接到仿真通道上：通道层只转交字节，不认识驱动与仿真契约，
+    /// 实机通道因此没有任何途径调用驱动的仿真代码
+    /// </summary>
+    [Fact]
+    public void TransportAdapters_DoNotReferenceSdk()
+        => Assert.DoesNotContain("Solve.Device.Sdk",
+            typeof(Solve.Adapters.Hardware.Buses.HardwareTransportFactory).Assembly.GetReferencedAssemblies().Select(a => a.Name));
+
+    /// <summary>
+    /// 内核里实现仿真设备的只能是测试替身：协议知识留在驱动包里
+    /// </summary>
+    [Fact]
+    public void NoSolveAssembly_ImplementsSimulatedDevice()
+    {
+        foreach (var assembly in SolveAssemblies())
+        {
+            var implementations = assembly.GetTypes()
+                .Where(t => typeof(ISimulatedDevice).IsAssignableFrom(t) || typeof(IDeviceSimulatorProvider).IsAssignableFrom(t))
+                .Where(t => !t.IsInterface);
+            Assert.Empty(implementations);
+        }
+    }
+
     [Fact]
     public void NoSolveAssembly_ReferencesProtocolOrDriverPackages()
     {

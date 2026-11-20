@@ -12,7 +12,7 @@ namespace Chroma.Drivers.Psu62000B;
 /// <para>地址：字节流封装里没有模块地址，一条总线上的所有请求都发给同一台设备。
 /// 为防止把两个模块的命令发到同一台电源上，地址范围限定为 1，即每条总线只能挂一台。内核支持 CAN 后再放开到 1–254。</para>
 /// </remarks>
-internal sealed class Chroma62000BDriver : IDeviceDriver
+internal sealed class Chroma62000BDriver : IDeviceDriver, IDeviceSimulatorProvider
 {
     public const string VoltageKey = "voltage";
     public const string CurrentKey = "current";
@@ -83,5 +83,14 @@ internal sealed class Chroma62000BDriver : IDeviceDriver
         ArgumentNullException.ThrowIfNull(context);
         var delay = TimeSpan.FromMilliseconds(context.Parameters.GetInteger(CommandDelayKey));
         return new Chroma62000BSession(_model, delay);
+    }
+
+    /// <summary>
+    /// 仿真模式下的设备：按同一套 SCPI 命令应答，见 <see cref="Chroma62000BSimulator"/>
+    /// </summary>
+    public ISimulatedDevice CreateSimulator(DeviceContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return new Chroma62000BSimulator(_model);
     }
 }
