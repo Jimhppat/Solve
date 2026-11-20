@@ -1,0 +1,286 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="1400" d:DesignHeight="800"
+             x:Class="Solve.UI.Views.DeviceLibraryView"
+             x:DataType="vm:DeviceLibraryViewModel"
+             Background="#0D000000">
+    <!-- 驱动库（窗口内容）：左栏驱动包列表（待确认的排在前面），右栏选中包的详情、操作与包内驱动表 -->
+
+    <Design.DataContext>
+        <vm:DeviceLibraryViewModel />
+    </Design.DataContext>
+
+    <UserControl.Styles>
+        <StyleInclude Source="avares://Solve.UI/Styles/TableStyles.axaml" />
+
+        <Style Selector="Border.panel">
+            <Setter Property="ClipToBounds" Value="True" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+        </Style>
+        <Style Selector="Border.panel-title">
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+        <Style Selector="Border.panel-title TextBlock.title">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+        </Style>
+        <Style Selector="ListBox.table > ListBoxItem">
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+        <!-- 操作结果：正常字号；失败为危险色（.error 须排在 .message 之后） -->
+        <Style Selector="TextBlock.message">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.message.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid>
+        <DockPanel Margin="16,12">
+
+            <!-- 页头：目录、统计与操作 -->
+            <Border DockPanel.Dock="Top" Margin="0,0,0,10" Classes="panel" Padding="14,10">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+                        <Button Click="OnOpenDirectory" IsEnabled="{Binding IsAvailable}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <PathIcon Data="{DynamicResource SemiIconFolderOpen}" Width="14" Height="14" />
+                                <TextBlock Text="打开目录" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Click="OnImport" IsEnabled="{Binding CanImport}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <PathIcon Data="{DynamicResource SemiIconImport}" Width="14" Height="14" />
+                                <TextBlock Text="从目录导入" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Command="{Binding ScanCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <PathIcon Data="{DynamicResource SemiIconScan}" Width="14" Height="14" />
+                                <TextBlock Text="扫描" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                        <TextBlock Text="驱动库" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource SemiColorText0}" />
+                        <TextBlock Classes="mono" Text="{Binding RootDirectory}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="560"
+                                   Foreground="{DynamicResource SemiColorText1}" />
+                        <TextBlock Text="{Binding SummaryText}" VerticalAlignment="Center" IsVisible="{Binding IsAvailable}"
+                                   Foreground="{DynamicResource SemiColorText1}" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <TextBlock DockPanel.Dock="Top" Margin="2,0,2,10" Classes="message" Classes.error="{Binding IsMessageError}"
+                       IsVisible="{Binding HasMessage}" Text="{Binding Message}" />
+
+            <TextBlock DockPanel.Dock="Top" Margin="2,0,2,10" Classes="message"
+                       IsVisible="{Binding !IsAvailable}" Text="驱动库不可用：配置库未就绪或程序仍在启动" />
+
+            <Grid ColumnDefinitions="380,12,*">
+
+                <!-- ==================== 左栏：驱动包 ==================== -->
+                <Border Grid.Column="0" Classes="panel">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Classes="panel-title">
+                            <TextBlock Classes="title" Text="驱动包" />
+                        </Border>
+
+                        <Grid>
+                            <StackPanel IsVisible="{Binding IsEmpty}" Spacing="12"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <PathIcon Data="{DynamicResource SemiIconPuzzle}" Width="40" Height="40"
+                                          Foreground="{DynamicResource SemiColorText2}" />
+                                <TextBlock Text="驱动库中暂无驱动包" FontSize="14" FontWeight="Medium"
+                                           HorizontalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                            </StackPanel>
+
+                            <ListBox Classes="table" Background="Transparent" IsVisible="{Binding HasPackages}"
+                                     ItemsSource="{Binding Packages}" SelectedItem="{Binding SelectedPackage}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DriverPackageItemViewModel">
+                                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="4">
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}" FontWeight="Medium"
+                                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource SemiColorText0}" />
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding StatusText}" FontWeight="SemiBold"
+                                                       Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{Binding StatusColor}" />
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding Subtitle}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Foreground="{DynamicResource SemiColorText1}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </DockPanel>
+                </Border>
+
+                <!-- ==================== 右栏：包详情与驱动 ==================== -->
+                <Border Grid.Column="2" Classes="panel">
+                    <Grid>
+                        <StackPanel IsVisible="{Binding !HasSelection}" Spacing="12"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <PathIcon Data="{DynamicResource SemiIconPuzzle}" Width="40" Height="40"
+                                      Foreground="{DynamicResource SemiColorText2}" />
+                            <TextBlock Text="在左侧选择一个驱动包" FontSize="14" FontWeight="Medium"
+                                       HorizontalAlignment="Center" Foreground="{DynamicResource SemiColorText2}" />
+                        </StackPanel>
+
+                        <DockPanel IsVisible="{Binding HasSelection}">
+
+                            <!-- 包信息与操作 -->
+                            <Border DockPanel.Dock="Top" Padding="18,16" BorderBrush="{DynamicResource SemiColorBorder}"
+                                    BorderThickness="0,0,0,1">
+                                <StackPanel Spacing="10">
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+                                            <Button Classes="Tertiary" Content="忽略此版本" Command="{Binding IgnoreCommand}"
+                                                    IsVisible="{Binding SelectedPackage.Package.CanIgnore, FallbackValue=False}" />
+                                            <Button Classes="Warning" Content="撤销信任" Command="{Binding RevokeCommand}"
+                                                    IsVisible="{Binding SelectedPackage.Package.CanRevoke, FallbackValue=False}" />
+                                            <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Command="{Binding ApproveCommand}"
+                                                    IsVisible="{Binding SelectedPackage.Package.CanApprove, FallbackValue=False}">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <PathIcon Data="{DynamicResource SemiIconShield}" Width="14" Height="14" />
+                                                    <TextBlock Text="信任并载入" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding SelectedPackage.Name, FallbackValue=''}" FontSize="16"
+                                                       FontWeight="SemiBold" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                                       Foreground="{DynamicResource SemiColorText0}" />
+                                            <TextBlock Text="{Binding SelectedPackage.StatusText, FallbackValue=''}" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{Binding SelectedPackage.StatusColor, FallbackValue=Gray}" />
+                                        </StackPanel>
+                                    </DockPanel>
+
+                                    <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="版本" Foreground="{DynamicResource SemiColorText1}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SelectedPackage.Version, FallbackValue=''}"
+                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="作者" Foreground="{DynamicResource SemiColorText1}" />
+                                        <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding SelectedPackage.Author, FallbackValue=''}"
+                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="目录" Foreground="{DynamicResource SemiColorText1}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Classes="mono"
+                                                   Text="{Binding SelectedPackage.Directory, FallbackValue=''}"
+                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="指纹" Foreground="{DynamicResource SemiColorText1}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="3" Classes="mono"
+                                                   Text="{Binding SelectedPackage.FingerprintShort, FallbackValue=''}"
+                                                   ToolTip.Tip="{Binding SelectedPackage.Fingerprint, FallbackValue=''}"
+                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                    </Grid>
+
+                                    <Border Classes="notice" IsVisible="{Binding SelectedPackage.HasProblem, FallbackValue=False}">
+                                        <TextBlock Text="{Binding SelectedPackage.Problem, FallbackValue=''}" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 包内驱动：名称、分类、厂家、型号来自清单声明，未载入时也能看到 -->
+                            <Border DockPanel.Dock="Top" Classes="head">
+                                <Grid ColumnDefinitions="1.6*,1*,1*,1*,90,80,80,80" ColumnSpacing="8">
+                                    <TextBlock Grid.Column="0" Text="驱动名称" />
+                                    <TextBlock Grid.Column="1" Text="分类" />
+                                    <TextBlock Grid.Column="2" Text="厂家" />
+                                    <TextBlock Grid.Column="3" Text="型号" />
+                                    <TextBlock Grid.Column="4" Text="地址范围" />
+                                    <TextBlock Grid.Column="5" Text="已挂载" />
+                                    <TextBlock Grid.Column="6" Text="状态" />
+                                    <TextBlock Grid.Column="7" Text="操作" HorizontalAlignment="Right" />
+                                </Grid>
+                            </Border>
+
+                            <ScrollViewer>
+                                <ItemsControl ItemsSource="{Binding SelectedPackage.Drivers, FallbackValue={x:Null}}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DriverEntryItemViewModel">
+                                            <Border Classes="row">
+                                                <Grid ColumnDefinitions="1.6*,1*,1*,1*,90,80,80,80" ColumnSpacing="8">
+                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Medium" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding CategoryText}" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding Manufacturer}" />
+                                                    <TextBlock Grid.Column="3" Text="{Binding Model}" />
+                                                    <TextBlock Grid.Column="4" Classes="mono" Text="{Binding AddressText}" />
+                                                    <TextBlock Grid.Column="5" Text="{Binding MountedText}" />
+                                                    <TextBlock Grid.Column="6" Text="{Binding StateText}" FontWeight="SemiBold"
+                                                               Foreground="{Binding StateColor}" />
+                                                    <Button Grid.Column="7" Classes="Small" HorizontalAlignment="Right"
+                                                            Content="{Binding ToggleText}" Command="{Binding ToggleCommand}"
+                                                            IsVisible="{Binding CanToggle}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </DockPanel>
+
+        <!-- ==================== 二次确认弹窗 ==================== -->
+        <Grid IsVisible="{Binding IsConfirming}">
+            <Border Background="#80000000" />
+
+            <Border Width="460" Margin="24"
+                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Padding="24,20"
+                    CornerRadius="{DynamicResource SemiBorderRadiusLarge}"
+                    Background="{DynamicResource SemiColorBackground1}"
+                    BorderBrush="{DynamicResource SemiColorBorder}"
+                    BorderThickness="1"
+                    BoxShadow="0 12 40 #33000000">
+                <StackPanel Spacing="20">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Left" Width="36" Height="36" Margin="0,0,14,0"
+                                VerticalAlignment="Top"
+                                CornerRadius="{DynamicResource SemiBorderRadiusFull}"
+                                Background="{DynamicResource SemiColorDangerLight}">
+                            <PathIcon Data="{DynamicResource SemiIconAlertTriangle}" Width="16" Height="16"
+                                      Foreground="{DynamicResource SemiColorDanger}" />
+                        </Border>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{Binding Confirmation.Title, FallbackValue=''}" FontSize="16" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                            <TextBlock Text="{Binding Confirmation.Text, FallbackValue=''}" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SemiColorText1}" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                        <Button Classes="Tertiary" Content="取消" Command="{Binding CancelConfirmCommand}" />
+                        <Button Classes="Danger" Theme="{DynamicResource SolidButton}"
+                                Content="{Binding Confirmation.ConfirmText, FallbackValue=''}"
+                                Command="{Binding ConfirmCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

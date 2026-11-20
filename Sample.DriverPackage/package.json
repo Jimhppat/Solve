@@ -5,5 +5,8 @@
   "author": "Solve",
   "sdkVersion": 1,
   "entryAssembly": "Sample.DriverPackage.dll",
-  "entryType": "Sample.DriverPackage.SampleDriverPackage"
+  "entryType": "Sample.DriverPackage.SampleDriverPackage",
+  "drivers": [
+    { "id": "sample.power", "name": "示例电源", "category": "PowerAndLoad", "manufacturer": "Solve", "model": "示例" }
+  ]
 }

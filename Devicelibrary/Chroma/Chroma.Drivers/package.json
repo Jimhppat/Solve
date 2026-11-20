@@ -5,5 +5,8 @@
   "author": "Solve",
   "sdkVersion": 1,
   "entryAssembly": "Chroma.Drivers.dll",
-  "entryType": "Chroma.Drivers.ChromaDriverPackage"
+  "entryType": "Chroma.Drivers.ChromaDriverPackage",
+  "drivers": [
+    { "id": "chroma.62015b-15-90", "name": "Chroma 62015B-15-90", "category": "PowerAndLoad", "manufacturer": "Chroma", "model": "62015B-15-90" }
+  ]
 }

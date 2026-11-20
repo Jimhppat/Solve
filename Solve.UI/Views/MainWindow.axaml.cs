@@ -15,6 +15,10 @@ public partial class MainWindow : Window
     private readonly Dictionary<BusDevicesViewModel, BusModulesWindow> _moduleWindows = [];
     private BusConsoleViewModel? _busConsole;
 
+    // 驱动库窗口全程序只有一个：驱动库影响所有总线，不属于某个模块配置窗口
+    private DeviceLibraryViewModel? _driverLibrary;
+    private DriverLibraryWindow? _driverLibraryWindow;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -36,6 +40,14 @@ public partial class MainWindow : Window
 
         if (_busConsole is not null)
             _busConsole.ModuleWindowRequested += OnModuleWindowRequested;
+
+        if (_driverLibrary is not null)
+            _driverLibrary.OpenRequested -= OnDriverLibraryRequested;
+
+        _driverLibrary = (DataContext as MainViewModel)?.DeviceLibrary;
+
+        if (_driverLibrary is not null)
+            _driverLibrary.OpenRequested += OnDriverLibraryRequested;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -46,7 +58,32 @@ public partial class MainWindow : Window
             _busConsole = null;
         }
 
+        if (_driverLibrary is not null)
+        {
+            _driverLibrary.OpenRequested -= OnDriverLibraryRequested;
+            _driverLibrary = null;
+        }
+
         base.OnClosed(e);
+    }
+
+    // 驱动库同样用非模态的从属窗口（理由同模块配置窗口：不能挡住「紧急停止」）。
+    // 从属于主窗口而不是发起请求的模块配置窗口：那个窗口关闭时驱动库不应跟着关闭，进行中的信任、导入不被打断
+    private void OnDriverLibraryRequested(object? sender, EventArgs e)
+    {
+        if (_driverLibraryWindow is { } existing)
+        {
+            if (existing.WindowState == WindowState.Minimized)
+                existing.WindowState = WindowState.Normal;
+            existing.Activate();
+            return;
+        }
+
+        var window = new DriverLibraryWindow { DataContext = _driverLibrary };
+        FitToScreen(window, 0.8);
+        _driverLibraryWindow = window;
+        window.Closed += (_, _) => _driverLibraryWindow = null;
+        window.Show(this);
     }
 
     // 模块配置用非模态的从属窗口：模态会锁住主窗口，标题栏的「紧急停止」就点不到了。
@@ -62,7 +99,7 @@ public partial class MainWindow : Window
         }
 
         var window = new BusModulesWindow { DataContext = page };
-        FitToScreen(window);
+        FitToScreen(window, 0.9);
         _moduleWindows.Add(page, window);
         window.Closed += (_, _) =>
         {
@@ -74,19 +111,18 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 模块配置窗口取主窗口所在屏幕工作区（不含任务栏）的 90%：各种分辨率下都完整可见，仍可手动最大化
+    /// 从属窗口取主窗口所在屏幕工作区（不含任务栏）的一定比例：各种分辨率下都完整可见，仍可手动最大化。
+    /// 模块配置取 90%；驱动库取 80%，叠在模块配置之上时露出边缘，看得出下面还有窗口
     /// </summary>
-    private void FitToScreen(Window window)
+    private void FitToScreen(Window window, double screenFraction)
     {
-        const double ScreenFraction = 0.9;
-
         if (Screens.ScreenFromWindow(this) is not { } screen)
             return;
 
         // WorkingArea 是物理像素，窗口尺寸是与 DPI 无关的逻辑像素，按屏幕缩放换算
         var area = screen.WorkingArea;
-        window.Width = Math.Max(window.MinWidth, area.Width / screen.Scaling * ScreenFraction);
-        window.Height = Math.Max(window.MinHeight, area.Height / screen.Scaling * ScreenFraction);
+        window.Width = Math.Max(window.MinWidth, area.Width / screen.Scaling * screenFraction);
+        window.Height = Math.Max(window.MinHeight, area.Height / screen.Scaling * screenFraction);
     }
 
     // 自绘系统按钮：ElementRole 只负责 Win32 命中测试（贴靠布局、悬停语义），

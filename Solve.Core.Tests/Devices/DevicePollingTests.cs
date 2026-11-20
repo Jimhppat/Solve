@@ -261,7 +261,11 @@ public sealed class DevicePollingTests : IAsyncLifetime
     {
         public IReadOnlyList<DriverBinding> Get(BusId id) => id == busId ? bindings : [];
 
+        public int CountByDriver(DriverId driver) => bindings.Count(b => b.Device.Driver == driver);
+
         public Task RefreshAsync(BusId id, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public event EventHandler<BusId>? Changed { add { } remove { } }
     }
 
     private DriverBinding Bind(BusId busId, int address)

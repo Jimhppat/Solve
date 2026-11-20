@@ -75,9 +75,13 @@ public partial class App : Application
                     if (_host.Devices is { } devices)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDevices(devices));
 
-                    // 设置页的设备库卡片：查看驱动包状态，确认或撤销第三方驱动包
+                    // 驱动库（从模块配置窗口打开）：扫描、导入、信任驱动包，启停驱动
                     if (_host.DeviceLibrary is { } library)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachDeviceLibrary(library));
+
+                    // 设置页的驱动库卡片：查看与修改驱动库目录（重启后生效）
+                    if (_host.LibraryLocation is { } location)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachLibraryLocation(location));
 
                     if (_host.BusService is not null)
                     {

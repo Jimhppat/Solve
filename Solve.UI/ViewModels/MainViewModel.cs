@@ -31,7 +31,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public MainViewModel()
     {
         MasterConsole = new MasterConsoleViewModel(openRuntimeLog: () => SelectedNavIndex = RuntimeLogNavIndex);
-        BusConsole = new BusConsoleViewModel();
+        DeviceLibrary = new DeviceLibraryViewModel();
+        BusConsole = new BusConsoleViewModel { DeviceLibrary = DeviceLibrary };
         Topology = new TopologyViewModel();
         RuntimeLog = new RuntimeLogViewModel();
         Settings = new SettingsViewModel(onLogDirectoryChanged: OnLogDirectoryChanged);
@@ -61,6 +62,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 设备拓扑页。由组合根在配置库就绪后接入拓扑服务，设计器中不可编辑
     /// </summary>
     public TopologyViewModel Topology { get; }
+
+    /// <summary>
+    /// 驱动库（扫描、导入、信任驱动包，启停驱动）。不在侧栏导航中，从模块配置窗口的「驱动库」按钮打开独立窗口
+    /// </summary>
+    public DeviceLibraryViewModel DeviceLibrary { get; }
 
     /// <summary>
     /// 运行日志页。由组合根接入日志源，设计器中为空列表
@@ -127,7 +133,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             TopologyNavIndex => Topology,
             RuntimeLogNavIndex => RuntimeLog,
             SettingsNavIndex => Settings,
-            _ => MasterConsole // 后续诊断（3）页面在此接入对应子 ViewModel
+            _ => MasterConsole // 后续报文诊断（3）页面在此接入对应子 ViewModel
         };
     }
 
@@ -139,12 +145,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 接入总线挂载设备服务（总线页的设备页）。须在 UI 线程上调用。
     /// </summary>
-    public void AttachDevices(IDeviceService devices) => BusConsole.AttachDevices(devices);
+    public void AttachDevices(IDeviceService devices)
+    {
+        BusConsole.AttachDevices(devices);
+        DeviceLibrary.AttachDevices(devices);
+    }
 
     /// <summary>
-    /// 接入设备库（设置页的「设备库」卡片）。须在 UI 线程上调用。
+    /// 接入驱动库。须在 UI 线程上调用。
     /// </summary>
-    public void AttachDeviceLibrary(IDeviceLibrary library) => Settings.DeviceLibrary.Attach(library);
+    public void AttachDeviceLibrary(IDeviceLibrary library) => DeviceLibrary.Attach(library);
+
+    /// <summary>
+    /// 接入驱动库目录设置（设置页的「驱动库」卡片）。须在 UI 线程上调用。
+    /// </summary>
+    public void AttachLibraryLocation(IDeviceLibraryLocation location) => Settings.AttachLibraryLocation(location);
 
     /// <summary>
     /// 接入孪生状态库（主控台显示区）。须在 UI 线程上调用，只能调用一次。

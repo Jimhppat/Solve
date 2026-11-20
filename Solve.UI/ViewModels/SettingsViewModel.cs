@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Logging;
 using Solve.Core.Domain.Common;
 
@@ -34,7 +35,7 @@ public enum SettingsSaveState
 }
 
 /// <summary>
-/// 系统设置页。页面上的修改只在点「保存」时统一生效；目前包含运行日志的存储路径、保存天数与单个文件上限。
+/// 系统设置页。页面上的修改只在点「保存」时统一生效；包含运行日志的存储路径、保存天数与单个文件上限，以及驱动库目录（重启后生效）。
 /// </summary>
 /// <remarks>
 /// <para>保存前先检查新设置会删除哪些日志文件：有要删的就停在 <see cref="SettingsSaveState.AwaitingConfirmation"/>，
@@ -54,6 +55,8 @@ public sealed class SettingsViewModel : ViewModelBase
     private SettingsSaveState _state = SettingsSaveState.Idle;
     private PendingSave? _pending;
     private bool _startupFallbackResolved;
+    private IDeviceLibraryLocation? _library;
+    private string _libraryDirectoryInput = string.Empty;
 
     /// <summary>
     /// XAML 设计器使用：未接入任何设置，保存不可用
@@ -72,11 +75,6 @@ public sealed class SettingsViewModel : ViewModelBase
     }
 
     public string PageTitle => "系统设置";
-
-    /// <summary>
-    /// 「设备库」卡片。启用、撤销驱动包是即时操作（重启后生效），不随页面的「保存」一起提交。
-    /// </summary>
-    public DeviceLibraryViewModel DeviceLibrary { get; } = new();
 
     /// <summary>
     /// 保存页面上的全部设置
@@ -211,6 +209,72 @@ public sealed class SettingsViewModel : ViewModelBase
         RaiseCommandsChanged();
     }
 
+    // ==================== 驱动库 ====================
+
+    /// <summary>
+    /// 已接入驱动库目录设置（设计器中、配置库不可用时为 false）
+    /// </summary>
+    public bool IsLibraryAvailable => _library is not null;
+
+    /// <summary>
+    /// 输入框中的驱动库目录，点「保存」后保存，重启程序后生效
+    /// </summary>
+    public string LibraryDirectoryInput
+    {
+        get => _libraryDirectoryInput;
+        set
+        {
+            if (SetProperty(ref _libraryDirectoryInput, value ?? string.Empty))
+                OnInputChanged();
+        }
+    }
+
+    /// <summary>
+    /// 本次运行正在扫描的目录
+    /// </summary>
+    public string? CurrentLibraryDirectory => _library?.CurrentDirectory;
+
+    /// <summary>
+    /// 已保存的目录与本次运行使用的不同：说明重启后才生效
+    /// </summary>
+    public string? LibraryRestartNotice => _library is { } library
+                                           && !string.Equals(library.NextDirectory, library.CurrentDirectory, StringComparison.OrdinalIgnoreCase)
+        ? $"已保存为 {library.NextDirectory}，重启程序后生效；本次运行仍扫描 {library.CurrentDirectory}"
+        : null;
+
+    public bool HasLibraryRestartNotice => LibraryRestartNotice is not null;
+
+    /// <summary>
+    /// 启动时保存的驱动库目录不可用、本次运行改用默认目录的原因
+    /// </summary>
+    public string? LibraryFallback => _library?.StartupFallbackReason;
+
+    public bool HasLibraryFallback => LibraryFallback is not null;
+
+    /// <summary>
+    /// 接入驱动库目录设置。须在 UI 线程上调用。
+    /// </summary>
+    public void AttachLibraryLocation(IDeviceLibraryLocation location)
+    {
+        _library = location ?? throw new ArgumentNullException(nameof(location));
+
+        // 程序回填，不算用户改动
+        _libraryDirectoryInput = location.NextDirectory;
+        OnPropertyChanged(nameof(LibraryDirectoryInput));
+        OnPropertyChanged(nameof(IsLibraryAvailable));
+        OnPropertyChanged(nameof(CurrentLibraryDirectory));
+        OnPropertyChanged(nameof(LibraryFallback));
+        OnPropertyChanged(nameof(HasLibraryFallback));
+        RaiseLibraryNoticeChanged();
+        RaiseCommandsChanged();
+    }
+
+    private void RaiseLibraryNoticeChanged()
+    {
+        OnPropertyChanged(nameof(LibraryRestartNotice));
+        OnPropertyChanged(nameof(HasLibraryRestartNotice));
+    }
+
     /// <summary>
     /// 视图上的操作（打开文件夹、选择文件夹）失败时显示原因
     /// </summary>
@@ -238,6 +302,13 @@ public sealed class SettingsViewModel : ViewModelBase
         if (retention.IsFailure)
         {
             ReportError(retention.Error.Message);
+            return;
+        }
+
+        // 同样不把留空当作恢复默认：要用默认目录就填写或浏览到默认目录，保存时识别为"跟随默认"
+        if (_library is not null && _libraryDirectoryInput.Trim().Length == 0)
+        {
+            ReportError("驱动库目录不能为空");
             return;
         }
 
@@ -317,6 +388,23 @@ public sealed class SettingsViewModel : ViewModelBase
                 ? "设置已保存"
                 : $"设置已保存，已删除 {saved.Deleted.FileCount} 个日志文件";
             _onLogDirectoryChanged?.Invoke(saved.Directory);
+
+            // 驱动库目录只在改了时保存：它在下次启动时生效，与日志设置互不影响
+            if (_library is { } library
+                && !string.Equals(_libraryDirectoryInput.Trim(), library.NextDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                var libraryResult = await library.SaveAsync(_libraryDirectoryInput, CancellationToken.None);
+                if (libraryResult.IsFailure)
+                {
+                    ReportError($"日志设置已保存，但驱动库目录没有保存：{libraryResult.Error.Message}");
+                    return;
+                }
+
+                _libraryDirectoryInput = libraryResult.Value;
+                OnPropertyChanged(nameof(LibraryDirectoryInput));
+                RaiseLibraryNoticeChanged();
+                SaveMessage += "；驱动库目录重启程序后生效";
+            }
         }
         finally
         {
