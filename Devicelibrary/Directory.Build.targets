@@ -22,6 +22,16 @@
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(DriverPackageId)', '^[a-z0-9._-]{1,64}$'))"
            Text="无法从 $(_DriverManifest) 读出有效的包标识（只能含小写字母、数字、'.'、'-'、'_'，最长 64 个字符，且须写在 drivers 之前）。" />
 
+    <!--
+        输出目录会被整体删除重建。若它与源码目录重名（如源码放在 Devicelibrary/acme/、包标识也是 acme），
+        删除的就是源码本身：输出目录里出现项目文件或源文件时一律停止，宁可编译失败也不删源码。
+    -->
+    <ItemGroup>
+      <_DriverPackageOutputSource Include="$(DriverPackageOutput)/**/*.csproj;$(DriverPackageOutput)/**/*.cs" />
+    </ItemGroup>
+    <Error Condition="'@(_DriverPackageOutputSource)' != ''"
+           Text="驱动包输出目录 $(DriverPackageOutput) 里有源码（@(_DriverPackageOutputSource->'%(Filename)%(Extension)')），已停止，未删除任何文件：源码目录不能与包标识 $(DriverPackageId) 同名，请把源码放在「厂家目录/项目目录」下（见 Devicelibrary/README.md）。" />
+
     <ItemGroup>
       <_DriverPackageFile Include="$(TargetPath)" />
       <_DriverPackageFile Include="$(_DriverManifest)" />

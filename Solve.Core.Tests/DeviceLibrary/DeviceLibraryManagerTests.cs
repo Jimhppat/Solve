@@ -427,19 +427,111 @@ public sealed class DeviceLibraryManagerTests : IDisposable
         Assert.Equal("sample.drivers", Assert.Single(imported.Value).Directory);
     }
 
-    [Fact]
-    public async Task SourceDirectories_AreSkipped_NotReportedInvalid()
+    /// <summary>
+    /// 在驱动库里放一个驱动源码项目（项目文件 + 清单 + 编译输出），模拟 Devicelibrary/Chroma/Chroma.Drivers
+    /// </summary>
+    private string AddSourceProject(string relativeDirectory, string? manifestJson = null, string id = "sample.drivers")
     {
-        // 驱动源码与驱动包放在同一个根目录：厂家目录 / 项目目录 / *.csproj，根部没有清单
-        var project = Directory.CreateDirectory(Path.Combine(Root, "Chroma", "Chroma.Drivers")).FullName;
-        File.WriteAllText(Path.Combine(project, "Chroma.Drivers.csproj"), "<Project />");
-        File.WriteAllText(Path.Combine(project, "package.json"), "{}");
+        var project = Directory.CreateDirectory(Path.Combine(Root, relativeDirectory)).FullName;
+        File.WriteAllText(Path.Combine(project, Path.GetFileName(project) + ".csproj"), "<Project />");
+        File.WriteAllText(Path.Combine(project, "Driver.cs"), "// 源码");
+        File.WriteAllText(Path.Combine(project, SdkInfo.ManifestFileName), manifestJson ?? JsonSerializer.Serialize(new
+        {
+            id,
+            name = "示例驱动包",
+            version = "1.0.0",
+            author = "Solve",
+            sdkVersion = SdkInfo.MajorVersion,
+            entryAssembly = SampleAssembly,
+            entryType = SampleEntryType,
+            drivers = SampleDrivers,
+        }));
+
+        // 编译输出里也有一份清单与程序集：扫描不能把它当成驱动包或第二个源码项目
+        AddPackage("net10.0", id: id, parent: Path.Combine(project, "bin", "Debug"));
+        return project;
+    }
+
+    [Fact]
+    public async Task SourceProject_WithBuiltPackage_IsNotListedSeparately()
+    {
+        AddSourceProject(Path.Combine("Chroma", "Chroma.Drivers"));
         AddPackage("sample.drivers");
 
         var package = Assert.Single((await LoadAsync()).Packages);
 
         Assert.Equal("sample.drivers", package.Directory);
         Assert.Equal(DriverPackageStatus.PendingApproval, package.Status);
+        Assert.False(package.IsSource);
+    }
+
+    [Fact]
+    public async Task SourceProject_WithoutBuiltPackage_IsReportedNotBuilt_AndCannotBeApproved()
+    {
+        // 只运行主程序不会编译驱动项目：源码在、驱动包不在，扫描必须说清楚，而不是显示"暂无驱动包"
+        AddSourceProject(Path.Combine("Chroma", "Chroma.Drivers"));
+        var library = await LoadAsync();
+
+        var source = Assert.Single(library.Packages);
+
+        Assert.Equal(DriverPackageStatus.NotBuilt, source.Status);
+        Assert.True(source.IsSource);
+        Assert.Equal(("sample.drivers", "Chroma/Chroma.Drivers"), (source.Id, source.Directory));
+        Assert.Contains("Chroma.Drivers.csproj", source.Problem);
+        Assert.Equal(SamplePower, Assert.Single(source.Drivers).Id);
+        Assert.False(source.CanApprove || source.CanIgnore || source.CanRevoke);
+        Assert.Empty(library.Drivers);
+
+        var refused = await library.ApproveAsync(source.Id, source.Fingerprint, CancellationToken.None);
+        Assert.Equal(DeviceLibraryErrors.PackageNotFoundCode, refused.Error.Code);
+    }
+
+    [Fact]
+    public async Task SourceProject_DirectlyUnderRoot_IsSource_NotInvalidPackage()
+    {
+        // 项目直接放在根目录下一层（根部同时有清单与项目文件）：仍是源码，不按驱动包读取其中的 bin / obj
+        AddSourceProject("Acme.Drivers");
+
+        var source = Assert.Single((await LoadAsync()).Packages);
+
+        Assert.Equal((DriverPackageStatus.NotBuilt, "Acme.Drivers"), (source.Status, source.Directory));
+    }
+
+    [Fact]
+    public async Task SourceProject_WithInvalidManifest_IsReportedInvalid()
+    {
+        AddSourceProject(Path.Combine("Chroma", "Chroma.Drivers"), manifestJson: "{}");
+
+        var source = Assert.Single((await LoadAsync()).Packages);
+
+        Assert.Equal(DriverPackageStatus.Invalid, source.Status);
+        Assert.True(source.IsSource);
+        Assert.Equal("Chroma/Chroma.Drivers", source.Directory);
+        Assert.Contains("drivers", source.Problem);
+    }
+
+    [Fact]
+    public async Task ProjectsWithoutManifest_AreNotReported()
+    {
+        // 测试项目等没有清单的项目不是驱动项目
+        var tests = Directory.CreateDirectory(Path.Combine(Root, "Chroma", "Chroma.Drivers.Tests")).FullName;
+        File.WriteAllText(Path.Combine(tests, "Chroma.Drivers.Tests.csproj"), "<Project />");
+
+        Assert.Empty((await LoadAsync()).Packages);
+    }
+
+    [Fact]
+    public async Task Rescan_AfterBuild_ReplacesNotBuiltWithPendingPackage()
+    {
+        AddSourceProject(Path.Combine("Chroma", "Chroma.Drivers"));
+        var library = await LoadAsync();
+        Assert.Equal(DriverPackageStatus.NotBuilt, Assert.Single(library.Packages).Status);
+
+        AddPackage("sample.drivers");
+        var rescanned = await library.RescanAsync(CancellationToken.None);
+
+        var package = Assert.Single(rescanned.Value);
+        Assert.Equal((DriverPackageStatus.PendingApproval, "sample.drivers"), (package.Status, package.Directory));
     }
 
     [Fact]

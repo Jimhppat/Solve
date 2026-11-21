@@ -52,6 +52,12 @@ public enum DriverPackageStatus
     /// 操作员选择忽略这个版本：不再作为"新发现"提示，内容一变又会回到待确认；仍可随时信任
     /// </summary>
     Ignored = 9,
+
+    /// <summary>
+    /// 驱动库目录下的驱动源码项目（项目目录里有 package.json 与 *.csproj）还没有编译出驱动包：
+    /// 不是驱动包，不能信任；编译该项目后驱动包自动输出到驱动库，重新扫描即可看到
+    /// </summary>
+    NotBuilt = 10,
 }
 
 /// <summary>
@@ -89,7 +95,7 @@ public sealed record DriverEntryInfo(
 /// 设备库中一个驱动包的快照
 /// </summary>
 /// <param name="Id">包标识（清单中的 id）；清单无法读取时为目录名</param>
-/// <param name="Directory">包所在目录名（相对设备库根目录）</param>
+/// <param name="Directory">包所在目录名（相对设备库根目录）；驱动源码项目为相对路径，'/' 分隔，如 "Chroma/Chroma.Drivers"</param>
 /// <param name="Fingerprint">包内全部文件的 SHA-256 指纹（十六进制），信任时按它记忆；清单无法读取时可能为空串</param>
 /// <param name="Problem">需要操作员注意的说明（非正常状态的原因、本次运行仍在使用旧版本等），没有时为 null</param>
 /// <param name="Drivers">清单声明的驱动；清单无效时为空</param>
@@ -133,6 +139,11 @@ public sealed record DriverPackageInfo(
     /// 可以逐个启用 / 停用其中的驱动
     /// </summary>
     public bool CanToggleDrivers => IsInUse;
+
+    /// <summary>
+    /// 这一项是驱动库里的驱动源码项目，不是驱动包（<see cref="DriverPackageStatus.NotBuilt"/>，或源码清单无效）
+    /// </summary>
+    public bool IsSource { get; init; }
 }
 
 /// <summary>

@@ -18,8 +18,40 @@ internal sealed record ScannedPackage(
     IReadOnlyDictionary<string, byte[]> Files);
 
 /// <summary>
-/// 读取设备库目录下的每个子目录作为一个驱动包。只读文件，不加载任何代码。
+/// 驱动库目录下的一个驱动源码项目（项目目录里同时有 package.json 与 *.csproj）。只读清单，不编译、不加载代码。
 /// </summary>
+/// <param name="RelativeDirectory">项目目录相对驱动库根目录的路径，'/' 分隔，如 "Chroma/Chroma.Drivers"</param>
+/// <param name="ProjectFile">项目文件名，如 "Chroma.Drivers.csproj"</param>
+/// <param name="Manifest">源码中的清单；无效时为 null，原因见 <paramref name="Problems"/></param>
+internal sealed record SourceProject(
+    string RelativeDirectory,
+    string ProjectFile,
+    PackageManifest? Manifest,
+    IReadOnlyList<string> Problems);
+
+/// <summary>
+/// 一次扫描驱动库的结果：驱动包（根目录下的一级子目录）与驱动源码项目（源码目录中带清单的项目）
+/// </summary>
+internal sealed record LibraryScan(IReadOnlyList<ScannedPackage> Packages, IReadOnlyList<SourceProject> Sources)
+{
+    public static LibraryScan Empty { get; } = new([], []);
+}
+
+/// <summary>
+/// 读取设备库目录：根目录下的每个一级子目录是一个驱动包；驱动源码目录不当作驱动包，只读出其中驱动项目的清单，
+/// 用来报告"源码还没有编译出驱动包"。只读文件，不加载任何代码。
+/// </summary>
+/// <remarks>
+/// 目录约定（与 Devicelibrary/Directory.Build.targets 一致）：
+/// <code>
+/// 驱动库根目录/
+///   chroma.drivers/              ← 驱动包：根部有 package.json 与入口程序集，目录名建议等于包标识（编译时自动产出）
+///   Chroma/                      ← 驱动源码（厂家目录）：下面有 *.csproj，扫描时不当作驱动包
+///     Chroma.Drivers/            ← 驱动项目：*.csproj + package.json，扫描时核对是否已编译出同一包标识的驱动包
+///     Chroma.Drivers.Tests/      ← 没有 package.json 的项目（测试等）不参与扫描
+///   .import-xxxx/                ← '.' 开头：导入用的临时目录，跳过
+/// </code>
+/// </remarks>
 internal static class PackageScanner
 {
     /// <summary>
@@ -39,40 +71,53 @@ internal static class PackageScanner
     public const char ReservedPrefix = '.';
 
     /// <summary>
-    /// 判断"根目录下没有清单的子目录是不是驱动源码"时向下查找项目文件的深度：厂家目录 / 项目目录 / *.csproj
+    /// 在源码目录中向下查找项目文件的深度（0 为源码目录本身）：厂家目录 / 项目目录 / *.csproj 为 1，再多留一层余量
     /// </summary>
     private const int SourceProbeDepth = 2;
 
-    public static IReadOnlyList<ScannedPackage> Scan(string rootDirectory, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// 源码中清单文件的大小上限：清单只有几百字节，超过说明放错了文件，不读入内存
+    /// </summary>
+    private const long MaxSourceManifestBytes = 1024 * 1024;
+
+    private const string ProjectFilePattern = "*.csproj";
+
+    public static LibraryScan Scan(string rootDirectory, CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(rootDirectory))
-            return [];
+            return LibraryScan.Empty;
 
-        return Directory.EnumerateDirectories(rootDirectory)
-            .Where(d => !Path.GetFileName(d).StartsWith(ReservedPrefix))
-            .Where(d => !IsSourceDirectory(d))
-            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
-            .Select(d => ScanPackage(d, cancellationToken))
-            .ToList();
+        var packages = new List<ScannedPackage>();
+        var sources = new List<SourceProject>();
+        foreach (var directory in Directory.EnumerateDirectories(rootDirectory)
+                     .Where(d => !Path.GetFileName(d).StartsWith(ReservedPrefix))
+                     .OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (IsSourceDirectory(directory))
+                sources.AddRange(FindSourceProjects(rootDirectory, directory, cancellationToken));
+            else
+                packages.Add(ScanPackage(directory, cancellationToken));
+        }
+
+        return new LibraryScan(packages, sources);
     }
 
     /// <summary>
-    /// 驱动源码目录（驱动库与源码放在同一个根目录时，如 Devicelibrary/Chroma）：根部没有清单、下面有项目文件。
-    /// 跳过它们，既不报"无效"，也不去读其中的 bin / obj（文件多、体积大）。根部有清单的一律按驱动包处理。
+    /// 驱动源码目录（驱动库与源码放在同一个根目录时，如 Devicelibrary/Chroma）：根部直接有项目文件，
+    /// 或根部没有清单、下面几层内有项目文件。驱动包只含程序集与清单，绝不会带项目文件。
+    /// 源码目录不当作驱动包读取（不读其中的 bin / obj，文件多、体积大），只由 <see cref="FindSourceProjects"/> 读出清单。
     /// </summary>
     internal static bool IsSourceDirectory(string directory)
     {
-        if (File.Exists(Path.Combine(directory, SdkInfo.ManifestFileName)))
-            return false;
-
         try
         {
-            return Directory.EnumerateFiles(directory, "*.csproj", new EnumerationOptions
-            {
-                RecurseSubdirectories = true,
-                MaxRecursionDepth = SourceProbeDepth,
-                IgnoreInaccessible = true,
-            }).Any();
+            if (Directory.EnumerateFiles(directory, ProjectFilePattern).Any())
+                return true;
+            if (File.Exists(Path.Combine(directory, SdkInfo.ManifestFileName)))
+                return false;
+
+            return EnumerateProjectFiles(directory).Any();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -80,6 +125,73 @@ internal static class PackageScanner
             return false;
         }
     }
+
+    /// <summary>
+    /// 源码目录中的驱动项目：同一目录里既有 *.csproj 又有 package.json。没有清单的项目（测试项目等）不是驱动项目，不报告。
+    /// </summary>
+    internal static IReadOnlyList<SourceProject> FindSourceProjects(string rootDirectory, string sourceDirectory, CancellationToken cancellationToken)
+    {
+        List<string> projectDirectories;
+        try
+        {
+            projectDirectories = EnumerateProjectFiles(sourceDirectory)
+                .Select(path => Path.GetDirectoryName(path)!)
+                .Where(dir => !IsHidden(Path.GetRelativePath(rootDirectory, dir)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(dir => File.Exists(Path.Combine(dir, SdkInfo.ManifestFileName)))
+                .OrderBy(dir => dir, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            var relative = Path.GetRelativePath(rootDirectory, sourceDirectory).Replace('\\', '/');
+            return [new SourceProject(relative, "-", null, [$"读取驱动源码目录失败：{ex.Message}"])];
+        }
+
+        var projects = new List<SourceProject>(projectDirectories.Count);
+        foreach (var directory in projectDirectories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            projects.Add(ReadSourceProject(rootDirectory, directory));
+        }
+
+        return projects;
+    }
+
+    private static SourceProject ReadSourceProject(string rootDirectory, string projectDirectory)
+    {
+        var relative = Path.GetRelativePath(rootDirectory, projectDirectory).Replace('\\', '/');
+        string projectFile;
+        byte[] manifestBytes;
+        try
+        {
+            projectFile = Directory.EnumerateFiles(projectDirectory, ProjectFilePattern)
+                .Select(Path.GetFileName)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .First()!;
+
+            var manifestPath = Path.Combine(projectDirectory, SdkInfo.ManifestFileName);
+            if (new FileInfo(manifestPath).Length > MaxSourceManifestBytes)
+                return new SourceProject(relative, projectFile, null, [$"{SdkInfo.ManifestFileName} 超过 {MaxSourceManifestBytes / 1024} KB，不像是驱动包清单。"]);
+
+            manifestBytes = File.ReadAllBytes(manifestPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new SourceProject(relative, "-", null, [$"读取驱动项目失败：{ex.Message}"]);
+        }
+
+        var manifest = PackageManifest.TryParse(manifestBytes, out var problems);
+        return new SourceProject(relative, projectFile, manifest, problems);
+    }
+
+    private static IEnumerable<string> EnumerateProjectFiles(string directory)
+        => Directory.EnumerateFiles(directory, ProjectFilePattern, new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            MaxRecursionDepth = SourceProbeDepth,
+            IgnoreInaccessible = true,
+        });
 
     /// <summary>
     /// 把一个目录作为驱动包读取（目录名即包所在目录名）。只读文件，不加载任何代码。
