@@ -190,4 +190,40 @@ public sealed class SdkContractTests
     [Fact]
     public void Failed_DefaultsToTransient()
         => Assert.Equal(FailureKind.Transient, new ExchangeStep.Failed("干扰").Kind);
+
+    // ---------- 设备仿真（可选能力） ----------
+
+    /// <summary>
+    /// 仿真是追加的可选接口：驱动契约本身不变，SDK 1 的已有驱动不实现它也照常编译、加载
+    /// </summary>
+    [Fact]
+    public void Simulation_IsOptional_DriverContractUnchanged()
+    {
+        Assert.Empty(typeof(IDeviceDriver).GetInterfaces());
+        Assert.Equal(
+            ["CreateSession", "get_Info"],
+            typeof(IDeviceDriver).GetMethods().Select(m => m.Name).Order(StringComparer.Ordinal));
+        Assert.False(typeof(IDeviceSimulatorProvider).IsAssignableFrom(typeof(IDeviceDriver)));
+        Assert.Equal(1, SdkInfo.MajorVersion);
+    }
+
+    [Fact]
+    public void SimulatedDevice_ContractShape()
+    {
+        var respond = Assert.Single(typeof(ISimulatedDevice).GetMethods());
+        Assert.Equal(typeof(byte[]), respond.ReturnType);
+        Assert.Equal(typeof(ReadOnlySpan<byte>), Assert.Single(respond.GetParameters()).ParameterType);
+        Assert.Equal(typeof(ISimulatedDevice), typeof(IDeviceSimulatorProvider).GetMethod(nameof(IDeviceSimulatorProvider.CreateSimulator))!.ReturnType);
+        Assert.Equal(64 * 1024, ISimulatedDevice.MaxResponseLength);
+    }
+
+    [Fact]
+    public void SampleDriver_ProvidesSimulator_ForEachModule()
+    {
+        IDeviceDriver driver = new Sample.DriverPackage.SamplePowerDriver();
+        var provider = Assert.IsAssignableFrom<IDeviceSimulatorProvider>(driver);
+        var context = new DeviceContext(5, LinkKind.Serial, new DeviceParameters(new Dictionary<string, string> { ["settle-ms"] = "0" }));
+
+        Assert.NotSame(provider.CreateSimulator(context), provider.CreateSimulator(context));
+    }
 }

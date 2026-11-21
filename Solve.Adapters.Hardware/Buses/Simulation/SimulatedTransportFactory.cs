@@ -13,6 +13,14 @@ public sealed class SimulatedTransportFactory : IBusTransportFactory
 {
     // 按 BusId 保留最近一次创建的实例，供测试/联调界面做故障注入。数量受总线配置数约束，不会无界增长。
     private readonly ConcurrentDictionary<BusId, SimulatedTransport> _created = new();
+    private readonly Func<BusId, Func<ReadOnlyMemory<byte>, byte[]?>>? _responderFor;
+
+    /// <param name="responderFor">按总线给出模拟设备（见 <see cref="SimulatedTransport.Responder"/>），每次创建通道时调用；
+    /// 为 null 时通道没有模拟设备，任何请求都得不到应答。应答委托不得抛异常：它在总线 I/O 路径上同步执行</param>
+    public SimulatedTransportFactory(Func<BusId, Func<ReadOnlyMemory<byte>, byte[]?>>? responderFor = null)
+    {
+        _responderFor = responderFor;
+    }
 
     public Result<IBusTransport> Create(BusDescriptor descriptor)
     {
@@ -27,7 +35,7 @@ public sealed class SimulatedTransportFactory : IBusTransportFactory
         if (descriptor is not (SerialBusDescriptor or TcpBusDescriptor))
             return Result<IBusTransport>.Failure(BusErrors.UnsupportedDescriptor(descriptor.GetType()));
 
-        var transport = new SimulatedTransport(descriptor.Id);
+        var transport = new SimulatedTransport(descriptor.Id) { Responder = _responderFor?.Invoke(descriptor.Id) };
         _created[descriptor.Id] = transport;
         return Result<IBusTransport>.Success(transport);
     }
