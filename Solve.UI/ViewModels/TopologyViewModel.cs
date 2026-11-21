@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Wiring;
 using Solve.Core.Domain.Common;
@@ -221,10 +222,11 @@ public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 接入接线运行视图（选中位置的接线面板；删除位置前提示会一并拆除的接线数）。须在 UI 线程上调用，只能调用一次。
     /// </summary>
-    public void AttachWiring(WiringInspector inspector)
+    /// <param name="commands">按位置下发命令；为 null 时接线面板不显示命令按钮</param>
+    public void AttachWiring(WiringInspector inspector, DeviceCommandService? commands = null)
     {
         ArgumentNullException.ThrowIfNull(inspector);
-        Wiring.Attach(inspector);
+        Wiring.Attach(inspector, commands);
         Wiring.ShowNode(_selectedItem?.Node);
     }
 

@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
+using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
@@ -170,9 +171,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// 接入接线运行视图：拓扑页的接线面板、主控台产品信息卡片的硬件状态。须在 UI 线程上调用，只能调用一次。
     /// </summary>
-    public void AttachWiring(WiringInspector wiring)
+    /// <param name="commands">按位置下发命令；为 null 时接线面板不显示命令按钮</param>
+    public void AttachWiring(WiringInspector wiring, DeviceCommandService? commands = null)
     {
-        Topology.AttachWiring(wiring);
+        Topology.AttachWiring(wiring, commands);
         MasterConsole.Twin.AttachWiring(wiring);
     }
 

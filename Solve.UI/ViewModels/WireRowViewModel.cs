@@ -1,9 +1,30 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Wiring;
 using Solve.Core.Domain.Topology;
 using Solve.Core.Domain.Wiring;
+using Solve.Device.Sdk;
 
 namespace Solve.UI.ViewModels;
+
+/// <summary>
+/// 接线行上的一个命令按钮
+/// </summary>
+public sealed class WireCommandViewModel(DeviceCommandOption option, RelayCommand command)
+{
+    public DeviceCommandOption Option { get; } = option;
+
+    public string Name => Option.Name;
+
+    /// <summary>
+    /// 高危命令用危险色按钮，每次执行前都要确认
+    /// </summary>
+    public bool IsHazardous => Option.Safety == CommandSafety.Hazardous;
+
+    public RelayCommand Command { get; } = command;
+}
 
 /// <summary>
 /// 接线面板中的一行：一路有效接线（本位置的，或继承自上级的）。配置部分不可变，健康度与读数由面板定时刷新。
@@ -17,10 +38,27 @@ public sealed class WireRowViewModel : ViewModelBase
     private string _readings = string.Empty;
 
     public WireRowViewModel(WireStatus status, Action<WireRowViewModel> onEdit, Action<WireRowViewModel> onRemove)
+        : this(status, onEdit, onRemove, [], (_, _) => { }, () => false)
+    {
+    }
+
+    /// <param name="commands">这路接线上可以从界面下发的命令</param>
+    /// <param name="onCommand">点了某条命令（由面板解析、过联锁、必要时请操作员确认）</param>
+    /// <param name="canCommand">当前能否下发命令（面板忙时禁用，防止重入）</param>
+    public WireRowViewModel(
+        WireStatus status,
+        Action<WireRowViewModel> onEdit,
+        Action<WireRowViewModel> onRemove,
+        IReadOnlyList<DeviceCommandOption> commands,
+        Action<WireRowViewModel, DeviceCommandOption> onCommand,
+        Func<bool> canCommand)
     {
         ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(onEdit);
         ArgumentNullException.ThrowIfNull(onRemove);
+        ArgumentNullException.ThrowIfNull(commands);
+        ArgumentNullException.ThrowIfNull(onCommand);
+        ArgumentNullException.ThrowIfNull(canCommand);
 
         Wire = status.Wire;
         IsOwn = !status.IsInherited;
@@ -29,6 +67,9 @@ public sealed class WireRowViewModel : ViewModelBase
         ChannelText = status.ChannelText;
         EditCommand = new RelayCommand(() => onEdit(this));
         RemoveCommand = new RelayCommand(() => onRemove(this));
+        Commands = commands
+            .Select(option => new WireCommandViewModel(option, new RelayCommand(() => onCommand(this, option), canCommand)))
+            .ToList();
         Apply(status);
     }
 
@@ -102,6 +143,25 @@ public sealed class WireRowViewModel : ViewModelBase
     public RelayCommand EditCommand { get; }
 
     public RelayCommand RemoveCommand { get; }
+
+    /// <summary>
+    /// 可以下发的命令按钮，如"打开输出"、"关闭输出"
+    /// </summary>
+    public IReadOnlyList<WireCommandViewModel> Commands { get; }
+
+    public bool HasCommands => Commands.Count > 0;
+
+    /// <summary>
+    /// 与当前可下发的命令是否一致（驱动被启用、停用或升级后命令会变）
+    /// </summary>
+    public bool HasSameCommands(IReadOnlyList<DeviceCommandOption> commands)
+        => commands.Count == Commands.Count && commands.Select((c, i) => c == Commands[i].Option).All(same => same);
+
+    public void RaiseCommandsChanged()
+    {
+        foreach (var command in Commands)
+            command.Command.RaiseCanExecuteChanged();
+    }
 
     /// <summary>
     /// 刷新健康度与读数（配置部分不变）

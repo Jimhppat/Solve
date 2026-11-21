@@ -4,10 +4,12 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Wiring;
 using Solve.Core.Domain.Common;
 using Solve.Core.Domain.Topology;
 using Solve.Core.Domain.Wiring;
+using Solve.Device.Sdk;
 
 namespace Solve.UI.ViewModels;
 
@@ -52,7 +54,10 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     /// </summary>
     private const int PreviewLines = 5;
 
+    private readonly CancellationTokenSource _lifetime = new();
     private WiringInspector? _inspector;
+    private DeviceCommandService? _commands;
+    private DeviceCommandPlan? _pendingCommand;
     private TopologyNode? _node;
     private DispatcherTimer? _timer;
     private bool _disposed;
@@ -90,6 +95,8 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         SaveEditCommand = new AsyncRelayCommand(SaveEditAsync, () => CanEdit && _editing is not null);
         ConfirmRemoveCommand = new AsyncRelayCommand(ConfirmRemoveAsync, () => CanEdit && _pendingRemove is not null);
         CancelRemoveCommand = new RelayCommand(() => PendingRemove = null);
+        ConfirmCommandCommand = new AsyncRelayCommand(ConfirmCommandAsync, () => CanCommand && _pendingCommand is not null);
+        CancelCommandCommand = new RelayCommand(() => PendingCommand = null);
     }
 
     // ==================== 显示 ====================
@@ -350,18 +357,55 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         ? $"拆除「{row.KindText}」{row.HardwareText} 的接线？拆除后这路通道与位置不再关联，现场的线不受影响。"
         : null;
 
+    // ==================== 命令确认 ====================
+
+    /// <summary>
+    /// 能否从接线行下发命令：已接入命令服务、面板空闲（执行期间禁用全部命令按钮，防止重入）
+    /// </summary>
+    public bool CanCommand => IsAvailable && !_busy && _commands is not null;
+
+    public AsyncRelayCommand ConfirmCommandCommand { get; }
+
+    public RelayCommand CancelCommandCommand { get; }
+
+    /// <summary>
+    /// 等待操作员确认的命令（高危命令；实机模式下的输出动作）
+    /// </summary>
+    public DeviceCommandPlan? PendingCommand
+    {
+        get => _pendingCommand;
+        private set
+        {
+            if (!SetProperty(ref _pendingCommand, value))
+                return;
+
+            OnPropertyChanged(nameof(IsCommandConfirmOpen));
+            OnPropertyChanged(nameof(CommandConfirmText));
+            OnPropertyChanged(nameof(IsPendingHazardous));
+            RaiseCommandsChanged();
+        }
+    }
+
+    public bool IsCommandConfirmOpen => _pendingCommand is not null;
+
+    public string? CommandConfirmText => _pendingCommand?.Describe();
+
+    public bool IsPendingHazardous => _pendingCommand?.Safety == CommandSafety.Hazardous;
+
     // ==================== 接入与显示 ====================
 
     /// <summary>
     /// 接入接线运行视图。须在 UI 线程上调用，只能调用一次。
     /// </summary>
-    public void Attach(WiringInspector inspector)
+    /// <param name="commands">按位置下发命令；为 null 时接线行不显示命令按钮</param>
+    public void Attach(WiringInspector inspector, DeviceCommandService? commands = null)
     {
         ArgumentNullException.ThrowIfNull(inspector);
         if (_inspector is not null)
             throw new InvalidOperationException("接线面板已接入接线服务");
 
         _inspector = inspector;
+        _commands = commands;
         inspector.Wiring.Changed += OnWiringChanged;
 
         // 健康度与读数按固定频率从内存快照刷新，限制界面重绘频率
@@ -381,6 +425,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         {
             CloseEditor();
             PendingRemove = null;
+            PendingCommand = null;
             Message = null;
         }
 
@@ -394,7 +439,14 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+            return;
+
         _disposed = true;
+
+        // 在途命令：总线事务随之取消（已发出的报文无法撤回，命令服务记为结果未知）
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         _timer?.Stop();
         _timer = null;
         if (_inspector is not null)
@@ -406,6 +458,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     private void Open(WiringEditorMode mode)
     {
         PendingRemove = null;
+        PendingCommand = null;
         SetPendingBatch(null, null);
         Message = null;
         _editing = null;
@@ -437,6 +490,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return;
 
         PendingRemove = null;
+        PendingCommand = null;
         SetPendingBatch(null, null);
         Message = null;
         _editing = row;
@@ -455,7 +509,114 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
         CloseEditor();
         Message = null;
+        PendingCommand = null;
         PendingRemove = row;
+    }
+
+    /// <summary>
+    /// 点了接线行上的命令：解析并过联锁；需要确认的先显示确认，其余直接执行。联锁不满足时显示原因。
+    /// </summary>
+    private async void RequestCommand(WireRowViewModel row, DeviceCommandOption option)
+    {
+        if (!CanCommand || _commands is not { } commands || _node is not { } node)
+            return;
+
+        CloseEditor();
+        PendingRemove = null;
+        PendingCommand = null;
+        Message = null;
+        var request = new DeviceCommandRequest(node.Id, row.Wire.Kind, row.Wire.Purpose, option.Key);
+
+        SetBusy(true);
+        Result<DeviceCommandPlan> plan;
+        try
+        {
+            // 解析要遍历接线所在位置的子树（十万级节点时需要数十毫秒），放到线程池
+            plan = await Task.Run(() => commands.Prepare(request));
+        }
+        catch (Exception ex)
+        {
+            // async void 的边界：异常不能逃逸，否则会触发全站安全跳闸
+            plan = Result<DeviceCommandPlan>.Failure(new Error("Command.Failed", ex.Message));
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+
+        // 期间换了位置或面板已关闭：作废
+        if (_disposed || _node?.Id != node.Id)
+            return;
+
+        if (plan.IsFailure)
+        {
+            ShowMessage(plan.Error.Message, isError: true);
+            return;
+        }
+
+        if (plan.Value.RequiresConfirmation)
+        {
+            PendingCommand = plan.Value;
+            return;
+        }
+
+        await ExecuteCommandAsync(plan.Value, confirmed: false);
+    }
+
+    private async Task ConfirmCommandAsync()
+    {
+        if (_pendingCommand is not { } plan)
+            return;
+
+        PendingCommand = null;
+        await ExecuteCommandAsync(plan, confirmed: true);
+    }
+
+    private async Task ExecuteCommandAsync(DeviceCommandPlan plan, bool confirmed)
+    {
+        if (_commands is not { } commands || _disposed)
+            return;
+
+        SetBusy(true);
+        Message = null;
+        try
+        {
+            Result<DeviceCommandResult> result;
+            try
+            {
+                var token = _lifetime.Token;
+                result = await Task.Run(() => commands.ExecuteAsync(plan, confirmed, token), token);
+            }
+            catch (OperationCanceledException)
+            {
+                // 面板关闭（程序退出）：不再更新界面
+                return;
+            }
+            catch (Exception ex)
+            {
+                // 命令在 UI 线程上发起：异常不能逃逸，否则会触发全站安全跳闸
+                result = Result<DeviceCommandResult>.Failure(new Error("Command.Failed", ex.Message));
+            }
+
+            if (result.IsFailure)
+            {
+                ShowMessage(result.Error.Message, isError: true);
+                return;
+            }
+
+            ShowMessage($"已执行「{plan.CommandName}」：{plan.ScopeText}，耗时 {result.Value.Elapsed.TotalMilliseconds:0} ms");
+        }
+        finally
+        {
+            if (!_disposed)
+                SetBusy(false);
+        }
+    }
+
+    private IReadOnlyList<DeviceCommandOption> ListCommands(Wire wire)
+    {
+        // 写参数类命令需要输入设定值，SDK 尚未声明命令参数，界面暂不提供
+        return _commands?.ListCommands(wire).Where(c => c.Safety != CommandSafety.Parameter).ToList() ?? [];
     }
 
     private async Task AddAsync()
@@ -654,7 +815,9 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        Rows = inspector.Inspect(node.Id).Select(s => new WireRowViewModel(s, Edit, Remove)).ToList();
+        Rows = inspector.Inspect(node.Id)
+            .Select(s => new WireRowViewModel(s, Edit, Remove, ListCommands(s.Wire), RequestCommand, () => CanCommand))
+            .ToList();
     }
 
     /// <summary>
@@ -668,7 +831,8 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         try
         {
             var statuses = inspector.Inspect(node.Id);
-            if (statuses.Count != _rows.Count || statuses.Where((s, i) => s.Wire.Id != _rows[i].Id).Any())
+            if (statuses.Count != _rows.Count
+                || statuses.Where((s, i) => s.Wire.Id != _rows[i].Id || !_rows[i].HasSameCommands(ListCommands(s.Wire))).Any())
             {
                 RebuildRows();
                 return;
@@ -766,6 +930,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     {
         _busy = busy;
         OnPropertyChanged(nameof(CanEdit));
+        OnPropertyChanged(nameof(CanCommand));
         RaiseCommandsChanged();
     }
 
@@ -785,6 +950,9 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         ConfirmBatchCommand.RaiseCanExecuteChanged();
         SaveEditCommand.RaiseCanExecuteChanged();
         ConfirmRemoveCommand.RaiseCanExecuteChanged();
+        ConfirmCommandCommand.RaiseCanExecuteChanged();
+        foreach (var row in _rows)
+            row.RaiseCommandsChanged();
     }
 
     // 后台线程：只投递

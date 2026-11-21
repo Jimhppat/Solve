@@ -310,22 +310,11 @@ public sealed class DevicePollingService : IAsyncDisposable
     private async Task<ExchangeOutcome> PollAsync(BusRuntime runtime, DriverBinding binding, CancellationToken cancellationToken)
     {
         var label = $"{binding.Device} 轮询";
-        IExchange exchange;
+        var session = binding.Session!;
         try
         {
-            exchange = binding.Session!.BeginPoll();
-        }
-        catch (Exception ex)
-        {
-            // SDK 约定：驱动抛异常即通信状态未知。这一步在事务外，由这里执行与事务内相同的安全跳闸
-            _logger.LogCritical(ex, "{Label}：驱动 {Driver} 开始轮询时抛出异常，安全跳闸总线", label, binding.Device.Driver);
-            runtime.SafetyTrip($"驱动 {binding.Device.Driver} 抛出异常 {ex.GetType().Name}");
-            return new ExchangeOutcome.BusUnavailable(BusErrors.SafetyTripped($"驱动 {binding.Device.Driver} 抛出异常"));
-        }
-
-        try
-        {
-            return await _executor.ExecuteAsync(runtime, exchange, label, cancellationToken).ConfigureAwait(false);
+            // BeginPoll 在事务内调用：与命令执行共用通道锁，保证同一会话的调用串行（SDK 约定）
+            return await _executor.ExecuteAsync(runtime, session.BeginPoll, label, cancellationToken).ConfigureAwait(false);
         }
         catch (ObjectDisposedException)
         {
