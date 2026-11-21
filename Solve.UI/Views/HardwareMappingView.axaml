@@ -1,0 +1,181 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             xmlns:views="using:Solve.UI.Views"
+             mc:Ignorable="d" d:DesignWidth="1400" d:DesignHeight="800"
+             x:Class="Solve.UI.Views.HardwareMappingView"
+             x:DataType="vm:HardwareMappingViewModel"
+             x:CompileBindings="True"
+             Background="#0D000000">
+    <!-- 硬件映射页：左边位置树（一个位置即拓扑的一个节点），中间选中位置的接线，右边总线上可映射的硬件通道。
+         只显示层级、位置编码、模块名与通道名，系统 Id 不显示；不放说明性小字，结果在操作后出现 -->
+
+    <Design.DataContext>
+        <vm:HardwareMappingViewModel />
+    </Design.DataContext>
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #14000000, 0 0 1 0 #33000000</BoxShadows>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <BoxShadows x:Key="ConsolePanelShadow">0 4 16 0 #66000000, 0 0 0 1 #1AFFFFFF</BoxShadows>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Border.panel">
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground1}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusLarge}" />
+            <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
+        </Style>
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText0}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.message">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Border.badge">
+            <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ListBox.hardware > ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
+
+        <Border Grid.Row="0" Classes="panel" Padding="20,10">
+            <TextBlock Classes="section" Text="{Binding PageTitle}" />
+        </Border>
+
+        <!-- 未接入或尚未建档 -->
+        <Border Grid.Row="1" Classes="panel" Padding="20,16" IsVisible="{Binding ShowEmpty}">
+            <TextBlock Text="{Binding EmptyText}" Foreground="{DynamicResource SemiColorText1}" />
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,460,1.2*" ColumnSpacing="20" IsVisible="{Binding !ShowEmpty}">
+
+            <!-- 左：位置树 -->
+            <Border Grid.Column="0" Classes="panel" Padding="20,16">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14"
+                                  Foreground="{DynamicResource SemiColorPrimary}" />
+                        <TextBlock Classes="section" Text="位置" />
+                    </StackPanel>
+                    <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
+                    <TreeView Grid.Row="2"
+                              ItemsSource="{Binding Roots}"
+                              SelectedItem="{Binding SelectedItem, Mode=TwoWay}">
+                        <TreeView.Styles>
+                            <Style Selector="TreeViewItem" x:DataType="vm:TopologyTreeItemViewModel">
+                                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                            </Style>
+                        </TreeView.Styles>
+                        <TreeView.ItemTemplate>
+                            <TreeDataTemplate x:DataType="vm:TopologyTreeItemViewModel" ItemsSource="{Binding Children}">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{Binding Header}" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Name}" IsVisible="{Binding HasName}"
+                                               Foreground="{DynamicResource SemiColorText2}" VerticalAlignment="Center" />
+                                    <Border Classes="badge" IsVisible="{Binding IsDisabled}">
+                                        <TextBlock Text="停用" Foreground="{DynamicResource SemiColorDanger}" />
+                                    </Border>
+                                </StackPanel>
+                            </TreeDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                </Grid>
+            </Border>
+
+            <!-- 中：选中位置的接线（上级继承的在前）；批量接线、修改、拆除、命令 -->
+            <Border Grid.Column="1" Classes="panel" Padding="20,16">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PathIcon Data="{DynamicResource SemiIconBranch}" Width="14" Height="14"
+                                  Foreground="{DynamicResource SemiColorPrimary}" />
+                        <TextBlock Classes="section" Text="{Binding SelectedTitle, FallbackValue='请选择位置', TargetNullValue='请选择位置'}" />
+                    </StackPanel>
+                    <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
+                    <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <views:WiringPanel DataContext="{Binding Wiring}" Margin="0,0,12,0" />
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- 右：总线上可映射的硬件通道。选中位置后点"关联"即把这路通道接到该位置；已映射的点"定位"跳到它的位置 -->
+            <Border Grid.Column="2" Classes="panel" Padding="20,16">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="12">
+                    <DockPanel>
+                        <CheckBox DockPanel.Dock="Right" Content="只看未映射" IsChecked="{Binding UnmappedOnly}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PathIcon Data="{DynamicResource SemiIconLink}" Width="14" Height="14"
+                                      Foreground="{DynamicResource SemiColorPrimary}" />
+                            <TextBlock Classes="section" Text="硬件通道" />
+                        </StackPanel>
+                    </DockPanel>
+                    <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
+
+                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                        <TextBlock Grid.Column="0" Text="关联用途" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource SemiColorText1}" />
+                        <TextBox Grid.Column="1" AutomationProperties.Name="关联用途" PlaceholderText="如 VBAT"
+                                 MaxLength="{Binding MaxPurposeLength}" Text="{Binding PurposeInput}" />
+                    </Grid>
+
+                    <TextBlock Grid.Row="3" Classes="message" Classes.error="{Binding IsError}"
+                               IsVisible="{Binding HasMessage}" Text="{Binding Message}" />
+
+                    <TextBlock Grid.Row="4" Text="没有可映射的通道：请先在总线监控的模块配置里添加模块并启用通道"
+                               TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText1}"
+                               IsVisible="{Binding HasNoHardware}" />
+
+                    <ListBox Grid.Row="4" Classes="hardware" ItemsSource="{Binding Hardware}" IsVisible="{Binding HasHardware}"
+                             Background="Transparent">
+                        <ListBox.DataTemplates>
+                            <DataTemplate DataType="vm:MappingModuleViewModel">
+                                <TextBlock Text="{Binding Header}" FontWeight="SemiBold" Margin="4,14,4,6"
+                                           Foreground="{DynamicResource SemiColorText0}" />
+                            </DataTemplate>
+                            <DataTemplate DataType="vm:MappingChannelViewModel">
+                                <Grid ColumnDefinitions="1.2*,56,1.6*,Auto" ColumnSpacing="12" Margin="16,6,4,6">
+                                    <TextBlock Grid.Column="0" Text="{Binding NameText}" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding NameText}"
+                                               Foreground="{DynamicResource SemiColorText0}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding KindText}" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SemiColorText1}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding MappedText}" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding MappedText}"
+                                               Foreground="{DynamicResource SemiColorText1}" />
+                                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                                        <Button Content="关联" Padding="10,2" Classes="Primary"
+                                                IsVisible="{Binding IsUnmapped}" Command="{Binding MapCommand}" />
+                                        <Button Content="定位" Padding="10,2"
+                                                IsVisible="{Binding IsMapped}" Command="{Binding LocateCommand}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.DataTemplates>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

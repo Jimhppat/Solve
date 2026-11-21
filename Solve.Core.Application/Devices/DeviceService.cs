@@ -75,6 +75,10 @@ public sealed class DeviceService : IDeviceService
         if (parameters.IsFailure)
             return Result<IReadOnlyList<DeviceDescriptor>>.Failure(parameters.Error);
 
+        // 通道配置必须在驱动的通道能力之内（通用模块：每组都要有名称、功能、数量）
+        if (ModuleChannels.Resolve(driver, request.Channels) is { IsFailure: true } channels)
+            return Result<IReadOnlyList<DeviceDescriptor>>.Failure(channels.Error);
+
         var expanded = DeviceBatch.Expand(request with { Parameters = parameters.Value }, driver);
         if (expanded.IsFailure)
             return expanded;
@@ -119,9 +123,15 @@ public sealed class DeviceService : IDeviceService
                 $"{driver.Name}的地址必须在 [{driver.MinAddress}, {driver.MaxAddress}] 之间，当前为 {device.Address}。"));
         }
 
-        // 换驱动不能让已有接线悄悄指向不存在或功能不同的通道：先拆线再换
-        if (driver is not null && _wiring?.CheckDriverChange(device.Id, driver) is { IsFailure: true } wiringCheck)
-            return wiringCheck;
+        // 通道配置必须在驱动的通道能力之内；换驱动或改通道配置不能让已有接线悄悄指向不存在、已停用或功能不同的通道：先拆线再改。
+        // 驱动未加载时无法核对，原样保留（不让历史记录变成无法编辑）
+        if (driver is not null)
+        {
+            if (ModuleChannels.Resolve(driver, device.Channels) is { IsFailure: true } channels)
+                return Result.Failure(channels.Error);
+            if (_wiring?.CheckChannelChange(device, driver) is { IsFailure: true } wiringCheck)
+                return wiringCheck;
+        }
 
         // 驱动未加载时无法核对参数声明，原样保留已保存的值（同样是为了不让历史记录无法编辑）
         var parameters = NormalizeParameters(device.Driver, device.Parameters, allowUnverified: true);

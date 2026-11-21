@@ -485,7 +485,7 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
     private DriverItemViewModel DriverOf(DeviceDescriptor device)
         => _allDrivers.FirstOrDefault(d => d.Driver.Id == device.Driver)
            ?? new DriverItemViewModel(new DriverDescriptor(device.Driver, UnknownDriverName, HardwareCategory.General,
-               string.Empty, DeviceDescriptor.MinAddress, DeviceDescriptor.MaxAddress));
+               string.Empty, DeviceDescriptor.MinAddress, DeviceDescriptor.MaxAddress)) { IsUnknown = true };
 
     /// <summary>
     /// 驱动地址范围内最小的空闲地址：现场多数按 1、2、3… 顺序拨码；全部占用时仍填下限，由添加时的冲突检查报错

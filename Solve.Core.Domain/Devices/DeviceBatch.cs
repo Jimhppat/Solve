@@ -16,6 +16,11 @@ public sealed record DeviceBatchRequest(BusId BusId, DriverId Driver, string Nam
     /// 模块参数，同一批的每个模块都使用这组值
     /// </summary>
     public ParameterValues Parameters { get; init; } = ParameterValues.Empty;
+
+    /// <summary>
+    /// 通道配置，同一批的每个模块都使用这组设置
+    /// </summary>
+    public ModuleChannelConfig Channels { get; init; } = ModuleChannelConfig.Empty;
 }
 
 /// <summary>
@@ -69,6 +74,7 @@ public static class DeviceBatch
             {
                 Remark = remark,
                 Parameters = request.Parameters,
+                Channels = request.Channels,
             };
 
             // 同一批的名称规则相同，名称过长等错误每个模块都会重复报，只报一次

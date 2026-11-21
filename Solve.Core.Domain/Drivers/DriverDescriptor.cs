@@ -18,9 +18,19 @@ public sealed record DriverDescriptor(
     public const int MaxNameLength = 64;
 
     /// <summary>
-    /// 可以单独接线的通道，按组声明；没有通道的驱动（如通用模块）不能接到拓扑上
+    /// 驱动声明的通道能力（可以单独接线的端子），按组声明。每台模块再按自己的通道配置选择启用哪几路（见 <see cref="Devices.ModuleChannels"/>）
     /// </summary>
     public IReadOnlyList<ChannelGroup> Channels { get; init; } = [];
+
+    /// <summary>
+    /// 通道组名称的最大长度（手工定义的通道组同样适用）
+    /// </summary>
+    public const int MaxChannelNameLength = 32;
+
+    /// <summary>
+    /// 通道由模块实例手工定义（通用模块：没有协议，系统不知道它有哪些端子）。为 true 时 <see cref="Channels"/> 为空
+    /// </summary>
+    public bool AllowsManualChannels { get; init; }
 
     /// <summary>
     /// 按组标识查通道组

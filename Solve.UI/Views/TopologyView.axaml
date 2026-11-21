@@ -3,7 +3,6 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Solve.UI.ViewModels"
-             xmlns:views="using:Solve.UI.Views"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="760"
              x:Class="Solve.UI.Views.TopologyView"
              x:DataType="vm:TopologyViewModel"
@@ -195,7 +194,7 @@
                 </StackPanel>
                 <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
 
-                <Grid Grid.Row="2" ColumnDefinitions="*,440" ColumnSpacing="20">
+                <Grid Grid.Row="2" ColumnDefinitions="*,380" ColumnSpacing="20">
 
                     <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="8">
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -230,7 +229,7 @@
                     </Grid>
 
                     <!-- 选中节点的属性：名称、序号、启用、下级数量一起保存；需要确认时确认框出现在保存按钮的位置。
-                         下面是它的接线；内容可能超过一屏，整列可滚动 -->
+                         接线在"硬件映射"页配置；内容可能超过一屏，整列可滚动 -->
                     <Border Grid.Column="1"
                             BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1,0,0,0"
                             Padding="20,0,0,0">
@@ -308,8 +307,6 @@
                                         Command="{Binding SaveNodeCommand}" />
                             </StackPanel>
                         </StackPanel>
-
-                        <views:WiringPanel DataContext="{Binding Wiring}" />
                        </StackPanel>
                       </ScrollViewer>
                     </Border>

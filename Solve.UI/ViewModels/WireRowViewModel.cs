@@ -171,6 +171,7 @@ public sealed class WireRowViewModel : ViewModelBase
         (HealthText, HealthColor) = status.Health switch
         {
             WireHealth.Ready => ("就绪", "#10B981"),
+            WireHealth.NoProtocol => ("无协议", "#94A3B8"),
             WireHealth.Waiting => ("等待", "#94A3B8"),
             WireHealth.Fault => ("故障", "#EF4444"),
             WireHealth.Invalid => ("无效", "#EF4444"),

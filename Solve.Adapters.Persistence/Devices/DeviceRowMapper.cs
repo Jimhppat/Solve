@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Solve.Core.Domain.Buses;
 using Solve.Core.Domain.Common;
@@ -27,6 +28,7 @@ internal static class DeviceRowMapper
 
             // ParameterValues 按标识排序，序列化结果稳定，便于直接查库比对
             Parameters = JsonSerializer.Serialize(device.Parameters.ToDictionary(p => p.Key, p => p.Value)),
+            Channels = SerializeChannels(device.Channels),
             CreatedAt = timestamp,
             UpdatedAt = timestamp,
         };
@@ -56,11 +58,13 @@ internal static class DeviceRowMapper
             errors.Add(DeviceErrors.StorageCorruptRow("driver_id", $"'{row.DriverId}' 不是有效的驱动标识"));
 
         var parameters = ParseParameters(row.Parameters, errors);
+        var channels = ParseChannels(row.Channels, errors);
 
         var device = new DeviceDescriptor(id, busId, driver, row.Name, address)
         {
             Remark = row.Remark,
             Parameters = parameters,
+            Channels = channels,
         };
 
         // 解析无误后再做领域校验：库文件可能被手工修改成越界值
@@ -94,5 +98,81 @@ internal static class DeviceRowMapper
         }
 
         return new ParameterValues(values!);
+    }
+
+    // ==================== 通道配置 ====================
+
+    // 只写有值的字段：有驱动的模块通常只有 key + enabled / aliases，库里一眼能看出改了什么
+    private static readonly JsonSerializerOptions ChannelJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private sealed class ChannelGroupDto
+    {
+        public string? Key { get; set; }
+
+        public string? Name { get; set; }
+
+        public int? Kind { get; set; }
+
+        public int? Count { get; set; }
+
+        public int[]? Enabled { get; set; }
+
+        public Dictionary<string, string>? Aliases { get; set; }
+    }
+
+    private static string SerializeChannels(ModuleChannelConfig config)
+        => JsonSerializer.Serialize(config.Groups.Select(g => new ChannelGroupDto
+        {
+            Key = g.Key,
+            Name = g.Name,
+            Kind = g.Kind is { } kind ? (int)kind : null,
+            Count = g.Count,
+            Enabled = g.Enabled?.ToArray(),
+            Aliases = g.Aliases.Count == 0 ? null : g.Aliases.ToDictionary(p => p.Key.ToString(CultureInfo.InvariantCulture), p => p.Value),
+        }).ToList(), ChannelJson);
+
+    private static ModuleChannelConfig ParseChannels(string json, List<Error> errors)
+    {
+        // 只接受"对象数组"；别名的键必须是通道号。手工改出来的其他形状一律视为损坏，不猜测含义
+        List<ChannelGroupDto?>? groups;
+        try
+        {
+            groups = JsonSerializer.Deserialize<List<ChannelGroupDto?>>(json, ChannelJson);
+        }
+        catch (JsonException ex)
+        {
+            errors.Add(DeviceErrors.StorageCorruptRow("channels", $"'{json}' 不是有效的通道配置：{ex.Message}"));
+            return ModuleChannelConfig.Empty;
+        }
+
+        if (groups is null || groups.Any(g => g?.Key is null))
+        {
+            errors.Add(DeviceErrors.StorageCorruptRow("channels", $"'{json}' 不是有效的通道配置"));
+            return ModuleChannelConfig.Empty;
+        }
+
+        var settings = new List<ChannelGroupSetting>(groups.Count);
+        foreach (var group in groups)
+        {
+            var aliases = new List<KeyValuePair<int, string>>();
+            foreach (var (key, alias) in group!.Aliases ?? [])
+            {
+                if (!int.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var index) || alias is null)
+                {
+                    errors.Add(DeviceErrors.StorageCorruptRow("channels", $"通道组 {group.Key} 的别名 '{key}' 无法解析"));
+                    return ModuleChannelConfig.Empty;
+                }
+
+                aliases.Add(new(index, alias));
+            }
+
+            settings.Add(new ChannelGroupSetting(group.Key!, group.Name, group.Kind is { } kind ? (ChannelKind)kind : null, group.Count, group.Enabled, aliases));
+        }
+
+        return new ModuleChannelConfig(settings);
     }
 }

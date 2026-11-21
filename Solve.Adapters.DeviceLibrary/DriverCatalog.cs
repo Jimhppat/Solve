@@ -24,7 +24,11 @@ public sealed class DriverCatalog : IDriverCatalog
     [
         new(GenericModule, "通用模块", HardwareCategory.General,
             "不含通信协议，只登记模块名称与地址",
-            DeviceDescriptor.MinAddress, DeviceDescriptor.MaxAddress),
+            DeviceDescriptor.MinAddress, DeviceDescriptor.MaxAddress)
+        {
+            // 没有协议，不知道硬件有哪些端子：通道由每台模块自己定义，接线后没有读数与命令
+            AllowsManualChannels = true,
+        },
     ];
 
     private readonly Dictionary<DriverId, DriverDescriptor> _byId;

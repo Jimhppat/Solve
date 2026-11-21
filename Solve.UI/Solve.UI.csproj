@@ -52,6 +52,10 @@
         <DependentUpon>LevelFilterPanel.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\HardwareMappingView.axaml.cs">
+        <DependentUpon>HardwareMappingView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
       <Compile Update="Views\WiringPanel.axaml.cs">
         <DependentUpon>WiringPanel.axaml</DependentUpon>
         <SubType>Code</SubType>

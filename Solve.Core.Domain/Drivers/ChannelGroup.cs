@@ -4,7 +4,7 @@ namespace Solve.Core.Domain.Drivers;
 /// 通道的功能（内核侧），决定一路通道能接到拓扑的什么用途上。与 SDK 的 ChannelFunction 一一对应，映射只在设备库适配器中做一次。
 /// </summary>
 /// <remarks>
-/// 数值写入配置库（接线表的 kind 列），已有成员的数值不得修改，新增只能追加。从 1 开始编号，default 为非法值。
+/// 数值写入配置库（接线表的 kind 列、模块通道配置），已有成员的数值不得修改，新增只能追加。从 1 开始编号，default 为非法值。
 /// </remarks>
 public enum ChannelKind
 {
@@ -41,6 +41,19 @@ public enum ChannelKind
 
 public static class ChannelKinds
 {
+    /// <summary>
+    /// 界面下拉的顺序
+    /// </summary>
+    public static IReadOnlyList<ChannelKind> All { get; } =
+    [
+        ChannelKind.PowerSupply,
+        ChannelKind.Load,
+        ChannelKind.Measure,
+        ChannelKind.Switch,
+        ChannelKind.Detect,
+        ChannelKind.Communication,
+    ];
+
     public static bool IsDefined(this ChannelKind kind) => kind is >= ChannelKind.PowerSupply and <= ChannelKind.Communication;
 
     public static string DisplayName(this ChannelKind kind) => kind switch
@@ -56,16 +69,60 @@ public static class ChannelKinds
 }
 
 /// <summary>
-/// 驱动声明的一组通道：功能相同、编号 1..<see cref="Count"/> 连续。一路通道用（<see cref="Key"/>，通道号）定位。
+/// 一组通道：功能相同、编号 1..<see cref="Count"/> 连续。一路通道用（<see cref="Key"/>，通道号）定位。
 /// </summary>
-/// <param name="Key">驱动内唯一的稳定标识，接线按它找回通道</param>
+/// <remarks>
+/// <para>两种来源：驱动声明的是通道<b>能力</b>（<see cref="EnabledIndices"/> 为 null、没有别名）；
+/// 按模块实例的通道配置解析后（见 <see cref="Devices.ModuleChannels"/>）带上启用的通道与别名，接线只能用启用的通道。</para>
+/// </remarks>
+/// <param name="Key">组标识，接线按它找回通道</param>
 /// <param name="Name">界面显示名，如"输出"</param>
 public sealed record ChannelGroup(string Key, string Name, ChannelKind Kind, int Count)
 {
+    /// <summary>
+    /// 一组通道的数量上限，与 SDK 的 ChannelGroupInfo.MaxCount 一致
+    /// </summary>
+    public const int MaxCount = 256;
+
+    private static readonly IReadOnlyDictionary<int, string> NoAliases = new Dictionary<int, string>();
+
+    /// <summary>
+    /// 启用的通道号（升序）；null 表示全部启用
+    /// </summary>
+    public IReadOnlySet<int>? EnabledIndices { get; init; }
+
+    /// <summary>
+    /// 通道别名（通道号 → 名称），如 3 → "3# 压合气缸"
+    /// </summary>
+    public IReadOnlyDictionary<int, string> Aliases { get; init; } = NoAliases;
+
+    /// <summary>
+    /// 通道号在 1..<see cref="Count"/> 之内（不论是否启用）
+    /// </summary>
     public bool Contains(int index) => index >= 1 && index <= Count;
 
     /// <summary>
-    /// 一路通道的显示名：单路组只显示组名，多路组加通道号，如"继电器 3"
+    /// 这路通道存在且已启用，可以接线
     /// </summary>
-    public string ChannelName(int index) => Count == 1 ? Name : $"{Name} {index}";
+    public bool IsEnabled(int index) => Contains(index) && (EnabledIndices is null || EnabledIndices.Contains(index));
+
+    /// <summary>
+    /// 启用的通道号，升序
+    /// </summary>
+    public IEnumerable<int> Enabled()
+    {
+        for (var index = 1; index <= Count; index++)
+        {
+            if (IsEnabled(index))
+                yield return index;
+        }
+    }
+
+    public int EnabledCount => EnabledIndices?.Count(Contains) ?? Count;
+
+    /// <summary>
+    /// 一路通道的显示名：有别名用别名；单路组只显示组名，多路组加通道号，如"继电器 3"
+    /// </summary>
+    public string ChannelName(int index)
+        => Aliases.TryGetValue(index, out var alias) ? alias : Count == 1 ? Name : $"{Name} {index}";
 }

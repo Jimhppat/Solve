@@ -30,6 +30,9 @@
         <DataTemplate DataType="vm:TopologyViewModel">
             <views:TopologyView />
         </DataTemplate>
+        <DataTemplate DataType="vm:HardwareMappingViewModel">
+            <views:HardwareMappingView />
+        </DataTemplate>
         <DataTemplate DataType="vm:RuntimeLogViewModel">
             <views:RuntimeLogView />
         </DataTemplate>
@@ -250,6 +253,12 @@
                                     <Grid ColumnDefinitions="40,*">
                                         <PathIcon Data="{DynamicResource SemiIconComponent}" />
                                         <TextBlock Grid.Column="1" Text="设备拓扑" />
+                                    </Grid>
+                                </ListBoxItem>
+                                <ListBoxItem ToolTip.Tip="硬件映射">
+                                    <Grid ColumnDefinitions="40,*">
+                                        <PathIcon Data="{DynamicResource SemiIconBranch}" />
+                                        <TextBlock Grid.Column="1" Text="硬件映射" />
                                     </Grid>
                                 </ListBoxItem>
                                 <ListBoxItem ToolTip.Tip="报文诊断" IsEnabled="False">

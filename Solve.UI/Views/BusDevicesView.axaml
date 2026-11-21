@@ -382,7 +382,7 @@
         <Grid IsVisible="{Binding IsEditOpen}">
             <Border Background="#80000000" />
 
-            <Border Width="440" Margin="24"
+            <Border Width="600" Margin="24"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
                     Padding="24,20"
                     CornerRadius="{DynamicResource SemiBorderRadiusLarge}"
@@ -408,7 +408,9 @@
                                 Content="保存" Command="{Binding SaveEditCommand}" />
                     </StackPanel>
 
-                    <StackPanel Spacing="14">
+                    <!-- 通道多时内容会超过一屏：表单区可滚动，标题与按钮固定 -->
+                    <ScrollViewer MaxHeight="620" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="14" Margin="0,0,12,0">
                         <StackPanel Classes="field">
                             <TextBlock Classes="field-label" Text="驱动" />
                             <ComboBox HorizontalAlignment="Stretch"
@@ -450,10 +452,82 @@
                                           ItemTemplate="{StaticResource ParameterFieldTemplate}" />
                         </StackPanel>
 
+                        <!-- 通道：这台模块实际启用哪几路、通道别名；通用模块在这里定义通道组。只有启用的通道能在拓扑页接线 -->
+                        <StackPanel Classes="field" Spacing="10" x:CompileBindings="True" IsVisible="{Binding EditForm.Channels.IsVisible}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Classes="Small" Content="添加通道组"
+                                        IsVisible="{Binding EditForm.Channels.IsManual}"
+                                        Command="{Binding EditForm.Channels.AddGroupCommand}" />
+                                <TextBlock Classes="field-label" Text="通道" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <ItemsControl ItemsSource="{Binding EditForm.Channels.Groups}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ChannelGroupFormViewModel">
+                                        <Border BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1"
+                                                CornerRadius="{DynamicResource SemiBorderRadiusSmall}"
+                                                Padding="12,10" Margin="0,0,0,10">
+                                            <StackPanel Spacing="10">
+                                                <!-- 有驱动：组名、功能、数量由驱动决定 -->
+                                                <DockPanel IsVisible="{Binding IsDeclared}">
+                                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                                        <Button Classes="Small Tertiary" Content="全部启用" Command="{Binding EnableAllCommand}" />
+                                                        <Button Classes="Small Tertiary" Content="全部停用" Command="{Binding DisableAllCommand}" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding DeclaredTitle}" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource SemiColorText0}" />
+                                                </DockPanel>
+
+                                                <!-- 通用模块：名称、功能、数量由操作员定义 -->
+                                                <Grid ColumnDefinitions="*,110,96,Auto" ColumnSpacing="8" IsVisible="{Binding IsManual}">
+                                                    <TextBox Grid.Column="0" Text="{Binding Name}" PlaceholderText="名称，如 继电器"
+                                                             AutomationProperties.Name="通道组名称" MaxLength="32" />
+                                                    <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                                                              AutomationProperties.Name="通道功能"
+                                                              ItemsSource="{Binding KindOptions}" SelectedItem="{Binding Kind}" />
+                                                    <NumericUpDown Grid.Column="2" AutomationProperties.Name="通道数量"
+                                                                   Increment="1" FormatString="0" ParsingNumberStyle="Integer" ClipValueToMinMax="True"
+                                                                   Minimum="1" Maximum="{Binding MaxCount}" Value="{Binding CountInput}" />
+                                                    <Button Grid.Column="3" Classes="Small Danger" Content="删除" Command="{Binding RemoveCommand}" />
+                                                </Grid>
+                                                <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsManual}">
+                                                    <Button Classes="Small Tertiary" Content="全部启用" Command="{Binding EnableAllCommand}" />
+                                                    <Button Classes="Small Tertiary" Content="全部停用" Command="{Binding DisableAllCommand}" />
+                                                </StackPanel>
+
+                                                <!-- 每路通道：启用 + 别名（留空用默认名） -->
+                                                <ItemsControl ItemsSource="{Binding Channels}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <UniformGrid Columns="2" />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:ChannelRowViewModel">
+                                                            <Grid ColumnDefinitions="Auto,32,*" ColumnSpacing="6" Margin="0,0,12,6">
+                                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}"
+                                                                          AutomationProperties.Name="启用" />
+                                                                <TextBlock Grid.Column="1" Classes="mono" Text="{Binding IndexText}"
+                                                                           VerticalAlignment="Center" />
+                                                                <TextBox Grid.Column="2" Text="{Binding Alias}" MaxLength="32"
+                                                                         AutomationProperties.Name="通道别名"
+                                                                         PlaceholderText="{Binding Placeholder}"
+                                                                         IsEnabled="{Binding IsEnabled}" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
                         <Border Classes="form-error" IsVisible="{Binding EditForm.HasError}">
                             <TextBlock Text="{Binding EditForm.ErrorMessage}" />
                         </Border>
                     </StackPanel>
+                    </ScrollViewer>
                 </DockPanel>
             </Border>
         </Grid>

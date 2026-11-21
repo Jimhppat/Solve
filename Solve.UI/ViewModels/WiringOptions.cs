@@ -21,7 +21,9 @@ public sealed class WiringGroupOption(ChannelGroup group)
 {
     public ChannelGroup Group { get; } = group;
 
-    public override string ToString() => $"{Group.Name}（{Group.Kind.DisplayName()}，{Group.Count} 路）";
+    public override string ToString() => Group.EnabledCount == Group.Count
+        ? $"{Group.Name}（{Group.Kind.DisplayName()}，{Group.Count} 路）"
+        : $"{Group.Name}（{Group.Kind.DisplayName()}，启用 {Group.EnabledCount}/{Group.Count} 路）";
 }
 
 /// <summary>
