@@ -26,6 +26,7 @@ public sealed class SamplePowerDriver : IDeviceDriver
     public const string OutputOnKey = "output.on";
     public const string OutputOffKey = "output.off";
     public const string SettleTimeKey = "settle-ms";
+    public const string OutputChannelKey = "output";
 
     /// <summary>
     /// 帧间隔：示例协议与 Modbus RTU 一样以 3.5 个字符的静默分隔帧
@@ -54,6 +55,12 @@ public sealed class SamplePowerDriver : IDeviceDriver
                 Minimum = 0,
                 Maximum = 2000,
             },
+        ],
+
+        // 单路输出：可以接到拓扑上作为供电
+        Channels =
+        [
+            new ChannelGroupInfo(OutputChannelKey, "输出", ChannelFunction.PowerSupply, Count: 1),
         ],
     };
 

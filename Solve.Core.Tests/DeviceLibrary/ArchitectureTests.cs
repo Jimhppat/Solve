@@ -53,6 +53,19 @@ public sealed class ArchitectureTests
             Assert.True(CategoryMap.TryMap(category, out _), $"SDK 分类 {category} 没有对应的内核分类");
     }
 
+    /// <summary>
+    /// 通道功能同理，且数值写进配置库（接线表的 kind 列），映射必须保持数值一致
+    /// </summary>
+    [Fact]
+    public void EverySdkChannelFunction_MapsToKernelKind_WithSameValue()
+    {
+        foreach (var function in Enum.GetValues<ChannelFunction>())
+        {
+            Assert.True(ChannelKindMap.TryMap(function, out var kind), $"SDK 通道功能 {function} 没有对应的内核功能");
+            Assert.Equal((int)function, (int)kind);
+        }
+    }
+
     [Fact]
     public void NoSolveAssembly_ReferencesProtocolOrDriverPackages()
     {

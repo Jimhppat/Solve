@@ -19,15 +19,19 @@ namespace Solve.Core.Application.Devices;
 public sealed class DeviceService : IDeviceService
 {
     private readonly IDeviceRepository _repository;
+    private readonly IDeviceWiring? _wiring;
     private readonly ILogger _logger;
 
+    /// <param name="wiring">接线（可选）：提供删除前的接线数，并拦截会让已有接线失效的换驱动</param>
     public DeviceService(
         IDeviceRepository repository,
         IDriverCatalog drivers,
         IDeviceBindings bindings,
         IModuleStatusSource statuses,
-        ILogger<DeviceService> logger)
+        ILogger<DeviceService> logger,
+        IDeviceWiring? wiring = null)
     {
+        _wiring = wiring;
         ArgumentNullException.ThrowIfNull(repository);
         ArgumentNullException.ThrowIfNull(drivers);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -51,6 +55,12 @@ public sealed class DeviceService : IDeviceService
 
     public Task<Result<int>> CountAsync(BusId busId, CancellationToken cancellationToken)
         => _repository.CountByBusAsync(busId, cancellationToken);
+
+    public int CountWires(IReadOnlyCollection<DeviceId> devices)
+    {
+        ArgumentNullException.ThrowIfNull(devices);
+        return _wiring?.CountWires(devices) ?? 0;
+    }
 
     public async Task<Result<IReadOnlyList<DeviceDescriptor>>> AddBatchAsync(
         DeviceBatchRequest request,
@@ -108,6 +118,10 @@ public sealed class DeviceService : IDeviceService
             return Result.Failure(DeviceErrors.InvalidField("Address",
                 $"{driver.Name}的地址必须在 [{driver.MinAddress}, {driver.MaxAddress}] 之间，当前为 {device.Address}。"));
         }
+
+        // 换驱动不能让已有接线悄悄指向不存在或功能不同的通道：先拆线再换
+        if (driver is not null && _wiring?.CheckDriverChange(device.Id, driver) is { IsFailure: true } wiringCheck)
+            return wiringCheck;
 
         // 驱动未加载时无法核对参数声明，原样保留已保存的值（同样是为了不让历史记录无法编辑）
         var parameters = NormalizeParameters(device.Driver, device.Parameters, allowUnverified: true);

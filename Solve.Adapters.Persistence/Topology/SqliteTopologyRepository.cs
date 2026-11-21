@@ -9,7 +9,7 @@ using Solve.Core.Domain.Topology;
 namespace Solve.Adapters.Persistence.Topology;
 
 /// <summary>
-/// 基于 topology_nodes 表（结构版本 v3）的设备拓扑仓储。
+/// 基于 topology_nodes 表（结构版本 v3）的设备拓扑仓储；保存时一并清理落点已删除的接线（topology_wires，v6）。
 /// </summary>
 /// <remarks>
 /// <para>快照语义：保存 = 单事务内"清空 + 全量写入"。快照替换天然支持重新编号、整棵子树搬迁、扩容缩容，
@@ -47,6 +47,13 @@ public sealed class SqliteTopologyRepository : ITopologyRepository
     private const string InsertSql = """
         INSERT INTO topology_nodes (id, parent_id, level, ordinal, address, name, enabled, created_at, updated_at)
         VALUES (@Id, @ParentId, @Level, @Ordinal, @Address, @Name, @Enabled, @CreatedAt, @UpdatedAt);
+        """;
+
+    // 接线随位置一起删除：只删落点已不在新快照中的接线，仍存在的位置 Id 不变、接线原样保留。
+    // 删除位置前界面已列出受影响的接线数并经操作员确认
+    private const string DeleteDetachedWiresSql = """
+        DELETE FROM topology_wires
+         WHERE node_id NOT IN (SELECT id FROM topology_nodes);
         """;
 
     private readonly SqliteDatabase _database;
@@ -104,6 +111,7 @@ public sealed class SqliteTopologyRepository : ITopologyRepository
         var now = _time.GetUtcNow().UtcDateTime.ToString("O");
         var added = 0;
         var changed = 0;
+        var removedWires = 0;
         List<TopologyNodeRow> removed;
 
         try
@@ -144,6 +152,8 @@ public sealed class SqliteTopologyRepository : ITopologyRepository
                 .ConfigureAwait(false);
             await connection.ExecuteAsync(_database.Command(InsertSql, cancellationToken, rows, transaction))
                 .ConfigureAwait(false);
+            removedWires = await connection.ExecuteAsync(_database.Command(DeleteDetachedWiresSql, cancellationToken, transaction: transaction))
+                .ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SqliteException ex)
@@ -163,6 +173,9 @@ public sealed class SqliteTopologyRepository : ITopologyRepository
                 string.Join("，", removed.Take(MaxLoggedRemovals).Select(r => $"{r.Address}[{r.Id}]")),
                 removed.Count > MaxLoggedRemovals ? $" 等（另有 {removed.Count - MaxLoggedRemovals} 个未列出）" : "");
         }
+
+        if (removedWires > 0)
+            _logger.LogWarning("设备拓扑删除位置时一并拆除了 {Count} 条接线", removedWires);
 
         return Result.Success();
     }

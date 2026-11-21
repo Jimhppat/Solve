@@ -1,0 +1,203 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:Solve.UI.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="420" d:DesignHeight="600"
+             x:Class="Solve.UI.Views.WiringPanel"
+             x:DataType="vm:WiringPanelViewModel"
+             x:CompileBindings="True">
+    <!-- 选中位置的接线：上级的接线（继承）在前、本位置的在后；单路接线、批量接线、修改与拆除。
+         只显示层级、位置编码、模块名与通道名，接线与模块的 Id 不显示；不放说明性小字，结果与确认在操作后出现 -->
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.message">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Border.notice">
+            <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorWarning}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="12,10" />
+        </Style>
+        <Style Selector="Border.notice.danger">
+            <Setter Property="Background" Value="{DynamicResource SemiColorDangerLight}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorDanger}" />
+        </Style>
+        <Style Selector="Border.wire">
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding" Value="0,8" />
+        </Style>
+        <Style Selector="Border.health">
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Styles>
+
+    <StackPanel Spacing="12" IsVisible="{Binding IsAvailable}">
+
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+                <Button Content="接线" Command="{Binding OpenSingleCommand}" />
+                <Button Content="批量接线" Command="{Binding OpenBatchCommand}" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <PathIcon Data="{DynamicResource SemiIconComponent}" Width="14" Height="14" VerticalAlignment="Center"
+                          Foreground="{DynamicResource SemiColorPrimary}" />
+                <TextBlock Text="接线" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"
+                           Foreground="{DynamicResource SemiColorText0}" />
+            </StackPanel>
+        </DockPanel>
+        <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+
+        <Border Classes="notice danger" IsVisible="{Binding HasLoadError}">
+            <TextBlock Text="{Binding LoadErrorText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+        </Border>
+
+        <TextBlock Classes="label" Text="未接线" IsVisible="{Binding IsUnwired}" />
+
+        <!-- 有效接线：上级的在前；只有本位置的接线可以修改、拆除 -->
+        <ItemsControl ItemsSource="{Binding Rows}" IsVisible="{Binding HasRows}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:WireRowViewModel">
+                    <Border Classes="wire">
+                        <StackPanel Spacing="4">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" IsVisible="{Binding IsOwn}">
+                                    <Button Content="修改" Padding="8,2" Command="{Binding EditCommand}" />
+                                    <Button Content="拆除" Padding="8,2" Classes="Danger" Command="{Binding RemoveCommand}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{Binding KindText}" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SemiColorText0}" />
+                                    <Border Classes="health" BorderBrush="{Binding HealthColor}" BorderThickness="1"
+                                            ToolTip.Tip="{Binding Problem}">
+                                        <TextBlock Text="{Binding HealthText}" Foreground="{Binding HealthColor}" />
+                                    </Border>
+                                    <TextBlock Text="{Binding SourceText}" IsVisible="{Binding IsInherited}" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SemiColorText1}" />
+                                </StackPanel>
+                            </DockPanel>
+                            <TextBlock Text="{Binding HardwareText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText1}" />
+                            <TextBlock Text="{Binding LabelText}" IsVisible="{Binding HasLabel}" Foreground="{DynamicResource SemiColorText1}" />
+                            <TextBlock Text="{Binding Readings}" IsVisible="{Binding HasReadings}" TextWrapping="Wrap"
+                                       FontFamily="Consolas, monospace" Foreground="{DynamicResource SemiColorText0}" />
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <TextBlock Classes="message" Classes.error="{Binding IsError}" IsVisible="{Binding HasMessage}" Text="{Binding Message}" />
+
+        <!-- 拆除确认 -->
+        <Border Classes="notice danger" IsVisible="{Binding IsRemoveConfirmOpen}">
+            <StackPanel Spacing="10">
+                <TextBlock Text="{Binding RemoveConfirmText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Content="取消" Command="{Binding CancelRemoveCommand}" />
+                    <Button Classes="Danger" Theme="{DynamicResource SolidButton}" Content="确认拆除" Command="{Binding ConfirmRemoveCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- 单路 / 批量接线表单 -->
+        <StackPanel Spacing="12" IsVisible="{Binding ShowChannelInputs}" IsEnabled="{Binding CanEdit}">
+            <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+            <TextBlock Classes="label" Text="没有可以接线的模块：模块的驱动需要声明通道" IsVisible="{Binding HasNoModules}" TextWrapping="Wrap" />
+
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12" IsVisible="{Binding IsBatch}">
+                <TextBlock Grid.Column="0" Classes="label" Text="接线范围" />
+                <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                          AutomationProperties.Name="接线范围"
+                          ItemsSource="{Binding LevelOptions}" SelectedItem="{Binding SelectedLevel}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                <TextBlock Grid.Column="0" Classes="label" Text="模块" />
+                <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                          AutomationProperties.Name="模块"
+                          ItemsSource="{Binding ModuleOptions}" SelectedItem="{Binding SelectedModule}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                <TextBlock Grid.Column="0" Classes="label" Text="通道" />
+                <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                          AutomationProperties.Name="通道"
+                          ItemsSource="{Binding GroupOptions}" SelectedItem="{Binding SelectedGroup}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12" IsVisible="{Binding ShowChannelIndex}">
+                <TextBlock Grid.Column="0" Classes="label" Text="{Binding ChannelLabel}" />
+                <NumericUpDown Grid.Column="1" Width="96" HorizontalAlignment="Left"
+                               AutomationProperties.Name="{Binding ChannelLabel}"
+                               Increment="1" FormatString="0" ParsingNumberStyle="Integer" ClipValueToMinMax="True"
+                               Minimum="1" Maximum="{Binding ChannelMax}"
+                               Value="{Binding ChannelInput}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12" IsVisible="{Binding IsBatch}">
+                <TextBlock Grid.Column="0" Classes="label" Text="续接" />
+                <CheckBox Grid.Column="1" Content="通道不够时续接同型号的下一个模块"
+                          IsChecked="{Binding ContinueNextInput}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                <TextBlock Grid.Column="0" Classes="label" Text="用途" />
+                <TextBox Grid.Column="1" AutomationProperties.Name="用途" PlaceholderText="如 VBAT"
+                         MaxLength="{Binding MaxPurposeLength}" Text="{Binding PurposeInput}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12" IsVisible="{Binding IsSingle}">
+                <TextBlock Grid.Column="0" Classes="label" Text="线号" />
+                <TextBox Grid.Column="1" AutomationProperties.Name="线号"
+                         MaxLength="{Binding MaxLabelLength}" Text="{Binding LabelInput}" />
+            </Grid>
+
+            <!-- 批量预览：确认后才写库，改动任何输入即作废 -->
+            <Border Classes="notice" IsVisible="{Binding HasBatchPreview}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="{Binding BatchPreviewText}" TextWrapping="Wrap" FontFamily="Consolas, monospace"
+                               Foreground="{DynamicResource SemiColorText0}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button Content="取消" Command="{Binding CancelBatchCommand}" />
+                        <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="确认接线" Command="{Binding ConfirmBatchCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" IsVisible="{Binding !HasBatchPreview}">
+                <Button Content="取消" Command="{Binding CloseEditorCommand}" />
+                <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="接线" MinWidth="72"
+                        IsVisible="{Binding IsSingle}" Command="{Binding AddCommand}" />
+                <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="预览" MinWidth="72"
+                        IsVisible="{Binding IsBatch}" Command="{Binding PreviewBatchCommand}" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- 修改用途与线号 -->
+        <StackPanel Spacing="12" IsVisible="{Binding IsEditing}" IsEnabled="{Binding CanEdit}">
+            <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+            <TextBlock Text="{Binding EditingTitle}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource SemiColorText0}" />
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                <TextBlock Grid.Column="0" Classes="label" Text="用途" />
+                <TextBox Grid.Column="1" AutomationProperties.Name="用途" PlaceholderText="如 VBAT"
+                         MaxLength="{Binding MaxPurposeLength}" Text="{Binding PurposeInput}" />
+            </Grid>
+            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                <TextBlock Grid.Column="0" Classes="label" Text="线号" />
+                <TextBox Grid.Column="1" AutomationProperties.Name="线号"
+                         MaxLength="{Binding MaxLabelLength}" Text="{Binding LabelInput}" />
+            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Content="取消" Command="{Binding CloseEditorCommand}" />
+                <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="保存" MinWidth="72" Command="{Binding SaveEditCommand}" />
+            </StackPanel>
+        </StackPanel>
+    </StackPanel>
+</UserControl>

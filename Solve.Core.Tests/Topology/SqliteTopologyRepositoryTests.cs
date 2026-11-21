@@ -119,7 +119,7 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
     public async Task Migration_V2ToV3_AddsTopologyTable()
     {
         // 退回 v2 形态：去掉 v3 及之后新增的表
-        await ExecuteRawAsync("DROP TABLE bus_devices; DROP TABLE topology_nodes; PRAGMA user_version = 2;");
+        await ExecuteRawAsync("DROP TABLE topology_wires; DROP TABLE bus_devices; DROP TABLE topology_nodes; PRAGMA user_version = 2;");
         SqliteDatabase.ClearPool(new SqliteStorageOptions(DatabasePath));
 
         var reopened = await OpenDatabaseAsync();

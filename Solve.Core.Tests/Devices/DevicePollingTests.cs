@@ -255,6 +255,34 @@ public sealed class DevicePollingTests : IAsyncLifetime
         Assert.Equal(TimeSpan.FromMilliseconds(1.75), ExchangeExecutor.GapDuration(FrameGap.ModbusRtu, new TcpBusDescriptor(BusId.New(), "TCP", "127.0.0.1", 502)));
     }
 
+    // ---------- 通道级点位 ----------
+
+    /// <summary>
+    /// 通道号错位会把一路通道的读数显示到另一个位置上：只接受与声明相符的通道号
+    /// </summary>
+    [Theory]
+    [InlineData("temperature", 0, true)]
+    [InlineData("temperature", 1, false)]
+    [InlineData("voltage", 1, true)]
+    [InlineData("voltage", 16, true)]
+    [InlineData("voltage", 0, false)]
+    [InlineData("voltage", 17, false)]
+    [InlineData("undeclared", 0, false)]
+    public void ChannelSamples_MustMatchDeclaration(string key, int channel, bool accepted)
+    {
+        var driver = new DriverInfo("acme.daq-16", "采集卡", DeviceCategory.General, "", 1, 32)
+        {
+            Channels = [new ChannelGroupInfo("input", "输入", ChannelFunction.Measure, 16)],
+            Points =
+            [
+                new PointInfo("temperature", "板温", "°C", PointAccess.Read),
+                new PointInfo("voltage", "电压", "V", PointAccess.Read) { Group = "input" },
+            ],
+        };
+
+        Assert.Equal(accepted, DevicePollingService.IsDeclared(driver, new PointSample(key, 1.0) { Channel = channel }));
+    }
+
     // ---------- 轮询调度 ----------
 
     private sealed class FixedBindings(BusId busId, IReadOnlyList<DriverBinding> bindings) : IDeviceBindings
@@ -262,6 +290,12 @@ public sealed class DevicePollingTests : IAsyncLifetime
         public IReadOnlyList<DriverBinding> Get(BusId id) => id == busId ? bindings : [];
 
         public int CountByDriver(DriverId driver) => bindings.Count(b => b.Device.Driver == driver);
+
+        public bool TryGet(DeviceId device, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out DriverBinding? binding)
+        {
+            binding = bindings.FirstOrDefault(b => b.Device.Id == device);
+            return binding is not null;
+        }
 
         public Task RefreshAsync(BusId id, CancellationToken cancellationToken) => Task.CompletedTask;
 

@@ -159,4 +159,11 @@ public abstract record ExchangeStep
 /// </summary>
 /// <param name="Key">对应 <see cref="PointInfo.Key"/></param>
 /// <param name="Value">已换算到 <see cref="PointInfo.Unit"/> 的工程值</param>
-public readonly record struct PointSample(string Key, double Value);
+public readonly record struct PointSample(string Key, double Value)
+{
+    /// <summary>
+    /// 通道号：通道级点位（<see cref="PointInfo.Group"/> 非空）填 1..通道数；模块级点位保持 0。
+    /// 与声明不符的样本被内核丢弃并告警。
+    /// </summary>
+    public int Channel { get; init; }
+}

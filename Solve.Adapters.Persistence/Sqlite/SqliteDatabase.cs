@@ -132,6 +132,35 @@ public sealed class SqliteDatabase
         """
         ALTER TABLE bus_devices ADD COLUMN parameters TEXT NOT NULL DEFAULT '{}';
         """,
+
+        // v6：接线（模块的一路通道 → 拓扑的一个位置）。只新增表，不改动既有数据。
+        // node_id 用默认的 NO ACTION：拓扑保存是"清空 + 全量写入"的快照替换，CASCADE 会在清空那一步删光全部接线；
+        // 拓扑仓储在同一事务内只删除落点已不存在的接线，提交时的外键检查保证不会留下孤儿。
+        // device_id 用 ON DELETE CASCADE：删除模块（或删除总线级联删除模块）时其接线一并拆除，界面在删除前确认接线数。
+        // 断开接线是故障安全方向（没有接线就没有控制路径）。
+        // kind 存接线时按驱动声明记下的通道功能，驱动未加载时规则校验仍有依据。
+        """
+        CREATE TABLE topology_wires (
+            id             TEXT    NOT NULL PRIMARY KEY CHECK (length(id) = 36),
+            node_id        TEXT    NOT NULL REFERENCES topology_nodes (id),
+            device_id      TEXT    NOT NULL REFERENCES bus_devices (id) ON DELETE CASCADE,
+            channel_group  TEXT    NOT NULL,
+            channel_index  INTEGER NOT NULL CHECK (channel_index >= 1),
+            kind           INTEGER NOT NULL,
+            purpose        TEXT    NULL,
+            label          TEXT    NULL,
+            created_at     TEXT    NOT NULL,  -- ISO 8601 UTC
+            updated_at     TEXT    NOT NULL   -- ISO 8601 UTC
+        ) STRICT;
+
+        -- 通道独占：一路通道只能接到一个位置；兼作外键子表索引（级联删除按 device_id 查找）
+        CREATE UNIQUE INDEX ux_topology_wires_channel
+            ON topology_wires (device_id, channel_group, channel_index);
+
+        -- 外键子表索引：拓扑保存时按落点查找、清理
+        CREATE INDEX ix_topology_wires_node
+            ON topology_wires (node_id);
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

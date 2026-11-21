@@ -42,6 +42,11 @@ public interface IDeviceService
     Task<Result<int>> CountAsync(BusId busId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// 这些模块上已接线的通道数，供删除前的确认提示使用（删除模块会一并拆除其接线）
+    /// </summary>
+    int CountWires(IReadOnlyCollection<DeviceId> devices);
+
+    /// <summary>
     /// 用同一个驱动从起始地址起按连续地址添加若干模块，全部成功或全部不写；成功时返回新增的模块
     /// </summary>
     Task<Result<IReadOnlyList<DeviceDescriptor>>> AddBatchAsync(DeviceBatchRequest request, CancellationToken cancellationToken);

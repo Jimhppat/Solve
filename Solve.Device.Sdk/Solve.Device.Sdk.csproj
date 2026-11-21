@@ -10,7 +10,8 @@
         <LangVersion>14</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <Version>1.0.0</Version>
+        <!-- 1.1：新增通道声明（只加成员，已发布的 1.0 驱动包不需重新编译） -->
+        <Version>1.1.0</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>

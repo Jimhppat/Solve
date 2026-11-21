@@ -54,7 +54,13 @@ public sealed record DeviceContext(int Address, LinkKind Link, DeviceParameters 
 /// </summary>
 /// <param name="Key">对应 <see cref="CommandInfo.Key"/></param>
 /// <param name="Arguments">参数（按 <see cref="PointInfo.Unit"/> 换算后的工程值）</param>
-public sealed record DeviceCommand(string Key, IReadOnlyDictionary<string, double> Arguments);
+public sealed record DeviceCommand(string Key, IReadOnlyDictionary<string, double> Arguments)
+{
+    /// <summary>
+    /// 通道号：通道级命令（<see cref="CommandInfo.Group"/> 非空）为 1..通道数；模块级命令为 0
+    /// </summary>
+    public int Channel { get; init; }
+}
 
 /// <summary>
 /// 一个模块的协议会话。会话只编解码报文，不做任何 I/O：

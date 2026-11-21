@@ -6,6 +6,7 @@ using Solve.Core.Application.Devices;
 using Solve.Core.Application.Logging;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
+using Solve.Core.Application.Wiring;
 
 namespace Solve.UI.ViewModels;
 
@@ -167,6 +168,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public void AttachTwin(TwinStateStore twin) => MasterConsole.Twin.Attach(twin);
 
     /// <summary>
+    /// 接入接线运行视图：拓扑页的接线面板、主控台产品信息卡片的硬件状态。须在 UI 线程上调用，只能调用一次。
+    /// </summary>
+    public void AttachWiring(WiringInspector wiring)
+    {
+        Topology.AttachWiring(wiring);
+        MasterConsole.Twin.AttachWiring(wiring);
+    }
+
+    /// <summary>
     /// 接入日志源：运行日志页与主控台的最近日志各自订阅。须在 UI 线程上调用，只能调用一次。
     /// </summary>
     /// <param name="archive">历史日志；只接给运行日志页，主控台的最近日志只看实时</param>
@@ -220,6 +230,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         MasterConsole.Dispose();
         BusConsole.Dispose();
+        Topology.Dispose();
         RuntimeLog.Dispose();
     }
 }

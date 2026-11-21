@@ -283,9 +283,21 @@ public sealed class BusDevicesViewModel : ViewModelBase, IDisposable
         _ => string.Empty,
     };
 
-    public string DeleteConfirmMessage => _pendingDelete is { Count: > 1 }
-        ? $"将从总线「{Bus.Name}」上删除这些模块的配置。此操作无法撤销。"
-        : $"将从总线「{Bus.Name}」上删除该模块的配置。此操作无法撤销。";
+    public string DeleteConfirmMessage
+    {
+        get
+        {
+            var message = _pendingDelete is { Count: > 1 }
+                ? $"将从总线「{Bus.Name}」上删除这些模块的配置。此操作无法撤销。"
+                : $"将从总线「{Bus.Name}」上删除该模块的配置。此操作无法撤销。";
+
+            // 接线随模块级联拆除：位置上的硬件关联会一起消失，确认前说清楚
+            var wires = _pendingDelete is { } pending && _service is { } service
+                ? service.CountWires(pending.Select(d => d.Device.Id).ToList())
+                : 0;
+            return wires > 0 ? $"{message}这些模块上的 {wires} 路接线将一并拆除。" : message;
+        }
+    }
 
     public RelayCommand CancelDeleteCommand { get; }
     public AsyncRelayCommand ConfirmDeleteCommand { get; }

@@ -138,6 +138,13 @@ public sealed class BusConsoleViewModel : ViewModelBase, IDisposable
                 var count => $"，以及挂在它上面的 {count} 个模块",
             };
 
+            // 接线随模块级联拆除：确认框里一并说明，避免操作员以为位置上的硬件关联还在
+            var wires = _pendingDelete is { } bus && _deviceService is { } deviceService
+                ? deviceService.CountWires(deviceService.Bindings.Get(bus.Id).Select(b => b.Device.Id).ToList())
+                : 0;
+            if (wires > 0)
+                devices += $"（其上 {wires} 路接线一并拆除）";
+
             return _pendingDelete?.State is BusState.Connected or BusState.Connecting or BusState.Reconnecting
                 ? $"该总线当前{_pendingDelete.StateText}，删除会先断开连接，然后永久删除它的配置{devices}。此操作无法撤销。"
                 : $"将永久删除该总线的配置{devices}。此操作无法撤销。";
