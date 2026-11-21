@@ -435,6 +435,117 @@ public sealed class WiringServiceTests : IAsyncLifetime
         page.Dispose();
     }
 
+    // ---------- 映射草稿 ----------
+
+    [Fact]
+    public async Task PlanAssign_ChecksEachRow_AndOnlyPlansWhenAllRowsAreValid()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var daq = await AddModuleAsync(Daq, "采集卡", 2);
+        await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [1, 2, 3])]));
+        await WireAsync("C01-L02-S01-F01-P01", new ChannelRef(daq.Id, "input", 8));
+
+        // 跨模块、跳着选；第 3 行用了停用的通道，第 4 行抢已接的通道
+        WiringDraftRow[] rows =
+        [
+            new(Node("C01-L01-S01-F01-P01").Id, new ChannelRef(relay.Id, "relay", 3)) { Purpose = "压合" },
+            new(Node("C01-L01-S01-F01-P02").Id, new ChannelRef(daq.Id, "input", 5)),
+            new(Node("C01-L01-S02-F01-P01").Id, new ChannelRef(relay.Id, "relay", 4)),
+            new(Node("C01-L01-S02-F01-P02").Id, new ChannelRef(daq.Id, "input", 8)),
+        ];
+
+        var preview = _wiring.PlanAssign(rows).Value;
+
+        Assert.Equal([true, true, false, false], preview.Rows.Select(r => r.IsValid));
+        Assert.Contains("没有启用", preview.Rows[2].Problem);
+        Assert.Contains("C01-L02-S01-F01-P01", preview.Rows[3].Problem);
+        Assert.Null(preview.Plan);
+        Assert.Equal(2, preview.ProblemCount);
+
+        var fixedPreview = _wiring.PlanAssign(rows[..2]).Value;
+        Assert.True((await _wiring.ApplyAsync(fixedPreview.Plan!, CancellationToken.None)).IsSuccess);
+        Assert.Equal("压合", _wiring.Current.GetOwn(Node("C01-L01-S01-F01-P01").Id).Single().Purpose);
+        Assert.Equal(3, _wiring.Current.Count);
+    }
+
+    [Fact]
+    public async Task MappingDraft_PicksPositionsAndChannels_AssemblesAndConfirms()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var daq = await AddModuleAsync(Daq, "采集卡", 2);
+
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        page.IsDraftMode = true;
+
+        // ① 范围选层位 C01-L01，层级默认最深一层（产品位，4 个），全选
+        page.SelectedItem = page.Roots[0].Children[0].Children[0];
+        var draft = page.Draft;
+        Assert.Equal("层位 C01-L01", draft.ScopeText);
+        Assert.Equal(TopologyLevel.Product, draft.SelectedLevel!.Level);
+        draft.SelectAllPositionsCommand.Execute(null);
+        Assert.Equal(4, draft.SelectedPositionCount);
+
+        // ② 取通道：继电器第 2、4 路 + 采集卡第 1 路（跨模块、跳着选），共 3 路
+        var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        Assert.All(channels, c => Assert.True(c.ShowCheckBox));
+        channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 2)).IsChecked = true;
+        channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 4)).IsChecked = true;
+        channels.Single(c => c.Channel == new ChannelRef(daq.Id, "input", 1)).IsChecked = true;
+        Assert.Equal("已选 3 路通道", draft.ChannelCountText);
+
+        // ③ 组装：4 个位置、3 路通道，配 3 对并提示多出 1 个位置
+        await draft.AssembleCommand.ExecuteAsync();
+        Assert.Equal(3, draft.Rows.Count);
+        Assert.Contains("多出的 1 个位置", draft.Message);
+        Assert.Equal(["C01-L01-S01-F01-P01", "C01-L01-S01-F01-P02", "C01-L01-S02-F01-P01"],
+            draft.Rows.Select(r => r.Position.Address.ToString()));
+
+        // 调整：第 1、2 行交换通道；第 3 行移除
+        draft.Rows[0].MoveDownCommand.Execute(null);
+        draft.Rows[2].RemoveCommand.Execute(null);
+        Assert.Equal(new ChannelRef(relay.Id, "relay", 4), draft.Rows[0].Channel.Channel);
+        await WaitUntilAsync(() => draft.ConfirmCommand.CanExecute(null));
+
+        await draft.ConfirmCommand.ExecuteAsync();
+
+        Assert.Empty(draft.Rows);
+        Assert.Equal("已映射 2 路", draft.Message);
+        Assert.Equal(new ChannelRef(relay.Id, "relay", 4), _wiring.Current.GetOwn(Node("C01-L01-S01-F01-P01").Id).Single().Channel);
+        Assert.Equal(new ChannelRef(relay.Id, "relay", 2), _wiring.Current.GetOwn(Node("C01-L01-S01-F01-P02").Id).Single().Channel);
+        page.Dispose();
+    }
+
+    [Fact]
+    public async Task MappingDraft_ConflictingRow_BlocksConfirm()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        await WireAsync("C01-L01", new ChannelRef(relay.Id, "relay", 1), purpose: "电源");
+
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        page.IsDraftMode = true;
+        page.SelectedItem = page.Roots[0].Children[0].Children[0];
+        page.Draft.Positions[0].IsChecked = true;
+        page.PurposeInput = "电源";
+        page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().First(c => !c.IsMapped).IsChecked = true;
+
+        // 层位已有"切换 电源"，其下产品位再接同功能同用途：这一行标出路径冲突，不能确认
+        await page.Draft.AssembleCommand.ExecuteAsync();
+
+        var row = Assert.Single(page.Draft.Rows);
+        Assert.True(row.HasProblem);
+        Assert.False(page.Draft.ConfirmCommand.CanExecute(null));
+
+        // 改成别的用途后通过
+        row.Purpose = "压合";
+        await WaitUntilAsync(() => page.Draft.ConfirmCommand.CanExecute(null));
+        Assert.False(row.HasProblem);
+        page.Dispose();
+    }
+
     // ---------- 运行状态与联锁判据 ----------
 
     [Fact]

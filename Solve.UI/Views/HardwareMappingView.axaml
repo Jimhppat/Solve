@@ -62,7 +62,14 @@
     <Grid Margin="20" RowDefinitions="Auto,*" RowSpacing="20">
 
         <Border Grid.Row="0" Classes="panel" Padding="20,10">
-            <TextBlock Classes="section" Text="{Binding PageTitle}" />
+            <DockPanel>
+                <!-- 中栏的两种用法：查看 / 编辑选中位置的接线；或映射草稿（取位置、取通道、组装、确认） -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="16">
+                    <RadioButton GroupName="MappingMode" Content="按位置查看" IsChecked="{Binding IsWiringMode, Mode=OneWay}" />
+                    <RadioButton GroupName="MappingMode" Content="映射草稿" IsChecked="{Binding IsDraftMode}" />
+                </StackPanel>
+                <TextBlock Classes="section" Text="{Binding PageTitle}" />
+            </DockPanel>
         </Border>
 
         <!-- 未接入或尚未建档 -->
@@ -70,7 +77,7 @@
             <TextBlock Text="{Binding EmptyText}" Foreground="{DynamicResource SemiColorText1}" />
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,460,1.2*" ColumnSpacing="20" IsVisible="{Binding !ShowEmpty}">
+        <Grid Grid.Row="1" ColumnDefinitions="*,520,1.2*" ColumnSpacing="20" IsVisible="{Binding !ShowEmpty}">
 
             <!-- 左：位置树 -->
             <Border Grid.Column="0" Classes="panel" Padding="20,16">
@@ -105,8 +112,105 @@
                 </Grid>
             </Border>
 
-            <!-- 中：选中位置的接线（上级继承的在前）；批量接线、修改、拆除、命令 -->
-            <Border Grid.Column="1" Classes="panel" Padding="20,16">
+            <!-- 中（映射草稿）：① 在树上选中的范围内按层级勾选位置 → ② 在右边勾选通道 → ③ 组装成配对，逐行校验、调整 → 确认 -->
+            <Border Grid.Column="1" Classes="panel" Padding="20,16" IsVisible="{Binding IsDraftMode}">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12" DataContext="{Binding Draft}" x:DataType="vm:MappingDraftViewModel">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PathIcon Data="{DynamicResource SemiIconBranch}" Width="14" Height="14"
+                                  Foreground="{DynamicResource SemiColorPrimary}" />
+                        <TextBlock Classes="section" Text="映射草稿" />
+                    </StackPanel>
+                    <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
+
+                    <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="12" Margin="0,0,12,0">
+
+                            <!-- ① 取位置 -->
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                                <TextBlock Text="范围" VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText1}" />
+                                <TextBlock Grid.Column="1" Text="{Binding ScopeText, TargetNullValue='请在左边选择位置'}" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource SemiColorText0}" />
+                            </Grid>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                <ComboBox Grid.Column="0" HorizontalAlignment="Stretch" AutomationProperties.Name="接线层级"
+                                          ItemsSource="{Binding LevelOptions}" SelectedItem="{Binding SelectedLevel}" />
+                                <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" AutomationProperties.Name="位置筛选"
+                                          ItemsSource="{Binding FilterOptions}" SelectedItem="{Binding Filter}" />
+                            </Grid>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                    <Button Content="全选" Padding="10,2" Command="{Binding SelectAllPositionsCommand}" />
+                                    <Button Content="清空" Padding="10,2" Command="{Binding ClearPositionsCommand}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding PositionCountText}" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SemiColorText1}" />
+                            </DockPanel>
+                            <ListBox ItemsSource="{Binding Positions}" MaxHeight="220" Background="Transparent"
+                                     BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DraftPositionViewModel">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <CheckBox IsChecked="{Binding IsChecked}" AutomationProperties.Name="选择位置" />
+                                            <TextBlock Text="{Binding Text}" VerticalAlignment="Center" FontFamily="Consolas, monospace" />
+                                            <Border Classes="badge" IsVisible="{Binding IsDisabled}">
+                                                <TextBlock Text="停用" Foreground="{DynamicResource SemiColorDanger}" />
+                                            </Border>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <!-- ② 取通道在右边勾选；③ 组装 -->
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Classes="Primary" Theme="{DynamicResource SolidButton}"
+                                        Content="组装" MinWidth="72" Command="{Binding AssembleCommand}" />
+                                <TextBlock Text="{Binding ChannelCountText}" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SemiColorText1}" />
+                            </DockPanel>
+                            <Border Height="1" Background="{DynamicResource SemiColorBorder}" IsVisible="{Binding HasRows}" />
+
+                            <!-- 配对预览：位置顺序不变，上移 / 下移在相邻两行之间交换通道；有问题的行直接标出原因 -->
+                            <ItemsControl ItemsSource="{Binding Rows}" IsVisible="{Binding HasRows}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:DraftRowViewModel">
+                                        <Border BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="0,0,0,1" Padding="0,6">
+                                            <StackPanel Spacing="4">
+                                                <DockPanel>
+                                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
+                                                        <Button Content="上移" Padding="6,2" Command="{Binding MoveUpCommand}" />
+                                                        <Button Content="下移" Padding="6,2" Command="{Binding MoveDownCommand}" />
+                                                        <Button Content="移除" Padding="6,2" Classes="Danger" Command="{Binding RemoveCommand}" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding PositionText}" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                               FontFamily="Consolas, monospace" Foreground="{DynamicResource SemiColorText0}" />
+                                                </DockPanel>
+                                                <Grid ColumnDefinitions="*,120" ColumnSpacing="8">
+                                                    <TextBlock Grid.Column="0" Text="{Binding ChannelText}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource SemiColorText1}" />
+                                                    <TextBox Grid.Column="1" Text="{Binding Purpose}" PlaceholderText="用途"
+                                                             AutomationProperties.Name="用途" MaxLength="{Binding MaxPurposeLength}" />
+                                                </Grid>
+                                                <TextBlock Text="{Binding Problem}" IsVisible="{Binding HasProblem}" TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource SemiColorDanger}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Classes="message" Classes.error="{Binding IsError}" IsVisible="{Binding HasMessage}" Text="{Binding Message}" />
+
+                            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" IsVisible="{Binding HasRows}">
+                                <Button Content="清空草稿" Command="{Binding ClearCommand}" />
+                                <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="确认映射" Command="{Binding ConfirmCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- 中（按位置查看）：选中位置的接线（上级继承的在前）；批量接线、修改、拆除、命令 -->
+            <Border Grid.Column="1" Classes="panel" Padding="20,16" IsVisible="{Binding IsWiringMode}">
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <PathIcon Data="{DynamicResource SemiIconBranch}" Width="14" Height="14"
@@ -124,7 +228,13 @@
             <Border Grid.Column="2" Classes="panel" Padding="20,16">
                 <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="12">
                     <DockPanel>
-                        <CheckBox DockPanel.Dock="Right" Content="只看未映射" IsChecked="{Binding UnmappedOnly}" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+                            <Button Content="勾选可见" Padding="10,2" IsVisible="{Binding IsDraftMode}"
+                                    Command="{Binding SelectVisibleChannelsCommand}" />
+                            <Button Content="清空勾选" Padding="10,2" IsVisible="{Binding IsDraftMode}"
+                                    Command="{Binding ClearChannelsCommand}" />
+                            <CheckBox Content="只看未映射" IsChecked="{Binding UnmappedOnly}" />
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <PathIcon Data="{DynamicResource SemiIconLink}" Width="14" Height="14"
                                       Foreground="{DynamicResource SemiColorPrimary}" />
@@ -155,7 +265,11 @@
                                            Foreground="{DynamicResource SemiColorText0}" />
                             </DataTemplate>
                             <DataTemplate DataType="vm:MappingChannelViewModel">
-                                <Grid ColumnDefinitions="1.2*,56,1.6*,Auto" ColumnSpacing="12" Margin="16,6,4,6">
+                                <!-- 映射草稿模式下未映射的通道前面有勾选框（取通道） -->
+                                <DockPanel Margin="16,6,4,6">
+                                <CheckBox DockPanel.Dock="Left" Margin="0,0,8,0" IsVisible="{Binding ShowCheckBox}"
+                                          IsChecked="{Binding IsChecked}" AutomationProperties.Name="选择通道" />
+                                <Grid ColumnDefinitions="1.2*,56,1.6*,Auto" ColumnSpacing="12">
                                     <TextBlock Grid.Column="0" Text="{Binding NameText}" VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding NameText}"
                                                Foreground="{DynamicResource SemiColorText0}" />
@@ -171,6 +285,7 @@
                                                 IsVisible="{Binding IsMapped}" Command="{Binding LocateCommand}" />
                                     </StackPanel>
                                 </Grid>
+                                </DockPanel>
                             </DataTemplate>
                         </ListBox.DataTemplates>
                     </ListBox>

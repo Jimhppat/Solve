@@ -195,6 +195,28 @@ public sealed class WiringMapTests
         Assert.False(map.TryGetByChannel(a.Channel, out _));
     }
 
+    /// <summary>
+    /// 逐行校验：先出现的一行占用通道 / 路径，后面与它冲突的那一行报错，其余行没有问题
+    /// </summary>
+    [Fact]
+    public void Check_ReportsProblemsPerRow_InOrder()
+    {
+        var map = Map(Power("C01-L01"));
+        var ok = Measure("C01-L01-S01-F01-P01", 1);
+        var duplicateChannel = Measure("C01-L01-S01-F01-P02", 1);
+        var pathConflict = Power("C01-L01-S02", index: 2);
+        var onSystem = new Wire(WireId.New(), _topology.Root.Id, new ChannelRef(_daq, "input", 9), ChannelKind.Measure);
+
+        var problems = map.Check([ok, duplicateChannel, pathConflict, onSystem]);
+
+        Assert.Null(problems[0]);
+        Assert.Equal(WiringErrors.ChannelInUseCode, problems[1]!.Code);
+        Assert.Contains("C01-L01-S01-F01-P01", problems[1]!.Message);
+        Assert.Equal(WiringErrors.PathConflictCode, problems[2]!.Code);
+        Assert.Equal(WiringErrors.SystemNodeCode, problems[3]!.Code);
+        Assert.Equal(1, map.Count);
+    }
+
     [Fact]
     public void InvalidFields_AreRejected()
     {
