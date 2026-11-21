@@ -21,6 +21,11 @@ public sealed class DriverItemViewModel
 
     public DriverDescriptor Driver { get; }
 
+    /// <summary>
+    /// 驱动已不在目录中的占位项：不知道它的参数与通道，编辑模块时原样保留已保存的值
+    /// </summary>
+    public bool IsUnknown { get; init; }
+
     public IReadOnlyList<ParameterInfo> Parameters { get; }
 
     public string Name => Driver.Name;

@@ -21,19 +21,24 @@ public enum WireHealth
     Ready = 1,
 
     /// <summary>
+    /// 无协议：接在通用模块上，只登记接线关系，系统不监视、也不能下发命令（联锁同样拒绝）
+    /// </summary>
+    NoProtocol = 2,
+
+    /// <summary>
     /// 等待：总线未连接或尚未轮询到
     /// </summary>
-    Waiting = 2,
+    Waiting = 3,
 
     /// <summary>
     /// 故障：模块通信异常、设备故障、配置错误或驱动未就绪
     /// </summary>
-    Fault = 3,
+    Fault = 4,
 
     /// <summary>
-    /// 无效：模块已不存在，或驱动不再声明这路通道、功能已不同
+    /// 无效：模块已不存在，或这路通道已没有、已停用、功能已不同
     /// </summary>
-    Invalid = 4,
+    Invalid = 5,
 }
 
 public static class WireHealths
@@ -41,6 +46,7 @@ public static class WireHealths
     public static string DisplayName(this WireHealth health) => health switch
     {
         WireHealth.Ready => "就绪",
+        WireHealth.NoProtocol => "无协议",
         WireHealth.Waiting => "等待",
         WireHealth.Fault => "故障",
         WireHealth.Invalid => "无效",
@@ -173,17 +179,23 @@ public sealed class WiringInspector
         var busName = _buses.GetRuntime(device.BusId) is { IsSuccess: true } runtime ? runtime.Value.Descriptor.Name : "未知总线";
         var moduleText = $"{busName} · {device.Name}";
 
-        var group = _catalog.TryGet(device.Driver, out var driver) ? driver.FindChannelGroup(wire.Channel.Group) : null;
+        // 模块实际可用的通道 = 驱动的通道能力 + 模块的通道配置
+        var channels = ModuleChannelLookup.Resolve(_catalog, device);
+        var group = channels.IsSuccess ? ModuleChannelLookup.Find(channels.Value, wire.Channel.Group) : null;
         var channelText = group?.ChannelName(wire.Channel.Index) ?? $"{wire.Channel.Group} {wire.Channel.Index}";
-        if (driver is null)
-            return Invalid($"驱动「{device.Driver}」未加载，无法确认这路通道。");
+        if (channels.IsFailure)
+            return Invalid(channels.Error.Message);
         if (group is null || !group.Contains(wire.Channel.Index))
-            return Invalid($"{driver.Name}已不再声明这路通道。");
+            return Invalid($"{device.Name}已没有这路通道。");
+        if (!group.IsEnabled(wire.Channel.Index))
+            return Invalid($"这路通道已在模块配置里停用。");
         if (group.Kind != wire.Kind)
-            return Invalid($"驱动把这路通道声明为「{group.Kind.DisplayName()}」，与接线时的「{wire.Kind.DisplayName()}」不同。");
+            return Invalid($"这路通道现在是「{group.Kind.DisplayName()}」，与接线时的「{wire.Kind.DisplayName()}」不同。");
 
         var status = _statuses.Get(device.Id);
-        var (health, problem) = binding.Status != DriverBindingStatus.Ready
+        var (health, problem) = binding.Status == DriverBindingStatus.NoProtocol
+            ? (WireHealth.NoProtocol, binding.Problem)
+            : binding.Status != DriverBindingStatus.Ready
             ? (WireHealth.Fault, binding.Problem)
             : status?.State switch
             {

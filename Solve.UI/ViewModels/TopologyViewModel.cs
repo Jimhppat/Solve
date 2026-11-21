@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Wiring;
 using Solve.Core.Domain.Common;
@@ -55,12 +54,13 @@ public enum TopologySaveState
 /// <para>保存后整棵树按新拓扑重建，选中项与展开状态按节点 Id 保留。</para>
 /// <para>只能在 UI 线程上使用；变更计算与磁盘 I/O 在线程池上完成。</para>
 /// </remarks>
-public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
+public sealed partial class TopologyViewModel : ViewModelBase
 {
     // 页面级的已展开节点：节点 Id 终身不变，树重建后同一节点照样展开
     private readonly HashSet<TopologyNodeId> _expanded = [];
 
     private ITopologyService? _service;
+    private WiringInspector? _wiring;
     private TopologySaveState _state = TopologySaveState.Idle;
     private PendingSave? _pending;
     private string? _saveMessage;
@@ -83,11 +83,6 @@ public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
     }
 
     public string PageTitle => "设备拓扑";
-
-    /// <summary>
-    /// 选中位置的接线面板；接入接线服务前不显示
-    /// </summary>
-    public WiringPanelViewModel Wiring { get; } = new();
 
     /// <summary>
     /// 确认列出的删除 / 启用 / 位置编码变化并保存
@@ -198,7 +193,6 @@ public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
             ShowNodeInputs();
             OnSelectionChangedForLayout();
             RaiseSelectionChanged();
-            Wiring.ShowNode(value?.Node);
         }
     }
 
@@ -220,17 +214,13 @@ public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 接入接线运行视图（选中位置的接线面板；删除位置前提示会一并拆除的接线数）。须在 UI 线程上调用，只能调用一次。
+    /// 接入接线（删除位置前提示会一并拆除的接线数）。接线本身在"硬件映射"页配置。须在 UI 线程上调用。
     /// </summary>
-    /// <param name="commands">按位置下发命令；为 null 时接线面板不显示命令按钮</param>
-    public void AttachWiring(WiringInspector inspector, DeviceCommandService? commands = null)
+    public void AttachWiring(WiringInspector inspector)
     {
         ArgumentNullException.ThrowIfNull(inspector);
-        Wiring.Attach(inspector, commands);
-        Wiring.ShowNode(_selectedItem?.Node);
+        _wiring = inspector;
     }
-
-    public void Dispose() => Wiring.Dispose();
 
     /// <summary>
     /// 在线程池上计算变更（十万级节点的拓扑重建与比对需要数百毫秒）。失败时已在 <paramref name="origin"/> 处显示原因并返回 null。
@@ -386,9 +376,6 @@ public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
         ShowLayoutInputs();
         RaiseSelectionChanged();
         RaiseCommandsChanged();
-
-        // 节点内容可能已变（改名、停用、下级增减），接线面板按新节点重新显示
-        Wiring.ShowNode(_selectedItem?.Node);
     }
 
     /// <summary>
@@ -516,7 +503,7 @@ public sealed partial class TopologyViewModel : ViewModelBase, IDisposable
             lines.Add($"将删除 {ListPositions(plan.RemovedRoots)} 及其下级，共 {Positions(plan.RemovedCount, plan.RemovedProductCount)}");
 
             // 接线随位置一起删除（同一事务），现场的线不受影响但系统里的关联会消失
-            var wires = Wiring.CountRemovedBy(plan.Candidate);
+            var wires = _wiring?.Wiring.Current.CountRemovedBy(plan.Candidate) ?? 0;
             if (wires > 0)
                 lines.Add($"这些位置上的 {Format(wires)} 路接线将一并拆除");
         }

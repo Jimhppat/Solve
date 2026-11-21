@@ -161,6 +161,12 @@ public sealed class SqliteDatabase
         CREATE INDEX ix_topology_wires_node
             ON topology_wires (node_id);
         """,
+
+        // v7：模块实例的通道配置。JSON 数组，每项是一组通道的设置（启用哪几路、通道别名；通用模块还有名称、功能、数量）。
+        // 只加列、不动既有数据：已有模块为空数组，即按驱动声明全部启用，已有接线不受影响。
+        """
+        ALTER TABLE bus_devices ADD COLUMN channels TEXT NOT NULL DEFAULT '[]';
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

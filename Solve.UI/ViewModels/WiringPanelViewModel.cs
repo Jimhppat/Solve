@@ -214,7 +214,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             if (!SetProperty(ref _selectedModule, value))
                 return;
 
-            GroupOptions = value?.Module.Driver.Channels.Select(g => new WiringGroupOption(g)).ToList() ?? [];
+            GroupOptions = value?.Module.Channels.Select(g => new WiringGroupOption(g)).ToList() ?? [];
             SelectedGroup = GroupOptions.FirstOrDefault();
             OnInputChanged();
         }
@@ -854,7 +854,8 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return null;
 
         var map = inspector.Wiring.Current;
-        for (var index = 1; index <= group.Group.Count; index++)
+        // 只在模块上启用的通道里找：停用的端子没有接线，不能接
+        foreach (var index in group.Group.Enabled())
         {
             if (!map.TryGetByChannel(new ChannelRef(module.Module.Device.Id, group.Group.Key, index), out _))
                 return index;

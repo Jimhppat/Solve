@@ -16,8 +16,8 @@ public interface IDeviceWiring
     int CountWires(IReadOnlyCollection<DeviceId> devices);
 
     /// <summary>
-    /// 模块改用 <paramref name="driver"/> 后已有接线是否仍然有效：通道组存在、通道号在范围内、功能相同。
-    /// 不满足时返回失败，列出受影响的通道，要求先拆除这些接线。
+    /// 模块改成 <paramref name="device"/>（驱动、通道配置）后已有接线是否仍然有效：通道组存在、通道已启用、功能相同。
+    /// 通道配置与驱动不符，或有接线会失效时返回失败（列出受影响的通道），要求先拆除这些接线。
     /// </summary>
-    Result CheckDriverChange(DeviceId device, DriverDescriptor driver);
+    Result CheckChannelChange(DeviceDescriptor device, DriverDescriptor driver);
 }

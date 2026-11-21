@@ -23,6 +23,11 @@ internal sealed class DeviceRow
     /// </summary>
     public string Parameters { get; set; } = "{}";
 
+    /// <summary>
+    /// 通道配置：JSON 数组（见 DeviceRowMapper）
+    /// </summary>
+    public string Channels { get; set; } = "[]";
+
     public string CreatedAt { get; set; } = "";
 
     public string UpdatedAt { get; set; } = "";

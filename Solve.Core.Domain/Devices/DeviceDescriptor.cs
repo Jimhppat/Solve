@@ -42,6 +42,11 @@ public sealed record DeviceDescriptor(DeviceId Id, BusId BusId, DriverId Driver,
     public ParameterValues Parameters { get; init; } = ParameterValues.Empty;
 
     /// <summary>
+    /// 通道配置：启用哪几路、通道别名；通用模块还定义有哪些通道。与驱动的通道能力是否相符由应用服务校验
+    /// </summary>
+    public ModuleChannelConfig Channels { get; init; } = ModuleChannelConfig.Empty;
+
+    /// <summary>
     /// 校验全部字段并一次性返回所有错误。空列表表示有效。
     /// </summary>
     public IReadOnlyList<Error> Validate()
@@ -73,6 +78,11 @@ public sealed record DeviceDescriptor(DeviceId Id, BusId BusId, DriverId Driver,
             errors.Add(DeviceErrors.InvalidField("Parameters", "模块参数不能为 null。"));
         else
             Parameters.CollectErrors(errors);
+
+        if (Channels is null)
+            errors.Add(DeviceErrors.InvalidField("Channels", "通道配置不能为 null。"));
+        else
+            Channels.CollectErrors(errors);
 
         return errors;
     }

@@ -31,6 +31,7 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
                name       AS Name,
                remark     AS Remark,
                parameters AS Parameters,
+               channels   AS Channels,
                created_at AS CreatedAt,
                updated_at AS UpdatedAt
           FROM bus_devices
@@ -41,8 +42,8 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
     private const string CountByBusSql = "SELECT count(*) FROM bus_devices WHERE bus_id = @BusId;";
 
     private const string InsertSql = """
-        INSERT INTO bus_devices (id, bus_id, driver_id, address, name, remark, parameters, created_at, updated_at)
-        VALUES (@Id, @BusId, @DriverId, @Address, @Name, @Remark, @Parameters, @CreatedAt, @UpdatedAt);
+        INSERT INTO bus_devices (id, bus_id, driver_id, address, name, remark, parameters, channels, created_at, updated_at)
+        VALUES (@Id, @BusId, @DriverId, @Address, @Name, @Remark, @Parameters, @Channels, @CreatedAt, @UpdatedAt);
         """;
 
     // bus_id 只作条件不作更新：设备不在总线之间移动，传错总线时按"不存在"处理而不是悄悄换线
@@ -53,6 +54,7 @@ public sealed class SqliteDeviceRepository : IDeviceRepository
                name       = @Name,
                remark     = @Remark,
                parameters = @Parameters,
+               channels   = @Channels,
                updated_at = @UpdatedAt
          WHERE id = @Id AND bus_id = @BusId;
         """;

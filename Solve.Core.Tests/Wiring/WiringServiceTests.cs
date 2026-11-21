@@ -304,7 +304,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
 
         // 退回 v5：去掉接线表
         await using (var connection = await _database.OpenConnectionAsync(CancellationToken.None))
-            await Dapper.SqlMapper.ExecuteAsync(connection, "DROP TABLE topology_wires; PRAGMA user_version = 5;");
+            await Dapper.SqlMapper.ExecuteAsync(connection, "ALTER TABLE bus_devices DROP COLUMN channels; DROP TABLE topology_wires; PRAGMA user_version = 5;");
         SqliteDatabase.ClearPool(StorageOptions);
 
         var reopened = await SqliteDatabase.OpenAsync(StorageOptions, NullLogger.Instance, CancellationToken.None);
@@ -312,6 +312,127 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.True(reopened.IsSuccess);
         Assert.Empty((await new SqliteWiringRepository(reopened.Value, NullLogger.Instance).LoadAllAsync(CancellationToken.None)).Value);
         Assert.Single((await new SqliteDeviceRepository(reopened.Value, NullLogger.Instance).ListByBusAsync(_busId, CancellationToken.None)).Value);
+    }
+
+    // ---------- 模块实例的通道配置 ----------
+
+    private async Task<DeviceDescriptor> ConfigureAsync(DeviceDescriptor device, ModuleChannelConfig channels)
+    {
+        var updated = device with { Channels = channels };
+        var saved = await _devices.UpdateAsync(updated, CancellationToken.None);
+        Assert.True(saved.IsSuccess, saved.IsFailure ? saved.Error.Message : null);
+        return updated;
+    }
+
+    [Fact]
+    public async Task DisabledChannels_CannotBeWired_AndBatchSkipsThem()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [1, 3])]));
+
+        Assert.Equal(WiringErrors.ChannelNotDeclaredCode,
+            _wiring.PlanAdd(Node("C01-L01-S01-F01-P01").Id, new ChannelRef(relay.Id, "relay", 2), null, null).Error.Code);
+
+        // 一个槽位下 2 个产品位：跳过停用的第 2 路，依次接第 1、3 路
+        var group = Assert.Single(Assert.Single(_wiring.ListModules()).Channels);
+        var plan = _wiring.PlanBatch(new WiringBatchRequest(Node("C01-L01-S01").Id, TopologyLevel.Product,
+            [new ChannelSource(relay.Id, group)], StartIndex: 1)).Value;
+        Assert.Equal([1, 3], plan.Added.Select(w => w.Channel.Index));
+    }
+
+    [Fact]
+    public async Task ModuleWithEveryChannelDisabled_IsNotOffered()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [])]));
+
+        Assert.Empty(_wiring.ListModules());
+    }
+
+    [Fact]
+    public async Task DisablingOrDroppingAWiredChannel_IsRejected()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        await WireAsync("C01-L01-S01-F01-P01", new ChannelRef(relay.Id, "relay", 2));
+
+        var disable = await _devices.UpdateAsync(relay with { Channels = new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [1])]) },
+            CancellationToken.None);
+
+        Assert.Equal(WiringErrors.ChannelsInUseByWiresCode, disable.Error.Code);
+        Assert.Contains("继电器 继电器 2", disable.Error.Message);
+
+        // 别名可以随时改：接线按（组，通道号）定位，不受名称影响
+        await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", aliases: [new(2, "3# 压合")])]));
+        Assert.Equal("继电器 3# 压合", _wiring.DescribeChannel(new ChannelRef(relay.Id, "relay", 2)));
+    }
+
+    [Fact]
+    public async Task GenericModule_WithManualChannels_CanBeWired_ButIsNeverReady()
+    {
+        var generic = await AddModuleAsync(DriverCatalog.GenericModule, "气缸阀岛", 1);
+        Assert.Empty(_wiring.ListModules());
+
+        await ConfigureAsync(generic, new ModuleChannelConfig([new ChannelGroupSetting("g1", "电磁阀", ChannelKind.Switch, 8)]));
+        await WireAsync("C01-L01-S01-F01", new ChannelRef(generic.Id, "g1", 4), purpose: "压合");
+
+        var status = Assert.Single(_inspector.Inspect(Node("C01-L01-S01-F01").Id));
+        Assert.Equal(("1# RS-485 · 气缸阀岛", "电磁阀 4", WireHealth.NoProtocol), (status.ModuleText, status.ChannelText, status.Health));
+        Assert.True(_inspector.CheckReady(Node("C01-L01-S01-F01").Id).IsFailure);
+    }
+
+    [Fact]
+    public async Task ChannelConfig_IsPersisted()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var config = new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [1, 2], aliases: [new(2, "压合")])]);
+        await ConfigureAsync(relay, config);
+
+        var stored = Assert.Single((await _deviceRepository.ListByBusAsync(_busId, CancellationToken.None)).Value);
+
+        Assert.Equal(config, stored.Channels);
+    }
+
+    // ---------- 硬件映射页 ----------
+
+    [Fact]
+    public async Task MappingPage_MapsChannelToSelectedPosition_AndLocatesIt()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [1, 2], aliases: [new(2, "压合")])]));
+
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+
+        // 只列出启用的通道：模块标题 + 2 路
+        var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        Assert.Equal(["继电器 1", "压合"], channels.Select(c => c.NameText));
+        Assert.IsType<Solve.UI.ViewModels.MappingModuleViewModel>(page.Hardware[0]);
+
+        // 系统根不能接线
+        Assert.Equal(TopologyLevel.System, page.SelectedItem!.Node.Level);
+        Assert.False(channels[1].MapCommand.CanExecute(null));
+
+        // 选中一个治具位，把"压合"关联上去
+        page.SelectedItem = page.Roots[0].Children[0].Children[0].Children[0].Children[0];
+        Assert.Equal("治具位 C01-L01-S01-F01", page.SelectedTitle);
+        page.PurposeInput = "压合";
+        await channels[1].MapCommand.ExecuteAsync();
+
+        var wire = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S01-F01").Id));
+        Assert.Equal((new ChannelRef(relay.Id, "relay", 2), "压合"), (wire.Channel, wire.Purpose));
+        var mapped = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.NameText == "压合");
+        Assert.True(mapped.IsMapped);
+        Assert.StartsWith("治具位 C01-L01-S01-F01", mapped.MappedText);
+
+        // 只看未映射；定位回到映射的位置
+        page.UnmappedOnly = true;
+        Assert.Equal(["继电器 1"], page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Select(c => c.NameText));
+        page.UnmappedOnly = false;
+        page.SelectedItem = page.Roots[0];
+        page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.NameText == "压合").LocateCommand.Execute(null);
+        Assert.Equal(Node("C01-L01-S01-F01").Id, page.SelectedItem!.Node.Id);
+        page.Dispose();
     }
 
     // ---------- 运行状态与联锁判据 ----------
@@ -330,9 +451,9 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.Equal("1# RS-485 · 电源", statuses[0].ModuleText);
         Assert.Equal(WireHealth.Waiting, statuses[0].Health);
 
-        // 继电器板没有协议（驱动未就绪）：这路接线不可用，联锁拒绝
-        Assert.Equal(WireHealth.Fault, statuses[1].Health);
-        Assert.Equal(WireHealth.Fault, _inspector.Summarize(product));
+        // 继电器板没有协议：只登记接线、不算故障，但联锁照样拒绝（没有协议就没有可信的状态）
+        Assert.Equal(WireHealth.NoProtocol, statuses[1].Health);
+        Assert.Equal(WireHealth.Waiting, _inspector.Summarize(product));
         Assert.True(_inspector.CheckReady(product).IsFailure);
 
         // 电源在线：层位本身只有电源这一路，就绪

@@ -7,7 +7,7 @@ using Solve.Core.Domain.Devices;
 namespace Solve.UI.ViewModels;
 
 /// <summary>
-/// 编辑单个已挂载模块的表单：驱动、名称、地址、备注都可改，所属总线不可改。
+/// 编辑单个已挂载模块的表单：驱动、名称、地址、备注、参数、通道都可改，所属总线不可改。
 /// 地址以文本录入，保存时解析，非整数直接在表单上报错，不触达存储。
 /// </summary>
 public sealed class DeviceEditViewModel : ViewModelBase
@@ -37,9 +37,10 @@ public sealed class DeviceEditViewModel : ViewModelBase
             if (!SetProperty(ref _selectedDriver, value) || value is null)
                 return;
 
-            // 换驱动后参数按新驱动的声明重新生成；换回原驱动时恢复原来的值
-            var values = _original is not null && value.Driver.Id == _original.Driver ? _original.Parameters : ParameterValues.Empty;
-            Parameters.Load(value.Parameters, values);
+            // 换驱动后参数与通道按新驱动的声明重新生成；换回原驱动时恢复原来的值
+            var same = _original is not null && value.Driver.Id == _original.Driver;
+            Parameters.Load(value.Parameters, same ? _original!.Parameters : ParameterValues.Empty);
+            Channels.Load(value.Driver, same ? _original!.Channels : ModuleChannelConfig.Empty);
         }
     }
 
@@ -47,6 +48,11 @@ public sealed class DeviceEditViewModel : ViewModelBase
     /// 所选驱动声明的模块参数
     /// </summary>
     public ParameterFormViewModel Parameters { get; } = new();
+
+    /// <summary>
+    /// 这台模块启用哪几路通道、通道别名；通用模块在这里定义通道
+    /// </summary>
+    public ChannelFormViewModel Channels { get; } = new();
 
     public string Name
     {
@@ -91,6 +97,7 @@ public sealed class DeviceEditViewModel : ViewModelBase
 
         // 再次打开同一模块时 SelectedDriver 未变，不会触发重新生成，这里显式载入本模块的参数
         Parameters.Load(currentDriver.Parameters, device.Parameters);
+        Channels.Load(currentDriver.Driver, device.Channels);
         Name = device.Name;
         AddressText = device.Address.ToString(CultureInfo.InvariantCulture);
         Remark = device.Remark ?? string.Empty;
@@ -117,6 +124,13 @@ public sealed class DeviceEditViewModel : ViewModelBase
         if (parameters.IsFailure)
             return Fail(parameters.Error);
 
+        // 驱动已不在目录中且没换驱动时，不知道它有哪些通道：原样保留已保存的通道配置
+        var channels = _selectedDriver.IsUnknown && _selectedDriver.Driver.Id == _original.Driver
+            ? Result<ModuleChannelConfig>.Success(_original.Channels)
+            : Channels.Collect();
+        if (channels.IsFailure)
+            return Fail(channels.Error);
+
         var remark = Remark?.Trim();
         var device = _original with
         {
@@ -125,6 +139,7 @@ public sealed class DeviceEditViewModel : ViewModelBase
             Address = address,
             Remark = string.IsNullOrEmpty(remark) ? null : remark,
             Parameters = parameters.Value,
+            Channels = channels.Value,
         };
 
         var errors = device.Validate();

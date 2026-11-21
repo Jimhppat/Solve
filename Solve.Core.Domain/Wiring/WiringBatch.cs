@@ -74,7 +74,7 @@ public static class WiringBatch
     }
 
     /// <summary>
-    /// 按续接顺序列出通道，最多 <paramref name="needed"/> 路
+    /// 按续接顺序列出启用的通道，最多 <paramref name="needed"/> 路：模块上停用的通道（没接线的端子）跳过
     /// </summary>
     private static List<ChannelRef> Channels(IReadOnlyList<ChannelSource> sources, int startIndex, int needed)
     {
@@ -82,8 +82,14 @@ public static class WiringBatch
         for (var s = 0; s < sources.Count && channels.Count < needed; s++)
         {
             var source = sources[s];
-            for (var index = s == 0 ? startIndex : 1; index <= source.Group.Count && channels.Count < needed; index++)
-                channels.Add(new ChannelRef(source.Device, source.Group.Key, index));
+            var first = s == 0 ? startIndex : 1;
+            foreach (var index in source.Group.Enabled())
+            {
+                if (channels.Count >= needed)
+                    break;
+                if (index >= first)
+                    channels.Add(new ChannelRef(source.Device, source.Group.Key, index));
+            }
         }
 
         return channels;

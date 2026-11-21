@@ -21,7 +21,7 @@ public sealed record TwinWireLine(string Text, string HealthColor)
         var color = status.Health switch
         {
             WireHealth.Ready => "#10B981",
-            WireHealth.Waiting => "#94A3B8",
+            WireHealth.Waiting or WireHealth.NoProtocol => "#94A3B8",
             _ => "#EF4444",
         };
         return new TwinWireLine(string.Join(" · ", parts), color);

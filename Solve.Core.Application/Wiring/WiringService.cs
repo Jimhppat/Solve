@@ -159,8 +159,12 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
         {
             foreach (var binding in _bindings.Get(runtime.Id))
             {
-                if (_catalog.TryGet(binding.Device.Driver, out var driver) && driver.Channels.Count > 0)
-                    modules.Add(new WiringModule(runtime.Id, runtime.Descriptor.Name, binding.Device, driver));
+                // 只列出有启用通道的模块：没用到的模块、全部停用的通道组不出现在接线表单里
+                if (ModuleChannelLookup.Resolve(_catalog, binding.Device) is { IsSuccess: true } channels
+                    && channels.Value.Where(g => g.EnabledCount > 0).ToList() is { Count: > 0 } enabled)
+                {
+                    modules.Add(new WiringModule(runtime.Id, runtime.Descriptor.Name, binding.Device, enabled));
+                }
             }
         }
 
@@ -171,7 +175,9 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
     {
         if (_bindings.TryGet(channel.Device, out var binding))
         {
-            var group = _catalog.TryGet(binding.Device.Driver, out var driver) ? driver.FindChannelGroup(channel.Group) : null;
+            var group = ModuleChannelLookup.Resolve(_catalog, binding.Device) is { IsSuccess: true } channels
+                ? ModuleChannelLookup.Find(channels.Value, channel.Group)
+                : null;
             return group is not null
                 ? $"{binding.Device.Name} {group.ChannelName(channel.Index)}"
                 : $"{binding.Device.Name} {channel.Group} {channel.Index}";
@@ -204,6 +210,12 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
                 $"{device.Name}的「{group.Name}」只有 {group.Count} 路，没有第 {channel.Index} 路。"));
         }
 
+        if (!group.IsEnabled(channel.Index))
+        {
+            return Result<WiringPlan>.Failure(WiringErrors.ChannelNotDeclared(
+                $"{device.Name}的「{group.ChannelName(channel.Index)}」没有启用，请先在模块配置里启用这路通道。"));
+        }
+
         var wire = new Wire(WireId.New(), node, channel, group.Kind)
         {
             Purpose = Wire.NormalizeText(purpose),
@@ -229,7 +241,7 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
         if (!topology.TryGetNode(request.Root, out var root))
             return Result<WiringPlan>.Failure(WiringErrors.NodeNotFound());
 
-        // 通道组按驱动目录重新取：界面传来的声明可能已过期（驱动包被停用或升级）
+        // 通道组按驱动目录与模块配置重新取：界面传来的可能已过期（驱动包被停用、升级，或模块的通道配置被修改）
         var sources = new List<ChannelSource>(request.Sources.Count);
         foreach (var source in request.Sources)
         {
@@ -362,26 +374,31 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
         return Volatile.Read(ref _wires).Count(w => set.Contains(w.Channel.Device));
     }
 
-    public Result CheckDriverChange(DeviceId device, DriverDescriptor driver)
+    public Result CheckChannelChange(DeviceDescriptor device, DriverDescriptor driver)
     {
+        ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(driver);
+
+        var resolved = ModuleChannels.Resolve(driver, device.Channels);
+        if (resolved.IsFailure)
+            return Result.Failure(resolved.Error);
 
         var broken = new List<string>();
         foreach (var wire in Volatile.Read(ref _wires))
         {
-            if (wire.Channel.Device != device)
+            if (wire.Channel.Device != device.Id)
                 continue;
 
-            var group = driver.FindChannelGroup(wire.Channel.Group);
-            if (group is null || !group.Contains(wire.Channel.Index) || group.Kind != wire.Kind)
+            var group = ModuleChannelLookup.Find(resolved.Value, wire.Channel.Group);
+            if (group is null || !group.IsEnabled(wire.Channel.Index) || group.Kind != wire.Kind)
                 broken.Add(DescribeChannel(wire.Channel));
         }
 
         return broken.Count == 0
             ? Result.Success()
             : Result.Failure(WiringErrors.ChannelsInUseByWires(
-                $"「{driver.Name}」没有这些已接线的通道，或功能不同：{string.Join("、", broken.Take(WiringErrors.MaxListed))}" +
-                $"{(broken.Count > WiringErrors.MaxListed ? $" 等 {broken.Count} 路" : string.Empty)}。请先在设备拓扑页拆除这些接线再更换驱动。"));
+                $"修改后这些已接线的通道将不存在、被停用或功能改变：{string.Join("、", broken.Take(WiringErrors.MaxListed))}" +
+                $"{(broken.Count > WiringErrors.MaxListed ? $" 等 {broken.Count} 路" : string.Empty)}。请先在设备拓扑页拆除这些接线再修改。"));
     }
 
     // ==================== 内部 ====================
@@ -389,7 +406,7 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
     private Error? CheckWritable() => _loadError is { } error ? WiringErrors.LoadFailed(error) : null;
 
     /// <summary>
-    /// 模块 → 驱动 → 通道组。驱动未加载或未声明该组时无法接线
+    /// 模块 → 驱动的通道能力 + 模块的通道配置 → 通道组。驱动未加载、配置不符或没有这组通道时无法接线
     /// </summary>
     private Result<(DeviceDescriptor Device, ChannelGroup Group)> ResolveGroup(DeviceId deviceId, string? groupKey)
     {
@@ -397,16 +414,14 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
             return Result<(DeviceDescriptor, ChannelGroup)>.Failure(WiringErrors.DeviceNotFound());
 
         var device = binding.Device;
-        if (!_catalog.TryGet(device.Driver, out var driver))
-        {
-            return Result<(DeviceDescriptor, ChannelGroup)>.Failure(WiringErrors.ChannelNotDeclared(
-                $"{device.Name}的驱动「{device.Driver}」未加载，无法确认它有哪些通道。"));
-        }
+        var channels = ModuleChannelLookup.Resolve(_catalog, device);
+        if (channels.IsFailure)
+            return Result<(DeviceDescriptor, ChannelGroup)>.Failure(channels.Error);
 
-        var group = driver.FindChannelGroup(groupKey);
+        var group = ModuleChannelLookup.Find(channels.Value, groupKey);
         return group is null
             ? Result<(DeviceDescriptor, ChannelGroup)>.Failure(WiringErrors.ChannelNotDeclared(
-                $"{device.Name}（{driver.Name}）没有声明这组通道，不能接线。"))
+                $"{device.Name}没有这组通道，不能接线。"))
             : Result<(DeviceDescriptor, ChannelGroup)>.Success((device, group));
     }
 

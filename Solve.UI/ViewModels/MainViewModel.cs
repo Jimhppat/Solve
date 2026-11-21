@@ -20,8 +20,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public const int MasterConsoleNavIndex = 0;
     public const int BusConsoleNavIndex = 1;
     public const int TopologyNavIndex = 2;
-    public const int RuntimeLogNavIndex = 4;
-    public const int SettingsNavIndex = 5;
+    public const int HardwareMappingNavIndex = 3;
+    public const int RuntimeLogNavIndex = 5;
+    public const int SettingsNavIndex = 6;
 
     private Action<string>? _onEmergencyStop;
     private string _modeText = "仿真模式";
@@ -36,6 +37,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         DeviceLibrary = new DeviceLibraryViewModel();
         BusConsole = new BusConsoleViewModel { DeviceLibrary = DeviceLibrary };
         Topology = new TopologyViewModel();
+        HardwareMapping = new HardwareMappingViewModel();
         RuntimeLog = new RuntimeLogViewModel();
         Settings = new SettingsViewModel(onLogDirectoryChanged: OnLogDirectoryChanged);
         _currentPage = MasterConsole;
@@ -64,6 +66,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// 设备拓扑页。由组合根在配置库就绪后接入拓扑服务，设计器中不可编辑
     /// </summary>
     public TopologyViewModel Topology { get; }
+
+    /// <summary>
+    /// 硬件映射页：把总线上模块的通道关联到位置（拓扑节点）
+    /// </summary>
+    public HardwareMappingViewModel HardwareMapping { get; }
 
     /// <summary>
     /// 驱动库（扫描、导入、信任驱动包，启停驱动）。不在侧栏导航中，从模块配置窗口的「驱动库」按钮打开独立窗口
@@ -133,16 +140,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             MasterConsoleNavIndex => MasterConsole,
             BusConsoleNavIndex => BusConsole,
             TopologyNavIndex => Topology,
+            HardwareMappingNavIndex => HardwareMapping,
             RuntimeLogNavIndex => RuntimeLog,
             SettingsNavIndex => Settings,
-            _ => MasterConsole // 后续报文诊断（3）页面在此接入对应子 ViewModel
+            _ => MasterConsole // 后续报文诊断（4）页面在此接入对应子 ViewModel
         };
+
+        // 位置结构在拓扑页维护：每次进入映射页按当前拓扑与接线刷新
+        if (index == HardwareMappingNavIndex)
+            HardwareMapping.Refresh();
     }
 
     /// <summary>
     /// 接入设备拓扑服务（拓扑页：建档、扩缩容、节点浏览）。须在 UI 线程上调用，只能调用一次。
     /// </summary>
-    public void AttachTopology(ITopologyService topology) => Topology.Attach(topology);
+    public void AttachTopology(ITopologyService topology)
+    {
+        Topology.Attach(topology);
+        HardwareMapping.AttachTopology(topology);
+    }
 
     /// <summary>
     /// 接入总线挂载设备服务（总线页的设备页）。须在 UI 线程上调用。
@@ -169,12 +185,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public void AttachTwin(TwinStateStore twin) => MasterConsole.Twin.Attach(twin);
 
     /// <summary>
-    /// 接入接线运行视图：拓扑页的接线面板、主控台产品信息卡片的硬件状态。须在 UI 线程上调用，只能调用一次。
+    /// 接入接线运行视图：硬件映射页、拓扑页删除位置前的接线数提示、主控台产品信息卡片的硬件状态。须在 UI 线程上调用，只能调用一次。
     /// </summary>
     /// <param name="commands">按位置下发命令；为 null 时接线面板不显示命令按钮</param>
     public void AttachWiring(WiringInspector wiring, DeviceCommandService? commands = null)
     {
-        Topology.AttachWiring(wiring, commands);
+        Topology.AttachWiring(wiring);
+        HardwareMapping.AttachWiring(wiring, commands);
         MasterConsole.Twin.AttachWiring(wiring);
     }
 
@@ -232,7 +249,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         MasterConsole.Dispose();
         BusConsole.Dispose();
-        Topology.Dispose();
+        HardwareMapping.Dispose();
         RuntimeLog.Dispose();
     }
 }

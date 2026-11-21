@@ -8,10 +8,11 @@ using Solve.Core.Domain.Wiring;
 namespace Solve.Core.Application.Wiring;
 
 /// <summary>
-/// 可以接线的模块：驱动声明了通道
+/// 可以接线的模块：模块上有启用的通道
 /// </summary>
 /// <param name="BusName">所在总线的名称（界面显示）</param>
-public sealed record WiringModule(BusId BusId, string BusName, DeviceDescriptor Device, DriverDescriptor Driver);
+/// <param name="Channels">模块实际可用的通道组（驱动的通道能力 + 模块的通道配置），只含有启用通道的组</param>
+public sealed record WiringModule(BusId BusId, string BusName, DeviceDescriptor Device, IReadOnlyList<ChannelGroup> Channels);
 
 /// <summary>
 /// 一次接线变更的预览：保存时据 <see cref="Base"/> 判断预览是否过期
@@ -64,7 +65,7 @@ public interface IWiringService
     Task<Result> LoadAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// 可以接线的模块（驱动声明了通道），按总线名、地址排序
+    /// 可以接线的模块（模块上有启用的通道），按总线名、地址排序
     /// </summary>
     IReadOnlyList<WiringModule> ListModules();
 
