@@ -43,6 +43,44 @@ public sealed class WiringPlan
 }
 
 /// <summary>
+/// 映射草稿的一行：把一路通道接到一个位置
+/// </summary>
+public sealed record WiringDraftRow(TopologyNodeId Node, ChannelRef Channel)
+{
+    public string? Purpose { get; init; }
+
+    public string? Label { get; init; }
+}
+
+/// <summary>
+/// 草稿一行的校验结果
+/// </summary>
+/// <param name="Wire">按当前模块通道生成的接线；通道无法解析（模块已删除、通道已停用等）时为 null</param>
+/// <param name="Problem">这一行的问题（面向操作员）；没有问题为 null</param>
+public sealed record WiringRowCheck(Wire? Wire, string? Problem)
+{
+    public bool IsValid => Problem is null;
+}
+
+/// <summary>
+/// 映射草稿的预览：逐行的校验结果；全部通过时 <see cref="Plan"/> 可直接保存
+/// </summary>
+public sealed class WiringAssignPreview(IReadOnlyList<WiringRowCheck> rows, WiringPlan? plan)
+{
+    /// <summary>
+    /// 与草稿各行一一对应
+    /// </summary>
+    public IReadOnlyList<WiringRowCheck> Rows { get; } = rows;
+
+    /// <summary>
+    /// 全部行都没有问题时的保存计划；有任何问题为 null（整批不写，避免只接上一部分）
+    /// </summary>
+    public WiringPlan? Plan { get; } = plan;
+
+    public int ProblemCount => Rows.Count(r => !r.IsValid);
+}
+
+/// <summary>
 /// 接线用例服务：持有当前生效的接线（跟随拓扑），负责校验、预览与保存。
 /// </summary>
 /// <remarks>
@@ -83,6 +121,12 @@ public interface IWiringService
     /// 批量接线：把一个位置下面某一层的全部位置，依次接到连续的通道上
     /// </summary>
     Result<WiringPlan> PlanBatch(WiringBatchRequest request);
+
+    /// <summary>
+    /// 映射草稿：按行校验任意一组"位置 ← 通道"配对（可跨模块、跨总线、跳着选），逐行给出问题。
+    /// 只在读取失败或尚未建档时返回失败；行内问题放在预览里，全部通过才给出保存计划。纯内存计算，不写库。
+    /// </summary>
+    Result<WiringAssignPreview> PlanAssign(IReadOnlyList<WiringDraftRow> rows);
 
     Task<Result> ApplyAsync(WiringPlan plan, CancellationToken cancellationToken);
 

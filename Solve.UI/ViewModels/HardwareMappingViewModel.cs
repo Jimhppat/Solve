@@ -41,6 +41,17 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     private string? _message;
     private bool _isError;
     private bool _disposed;
+    private bool _isDraftMode;
+
+    // 硬件列表中勾选的通道（按通道定位）：列表重建（接线变化、筛选）后勾选不丢
+    private readonly HashSet<ChannelRef> _checkedChannels = [];
+
+    public HardwareMappingViewModel()
+    {
+        Draft = new MappingDraftViewModel(CheckedChannels, () => _purposeInput);
+        SelectVisibleChannelsCommand = new RelayCommand(() => SetVisibleChannels(true));
+        ClearChannelsCommand = new RelayCommand(() => SetVisibleChannels(false));
+    }
 
     public string PageTitle => "硬件映射";
 
@@ -48,6 +59,38 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     /// 选中位置的接线：查看、批量接线、修改、拆除、下发命令
     /// </summary>
     public WiringPanelViewModel Wiring { get; } = new();
+
+    /// <summary>
+    /// 映射草稿：取位置 → 取通道 → 组装预览 → 确认
+    /// </summary>
+    public MappingDraftViewModel Draft { get; }
+
+    /// <summary>
+    /// 中栏显示映射草稿（否则显示选中位置的接线）；草稿模式下硬件通道可以勾选
+    /// </summary>
+    public bool IsDraftMode
+    {
+        get => _isDraftMode;
+        set
+        {
+            if (!SetProperty(ref _isDraftMode, value))
+                return;
+
+            OnPropertyChanged(nameof(IsWiringMode));
+            foreach (var row in _hardware.OfType<MappingChannelViewModel>())
+                row.IsSelectable = value;
+            Draft.SetScope(_selectedItem?.Node, _bound);
+        }
+    }
+
+    public bool IsWiringMode => !_isDraftMode;
+
+    /// <summary>
+    /// 勾选当前列表中可见的全部通道（配合"只看未映射"使用）
+    /// </summary>
+    public RelayCommand SelectVisibleChannelsCommand { get; }
+
+    public RelayCommand ClearChannelsCommand { get; }
 
     // ==================== 位置树 ====================
 
@@ -66,6 +109,8 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
                 return;
 
             Wiring.ShowNode(value?.Node);
+            if (_isDraftMode)
+                Draft.SetScope(value?.Node, _bound);
             Message = null;
             OnPropertyChanged(nameof(SelectedTitle));
             OnPropertyChanged(nameof(CanMapHere));
@@ -180,6 +225,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
         _inspector = inspector;
         Wiring.Attach(inspector, commands);
+        Draft.Attach(inspector);
         inspector.Wiring.Changed += OnWiringChanged;
         Refresh();
     }
@@ -218,6 +264,8 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             Wiring.ShowNode(_selectedItem?.Node);
         }
 
+        if (_isDraftMode)
+            Draft.SetScope(_selectedItem?.Node, _bound);
         RebuildHardware();
         OnPropertyChanged(nameof(IsAvailable));
         OnPropertyChanged(nameof(ShowEmpty));
@@ -299,8 +347,10 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
         var map = inspector.Wiring.Current;
         var rows = new List<MappingRowViewModel>();
+        var available = new HashSet<ChannelRef>();
         foreach (var module in inspector.Wiring.ListModules())
         {
+            var moduleText = $"{module.BusName} · {module.Device.Name}";
             var channels = new List<MappingChannelViewModel>();
             foreach (var group in module.Channels)
             {
@@ -310,24 +360,64 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
                     TopologyNode? mapped = null;
                     if (map.TryGetByChannel(channel, out var wire) && map.Topology is { } topology && topology.TryGetNode(wire.Node, out var node))
                         mapped = node;
+                    else
+                        available.Add(channel);
 
                     if (_unmappedOnly && mapped is not null)
                         continue;
 
-                    channels.Add(new MappingChannelViewModel(channel, group.ChannelName(index), group.Kind.DisplayName(), mapped, wire,
-                        MapAsync, Locate, () => CanMapHere));
+                    channels.Add(new MappingChannelViewModel(channel, moduleText, group.ChannelName(index), group.Kind.DisplayName(), mapped, wire,
+                        MapAsync, Locate, () => CanMapHere, OnChannelCheckedChanged)
+                    {
+                        IsSelectable = _isDraftMode,
+                    });
                 }
             }
 
             if (channels.Count == 0)
                 continue;
 
-            rows.Add(new MappingModuleViewModel($"{module.BusName} · {module.Device.Name}（地址 {module.Device.Address}）"));
+            rows.Add(new MappingModuleViewModel($"{moduleText}（地址 {module.Device.Address}）"));
             rows.AddRange(channels);
         }
 
+        // 已映射或已不存在的通道不再算勾选（映射草稿确认后，接上的通道自动取消勾选）
+        _checkedChannels.IntersectWith(available);
+        foreach (var row in rows.OfType<MappingChannelViewModel>())
+            row.SetChecked(_checkedChannels.Contains(row.Channel));
+
         Hardware = rows;
         OnPropertyChanged(nameof(HasNoHardware));
+        Draft.OnExternalChanged();
+    }
+
+    /// <summary>
+    /// 映射草稿用的通道：硬件列表中勾选的、尚未映射的通道，按列表顺序
+    /// </summary>
+    private IReadOnlyList<MappingChannelViewModel> CheckedChannels()
+        => _hardware.OfType<MappingChannelViewModel>().Where(r => r.IsChecked && !r.IsMapped).ToList();
+
+    private void OnChannelCheckedChanged(MappingChannelViewModel row)
+    {
+        if (row.IsChecked)
+            _checkedChannels.Add(row.Channel);
+        else
+            _checkedChannels.Remove(row.Channel);
+        Draft.OnExternalChanged();
+    }
+
+    private void SetVisibleChannels(bool value)
+    {
+        foreach (var row in _hardware.OfType<MappingChannelViewModel>().Where(r => !r.IsMapped))
+        {
+            row.SetChecked(value);
+            if (value)
+                _checkedChannels.Add(row.Channel);
+            else
+                _checkedChannels.Remove(row.Channel);
+        }
+
+        Draft.OnExternalChanged();
     }
 
     private TopologyTreeItemViewModel? Find(EquipmentTopology topology, TopologyNodeId? id)
@@ -389,18 +479,27 @@ public sealed class MappingModuleViewModel(string header) : MappingRowViewModel
 public sealed class MappingChannelViewModel : MappingRowViewModel
 {
     private readonly Func<bool> _canMapHere;
+    private readonly Action<MappingChannelViewModel> _onCheckedChanged;
+    private bool _isChecked;
+    private bool _isSelectable;
 
+    /// <param name="moduleText">"总线 · 模块"，映射草稿里显示</param>
+    /// <param name="onCheckedChanged">勾选变化（映射草稿取通道）</param>
     public MappingChannelViewModel(
         ChannelRef channel,
+        string moduleText,
         string name,
         string kindText,
         TopologyNode? mapped,
         Wire? wire,
         Func<MappingChannelViewModel, Task> onMap,
         Action<MappingChannelViewModel> onLocate,
-        Func<bool> canMapHere)
+        Func<bool> canMapHere,
+        Action<MappingChannelViewModel> onCheckedChanged)
     {
         Channel = channel;
+        ModuleText = moduleText;
+        _onCheckedChanged = onCheckedChanged;
         NameText = name;
         KindText = kindText;
         MappedNode = mapped?.Id;
@@ -414,6 +513,42 @@ public sealed class MappingChannelViewModel : MappingRowViewModel
     }
 
     public ChannelRef Channel { get; }
+
+    public string ModuleText { get; }
+
+    /// <summary>
+    /// 映射草稿模式下未映射的通道可以勾选
+    /// </summary>
+    public bool IsSelectable
+    {
+        get => _isSelectable;
+        set
+        {
+            if (SetProperty(ref _isSelectable, value))
+                OnPropertyChanged(nameof(ShowCheckBox));
+        }
+    }
+
+    public bool ShowCheckBox => _isSelectable && !IsMapped;
+
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set
+        {
+            if (SetProperty(ref _isChecked, value))
+                _onCheckedChanged(this);
+        }
+    }
+
+    /// <summary>
+    /// 程序设置勾选（列表重建、全选）：不回调
+    /// </summary>
+    internal void SetChecked(bool value)
+    {
+        _isChecked = value;
+        OnPropertyChanged(nameof(IsChecked));
+    }
 
     public string NameText { get; }
 

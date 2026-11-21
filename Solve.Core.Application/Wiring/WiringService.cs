@@ -265,6 +265,75 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
         return Result<WiringPlan>.Success(new WiringPlan(map, candidate.Value, wires, operation));
     }
 
+    public Result<WiringAssignPreview> PlanAssign(IReadOnlyList<WiringDraftRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        if (CheckWritable() is { } blocked)
+            return Result<WiringAssignPreview>.Failure(blocked);
+
+        var map = Current;
+        if (map.Topology is not { } topology)
+            return Result<WiringAssignPreview>.Failure(WiringErrors.NoTopology());
+
+        // 先逐行解析通道（模块是否还在、通道是否启用），得到的接线再交给规则逐行校验
+        var problems = new string?[rows.Count];
+        var wires = new Wire?[rows.Count];
+        var resolvedIndexes = new List<int>(rows.Count);
+        var resolvedWires = new List<Wire>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i] ?? throw new ArgumentException("草稿行不能为 null。", nameof(rows));
+            var resolved = ResolveGroup(row.Channel.Device, row.Channel.Group);
+            if (resolved.IsFailure)
+            {
+                problems[i] = resolved.Error.Message;
+                continue;
+            }
+
+            var (device, group) = resolved.Value;
+            if (!group.IsEnabled(row.Channel.Index))
+            {
+                problems[i] = $"{device.Name}的「{group.ChannelName(row.Channel.Index)}」不存在或没有启用。";
+                continue;
+            }
+
+            var wire = new Wire(WireId.New(), row.Node, row.Channel, group.Kind)
+            {
+                Purpose = Wire.NormalizeText(row.Purpose),
+                Label = Wire.NormalizeText(row.Label),
+            };
+            wires[i] = wire;
+            resolvedIndexes.Add(i);
+            resolvedWires.Add(wire);
+        }
+
+        var checks = map.Check(resolvedWires, DescribeChannel);
+        for (var k = 0; k < checks.Count; k++)
+        {
+            if (checks[k] is { } problem)
+                problems[resolvedIndexes[k]] = problem.Message;
+        }
+
+        var results = new WiringRowCheck[rows.Count];
+        for (var i = 0; i < rows.Count; i++)
+            results[i] = new WiringRowCheck(wires[i], problems[i]);
+
+        // 有任何一行有问题就不给保存计划：整批要么全接上、要么一条不写，不会只接上一部分
+        WiringPlan? plan = null;
+        if (rows.Count > 0 && problems.All(p => p is null))
+        {
+            var candidate = map.WithAdded(resolvedWires, DescribeChannel);
+            if (candidate.IsSuccess)
+            {
+                plan = new WiringPlan(map, candidate.Value, resolvedWires,
+                    $"映射草稿：{resolvedWires.Count} 路，{string.Join("，", resolvedWires.Take(WiringErrors.MaxListed).Select(w => Describe(map, w)))}" +
+                    $"{(resolvedWires.Count > WiringErrors.MaxListed ? " 等" : string.Empty)}");
+            }
+        }
+
+        return Result<WiringAssignPreview>.Success(new WiringAssignPreview(results, plan));
+    }
+
     // ==================== 写入 ====================
 
     public async Task<Result> ApplyAsync(WiringPlan plan, CancellationToken cancellationToken)

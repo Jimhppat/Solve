@@ -171,14 +171,45 @@ public sealed class WiringMap
         if (Topology is not { } topology)
             return Result<WiringMap>.Failure(WiringErrors.NoTopology());
 
-        describe ??= static channel => $"通道 {channel.Group} {channel.Index}";
+        var problems = Check(added, describe);
+        if (problems.FirstOrDefault(p => p?.Code is WiringErrors.NodeNotFoundCode or WiringErrors.SystemNodeCode) is { } placement)
+            return Result<WiringMap>.Failure(placement);
 
         var fieldErrors = added.SelectMany(w => w.Validate()).DistinctBy(e => e.Code).ToList();
         if (fieldErrors.Count > 0)
             return Result<WiringMap>.Failure(WiringErrors.InvalidWire(fieldErrors));
 
-        var channelConflicts = new List<string>();
-        var pathConflicts = new List<string>();
+        // 逐行的冲突说明合成一条：先报通道占用，再报路径冲突
+        var channelConflicts = problems.Where(p => p?.Code == WiringErrors.ChannelInUseCode).Select(p => p!.Message).ToList();
+        if (channelConflicts.Count > 0)
+            return Result<WiringMap>.Failure(WiringErrors.ChannelInUse(channelConflicts));
+        var pathConflicts = problems.Where(p => p?.Code == WiringErrors.PathConflictCode).Select(p => p!.Message).ToList();
+        if (pathConflicts.Count > 0)
+            return Result<WiringMap>.Failure(WiringErrors.PathConflict(pathConflicts));
+
+        return Result<WiringMap>.Success(new WiringMap(topology, [.. All, .. added], [.. Detached]));
+    }
+
+    /// <summary>
+    /// 逐条校验一批待新增的接线（不改变快照），返回与 <paramref name="added"/> 一一对应的问题，没有问题为 null。
+    /// 批内按顺序判定：先出现的一条占用通道 / 路径，后面与它冲突的那条报错。用于映射草稿逐行标出问题。
+    /// </summary>
+    /// <remarks>
+    /// 各行问题的 Code：Wiring.NodeNotFound、Wiring.SystemNode、Wiring.InvalidWire（字段），
+    /// Wiring.ChannelInUse、Wiring.PathConflict（Message 是这一行的冲突说明，不是汇总文字）。
+    /// </remarks>
+    public IReadOnlyList<Error?> Check(IReadOnlyList<Wire> added, Func<ChannelRef, string>? describe = null)
+    {
+        ArgumentNullException.ThrowIfNull(added);
+        describe ??= static channel => $"通道 {channel.Group} {channel.Index}";
+
+        var problems = new Error?[added.Count];
+        if (Topology is not { } topology)
+        {
+            Array.Fill(problems, WiringErrors.NoTopology());
+            return problems;
+        }
+
         var byChannel = new Dictionary<ChannelRef, (Wire Wire, TopologyNode Node)>();
         foreach (var wire in All)
         {
@@ -187,22 +218,36 @@ public sealed class WiringMap
         }
 
         var byKey = BuildKeyIndex(topology, All);
-        foreach (var wire in added)
+        for (var i = 0; i < added.Count; i++)
         {
+            var wire = added[i] ?? throw new ArgumentException("接线不能为 null。", nameof(added));
             if (!topology.TryGetNode(wire.Node, out var node))
-                return Result<WiringMap>.Failure(WiringErrors.NodeNotFound());
+            {
+                problems[i] = WiringErrors.NodeNotFound();
+                continue;
+            }
+
             if (node.Level == TopologyLevel.System)
-                return Result<WiringMap>.Failure(WiringErrors.SystemNode());
+            {
+                problems[i] = WiringErrors.SystemNode();
+                continue;
+            }
+
+            if (wire.Validate() is { Count: > 0 } errors)
+            {
+                problems[i] = WiringErrors.InvalidWire(errors);
+                continue;
+            }
 
             if (byChannel.TryGetValue(wire.Channel, out var holder))
             {
-                channelConflicts.Add($"{describe(wire.Channel)} 已接到 {holder.Node.Address}");
+                problems[i] = new Error(WiringErrors.ChannelInUseCode, $"{describe(wire.Channel)} 已接到 {holder.Node.Address}");
                 continue;
             }
 
             if (FindPathConflict(byKey, wire, node) is { } other)
             {
-                pathConflicts.Add($"{node.Address} 与 {other.Node.Address} 都有「{wire.KindText}」");
+                problems[i] = new Error(WiringErrors.PathConflictCode, $"{node.Address} 与 {other.Node.Address} 都有「{wire.KindText}」");
                 continue;
             }
 
@@ -210,12 +255,7 @@ public sealed class WiringMap
             AddToKeyIndex(byKey, wire, node);
         }
 
-        if (channelConflicts.Count > 0)
-            return Result<WiringMap>.Failure(WiringErrors.ChannelInUse(channelConflicts));
-        if (pathConflicts.Count > 0)
-            return Result<WiringMap>.Failure(WiringErrors.PathConflict(pathConflicts));
-
-        return Result<WiringMap>.Success(new WiringMap(topology, [.. All, .. added], [.. Detached]));
+        return problems;
     }
 
     /// <summary>
