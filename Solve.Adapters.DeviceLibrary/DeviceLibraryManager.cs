@@ -96,6 +96,7 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
         => ExclusiveAsync(async () =>
         {
             var (_, packages) = await RescanCoreAsync(cancellationToken).ConfigureAwait(false);
+            LogSummary("手动扫描", packages);
             return Result<IReadOnlyList<DriverPackageInfo>>.Success(packages);
         }, cancellationToken);
 
@@ -142,7 +143,7 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
 
         return ExclusiveAsync(async () =>
         {
-            var package = Packages.FirstOrDefault(p => p.Id == packageId);
+            var package = Packages.FirstOrDefault(p => p.Id == packageId && !p.IsSource);
             if (package is null)
                 return Result<IReadOnlyList<DriverPackageInfo>>.Failure(DeviceLibraryErrors.PackageNotFound(packageId));
             if (!package.CanRevoke)
@@ -206,7 +207,7 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
 
         return ExclusiveAsync(async () =>
         {
-            var existing = ScanOrEmpty(RootDirectory, _logger, cancellationToken);
+            var existing = ScanOrEmpty(RootDirectory, _logger, cancellationToken).Packages;
             var imported = PackageImporter.Import(RootDirectory, sourceDirectory, overwrite, existing, _logger, cancellationToken);
             if (imported.IsFailure)
                 return Result<IReadOnlyList<DriverPackageInfo>>.Failure(imported.Error);
@@ -219,7 +220,8 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
 
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
-        var scanned = ScanOrEmpty(RootDirectory, _logger, cancellationToken);
+        var scan = ScanOrEmpty(RootDirectory, _logger, cancellationToken);
+        var scanned = scan.Packages;
         var records = await ReadRecordsAsync(scanned, cancellationToken).ConfigureAwait(false);
 
         // 已信任且指纹一致的包是载入候选；候选之间（以及与内置驱动）声明的驱动标识重复时，涉及的包都不载入
@@ -243,16 +245,21 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             await LoadAndTrustAsync(package, cancellationToken).ConfigureAwait(false);
 
         RebuildCatalog();
-        var packages = Evaluate(scanned, records);
+        var packages = Evaluate(scan, records);
         Volatile.Write(ref _packages, packages);
 
         foreach (var package in packages)
             LogPackage(package);
 
-        _logger.LogInformation("驱动库 {Root}：驱动包 {Total} 个，已载入 {Loaded} 个，待确认 {Pending} 个，第三方驱动 {Drivers} 个",
-            RootDirectory, packages.Count, packages.Count(p => p.Status == DriverPackageStatus.Loaded),
-            packages.Count(p => p.Status == DriverPackageStatus.PendingApproval), Drivers.Count);
+        LogSummary("启动扫描", packages);
     }
+
+    private void LogSummary(string trigger, IReadOnlyList<DriverPackageInfo> packages)
+        => _logger.LogInformation(
+            "驱动库 {Root}（{Trigger}）：驱动包 {Total} 个，已载入 {Loaded} 个，待确认 {Pending} 个，未编译的驱动源码 {NotBuilt} 个，第三方驱动 {Drivers} 个",
+            RootDirectory, trigger, packages.Count(p => !p.IsSource), packages.Count(p => p.Status == DriverPackageStatus.Loaded),
+            packages.Count(p => p.Status == DriverPackageStatus.PendingApproval), packages.Count(p => p.Status == DriverPackageStatus.NotBuilt),
+            Drivers.Count);
 
     /// <summary>
     /// 启动时载入候选之间的驱动标识冲突：包标识 → 原因。与内置驱动重复只淘汰该包；两个包重复则两个都淘汰。
@@ -314,7 +321,8 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
         string fingerprint,
         Func<DriverPackageInfo, bool> allowed)
     {
-        var package = packages.FirstOrDefault(p => p.Id == packageId);
+        // 源码项目可能与已移走但仍在使用的包同一标识：它不是驱动包，不参与信任 / 忽略
+        var package = packages.FirstOrDefault(p => p.Id == packageId && !p.IsSource);
         if (package is null)
             return DeviceLibraryErrors.PackageNotFound(packageId);
         if (!string.Equals(package.Fingerprint, fingerprint, StringComparison.Ordinal))
@@ -331,15 +339,16 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
     private async Task<(IReadOnlyList<ScannedPackage> Scanned, IReadOnlyList<DriverPackageInfo> Packages)> RescanCoreAsync(
         CancellationToken cancellationToken)
     {
-        var scanned = ScanOrEmpty(RootDirectory, _logger, cancellationToken);
-        var records = await ReadRecordsAsync(scanned, cancellationToken).ConfigureAwait(false);
-        var packages = Evaluate(scanned, records);
+        var scan = ScanOrEmpty(RootDirectory, _logger, cancellationToken);
+        var records = await ReadRecordsAsync(scan.Packages, cancellationToken).ConfigureAwait(false);
+        var packages = Evaluate(scan, records);
         Volatile.Write(ref _packages, packages);
-        return (scanned, packages);
+        return (scan.Packages, packages);
     }
 
-    private IReadOnlyList<DriverPackageInfo> Evaluate(IReadOnlyList<ScannedPackage> scanned, Records records)
+    private IReadOnlyList<DriverPackageInfo> Evaluate(LibraryScan scan, Records records)
     {
+        var scanned = scan.Packages;
         var duplicates = scanned
             .Where(p => p.Manifest is not null)
             .GroupBy(p => p.Manifest!.Id, StringComparer.Ordinal)
@@ -377,13 +386,24 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             });
         }
 
+        // 驱动源码：驱动库里已有同一包标识的驱动包，说明编译过，不再单独列出；否则提示"未编译"（清单无效的提示"无效"）
+        var built = scanned.Where(p => p.Manifest is not null).Select(p => p.Manifest!.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var source in scan.Sources)
+        {
+            if (source.Manifest is { } m && built.Contains(m.Id))
+                continue;
+
+            results.Add(Evaluate(source));
+        }
+
         // 需要操作员处理的排在前面：待确认 → 异常 → 其余，同组按包标识
         return results
             .OrderBy(p => p.Status switch
             {
                 DriverPackageStatus.PendingApproval => 0,
                 DriverPackageStatus.Conflict or DriverPackageStatus.Invalid or DriverPackageStatus.Incompatible
-                    or DriverPackageStatus.LoadFailed or DriverPackageStatus.ApprovedRestartRequired => 1,
+                    or DriverPackageStatus.LoadFailed or DriverPackageStatus.ApprovedRestartRequired
+                    or DriverPackageStatus.NotBuilt => 1,
                 _ => 2,
             })
             .ThenBy(p => p.Id, StringComparer.Ordinal)
@@ -464,6 +484,31 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
         return ConflictOr(info with { Status = status, Problem = info.WasApproved ? "内容与上次信任的版本不同。" : null }, manifest, claims);
     }
 
+    /// <summary>
+    /// 还没有编译出驱动包的驱动源码项目（或清单无效的源码项目）。只是提示，不能信任、不执行任何代码
+    /// </summary>
+    private static DriverPackageInfo Evaluate(SourceProject source)
+    {
+        if (source.Manifest is not { } manifest)
+        {
+            return new DriverPackageInfo(source.RelativeDirectory, source.RelativeDirectory, source.RelativeDirectory, "-", "-",
+                string.Empty, DriverPackageStatus.Invalid,
+                $"驱动源码项目的 {SdkInfo.ManifestFileName} 无效：{string.Join("；", source.Problems)}", [])
+            {
+                IsSource = true,
+            };
+        }
+
+        return new DriverPackageInfo(manifest.Id, source.RelativeDirectory, manifest.Name, manifest.Version, manifest.Author,
+            string.Empty, DriverPackageStatus.NotBuilt,
+            $"这是驱动源码，驱动库中还没有它编译出的驱动包。编译 {source.ProjectFile}（或整个解决方案）后，" +
+            $"驱动包会自动输出到驱动库下的 {manifest.Id} 目录，再点「扫描」即可信任载入。只运行主程序不会编译驱动项目。",
+            Entries(manifest))
+        {
+            IsSource = true,
+        };
+    }
+
     private static DriverPackageInfo ConflictOr(DriverPackageInfo info, PackageManifest manifest, IReadOnlyDictionary<DriverId, string> claims)
     {
         foreach (var driver in manifest.Drivers)
@@ -495,7 +540,7 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             })
             .ToList();
 
-    private static IReadOnlyList<ScannedPackage> ScanOrEmpty(string root, ILogger logger, CancellationToken cancellationToken)
+    private static LibraryScan ScanOrEmpty(string root, ILogger logger, CancellationToken cancellationToken)
     {
         try
         {
@@ -505,7 +550,7 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
         {
             logger.LogError(ex, "无法读取驱动库目录 {Root}，本次没有第三方驱动", root);
-            return [];
+            return LibraryScan.Empty;
         }
     }
 
@@ -764,6 +809,12 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
     {
         if (package.Status == DriverPackageStatus.Loaded)
             return;
+
+        if (package.Status == DriverPackageStatus.NotBuilt)
+        {
+            _logger.LogWarning("驱动源码 {Directory}（包标识 {PackageId}）还没有编译出驱动包", package.Directory, package.Id);
+            return;
+        }
 
         _logger.LogWarning("驱动包 {PackageId} {Version}（目录 {Directory}，指纹 {Fingerprint}）未载入：{Status}，{Reason}",
             package.Id, package.Version, package.Directory, package.Fingerprint, package.Status,

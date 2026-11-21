@@ -80,7 +80,7 @@ public sealed class DeviceLibraryViewModel : ViewModelBase
     /// </summary>
     public int PendingCount => Packages.Count(p => p.Package.Status == DriverPackageStatus.PendingApproval);
 
-    public string SummaryText => $"共 {Packages.Count} 个驱动包，待确认 {PendingCount} 个";
+    public string SummaryText => Describe(Packages.Select(p => p.Package).ToList());
 
     public DriverPackageItemViewModel? SelectedPackage
     {
@@ -345,8 +345,15 @@ public sealed class DeviceLibraryViewModel : ViewModelBase
         IsMessageError = false;
     }
 
+    /// <summary>
+    /// 驱动源码项目不是驱动包，不计入包数；有未编译的源码时单独写出数量，提示先编译
+    /// </summary>
     private static string Describe(IReadOnlyList<DriverPackageInfo> packages)
-        => $"共 {packages.Count} 个驱动包，待确认 {packages.Count(p => p.Status == DriverPackageStatus.PendingApproval)} 个";
+    {
+        var text = $"共 {packages.Count(p => !p.IsSource)} 个驱动包，待确认 {packages.Count(p => p.Status == DriverPackageStatus.PendingApproval)} 个";
+        var notBuilt = packages.Count(p => p.Status == DriverPackageStatus.NotBuilt);
+        return notBuilt > 0 ? $"{text}，未编译的驱动源码 {notBuilt} 个" : text;
+    }
 
     private void Show(IReadOnlyList<DriverPackageInfo> packages)
     {
@@ -418,6 +425,7 @@ public sealed class DriverPackageItemViewModel
             DriverPackageStatus.Invalid => ("无效", "#EF4444"),
             DriverPackageStatus.Conflict => ("冲突", "#EF4444"),
             DriverPackageStatus.LoadFailed => ("载入失败", "#EF4444"),
+            DriverPackageStatus.NotBuilt => ("未编译", "#F59E0B"),
             _ => ("未知", "#94A3B8"),
         };
     }
