@@ -148,6 +148,35 @@
             </StackPanel>
         </Border>
 
+        <!-- 带参数的命令：按驱动声明逐项输入设定值，不合法的原因显示在该输入框下方；下发后照常过联锁、按需确认 -->
+        <StackPanel Spacing="12" IsVisible="{Binding IsArgumentInputOpen}" IsEnabled="{Binding CanCommand}">
+            <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+            <TextBlock Text="{Binding ArgumentTitle}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource SemiColorText0}" />
+            <ItemsControl ItemsSource="{Binding ArgumentInputs}" Grid.IsSharedSizeScope="True">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CommandArgumentInputViewModel">
+                        <Grid RowDefinitions="Auto,Auto" ColumnSpacing="12" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="72" SharedSizeGroup="ArgumentLabel" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Classes="label" Text="{Binding Label}" />
+                            <TextBox Grid.Column="1" Width="140" HorizontalAlignment="Left"
+                                     AutomationProperties.Name="{Binding Label}"
+                                     PlaceholderText="{Binding RangeText}" Text="{Binding Text}" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Classes="message error" Margin="0,4,0,0"
+                                       IsVisible="{Binding HasError}" Text="{Binding Error}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Content="取消" Command="{Binding CancelArgumentsCommand}" />
+                <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="下发" MinWidth="72"
+                        Command="{Binding SubmitArgumentsCommand}" />
+            </StackPanel>
+        </StackPanel>
+
         <!-- 命令确认：高危命令每次都要；实机模式下的输出动作也要。写明位置、通道、受影响的产品位数与传输模式 -->
         <Border Classes="notice" Classes.danger="{Binding IsPendingHazardous}" IsVisible="{Binding IsCommandConfirmOpen}">
             <StackPanel Spacing="10">

@@ -655,7 +655,7 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             var powerRow = panel.Rows[0];
             var relayRow = panel.Rows[1];
             Assert.Equal(["打开输出", "关闭输出"], powerRow.Commands.Select(c => c.Name));
-            Assert.Equal(["吸合", "释放", "高压脉冲"], relayRow.Commands.Select(c => c.Name));
+            Assert.Equal(["吸合", "释放", "高压脉冲", "定时吸合"], relayRow.Commands.Select(c => c.Name));
             Assert.True(relayRow.Commands[2].IsHazardous);
 
             // 仿真下输出动作直接执行
@@ -692,6 +692,136 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             Assert.True(panel.IsError);
             Assert.Contains("响应超时", panel.Message);
             Assert.Equal(2, CommandFrames(0x10));
+        }
+        finally
+        {
+            panel.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task WiringPanel_CommandWithArguments_ValidatesInput_ConfirmsWithValues_AndCancelSendsNothing()
+    {
+        var (power, relay) = await WireDefaultAsync();
+        SetOnline(power, relay);
+
+        // 实机模式：输出动作每次都要确认，确认文案列出参数值
+        var panel = new WiringPanelViewModel();
+        panel.Attach(_inspector, Service(new DeviceCommandOptions { IsHardware = true }));
+        panel.ShowNode(Node("C01-L01-S01-F01-P01"));
+        try
+        {
+            var timedOn = panel.Rows[1].Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
+
+            // 点了带参数的命令：先出输入项，不解析、不下发
+            timedOn.Command.Execute(null);
+            Assert.True(panel.IsArgumentInputOpen);
+            Assert.False(panel.IsCommandConfirmOpen);
+            Assert.StartsWith("定时吸合 · ", panel.ArgumentTitle);
+            Assert.Contains("继电器板", panel.ArgumentTitle);
+            Assert.Equal(["时长（s）", "延迟（ms）"], panel.ArgumentInputs.Select(i => i.Label));
+            Assert.Equal(["", "0"], panel.ArgumentInputs.Select(i => i.Text));
+            Assert.Equal("0.1～60", panel.ArgumentInputs[0].RangeText);
+            var seconds = panel.ArgumentInputs[0];
+            var delay = panel.ArgumentInputs[1];
+
+            // 输入即校验，原因显示在输入项旁；必填留空只在下发时提示
+            Assert.False(seconds.HasError);
+            seconds.Text = "abc";
+            Assert.Equal("时长必须是数字。", seconds.Error);
+            seconds.Text = "61";
+            Assert.Contains("时长 61 s 超出范围 [0.1, 60] s", seconds.Error);
+            seconds.Text = "";
+            Assert.False(seconds.HasError);
+
+            await panel.SubmitArgumentsCommand.ExecuteAsync();
+            Assert.Equal("请输入时长。", seconds.Error);
+            Assert.True(panel.IsArgumentInputOpen);
+            Assert.False(panel.IsCommandConfirmOpen);
+
+            // 一次标出全部不合法的输入项
+            delay.Text = "2000";
+            await panel.SubmitArgumentsCommand.ExecuteAsync();
+            Assert.True(seconds.HasError);
+            Assert.Contains("延迟 2000 ms 超出范围", delay.Error);
+            Assert.False(panel.IsCommandConfirmOpen);
+
+            // 合法：可选参数留空由内核补默认值，确认文案列出完整参数；输入项收起
+            seconds.Text = "2.5";
+            delay.Text = "";
+            await panel.SubmitArgumentsCommand.ExecuteAsync();
+            Assert.True(panel.IsCommandConfirmOpen);
+            Assert.False(panel.IsArgumentInputOpen);
+            Assert.Contains("参数：时长 2.5 s、延迟 0 ms", panel.CommandConfirmText);
+            Assert.Equal(new Dictionary<string, double> { ["seconds"] = 2.5, ["delay"] = 0 }, panel.PendingCommand!.Request.Arguments);
+
+            // 取消确认：什么都不发
+            panel.CancelCommandCommand.Execute(null);
+            Assert.False(panel.IsCommandConfirmOpen);
+            Assert.Equal(0, RelayFrames(TestRelayDriver.TimedOnCode));
+
+            // 关掉输入项：同样什么都不发
+            timedOn.Command.Execute(null);
+            Assert.Equal("", panel.ArgumentInputs[0].Text);
+            panel.CancelArgumentsCommand.Execute(null);
+            Assert.False(panel.IsArgumentInputOpen);
+            Assert.Equal(0, RelayFrames(TestRelayDriver.TimedOnCode));
+
+            // 再来一次并确认：报文发出
+            timedOn.Command.Execute(null);
+            panel.ArgumentInputs[0].Text = "２．５";
+            await panel.SubmitArgumentsCommand.ExecuteAsync();
+            Assert.Equal(2.5, panel.PendingCommand!.Request.Arguments["seconds"]);
+            panel.ConfirmCommandCommand.Execute(null);
+            await WaitUntilAsync(() => panel.Message?.StartsWith("已执行「定时吸合」") == true);
+            Assert.False(panel.IsError);
+            Assert.Equal(1, RelayFrames(TestRelayDriver.TimedOnCode));
+        }
+        finally
+        {
+            panel.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task WiringPanel_CommandWithArguments_SubmitIsNotReentrant_AndOtherActionsCloseTheInput()
+    {
+        var (power, relay) = await WireDefaultAsync();
+        SetOnline(power, relay);
+        var panel = new WiringPanelViewModel();
+        panel.Attach(_inspector, Service());
+        panel.ShowNode(Node("C01-L01-S01-F01-P01"));
+        try
+        {
+            var relayRow = panel.Rows[1];
+            var timedOn = relayRow.Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
+
+            // 再点同一命令保留已输入的值；点不带参数的命令则收起输入项
+            timedOn.Command.Execute(null);
+            panel.ArgumentInputs[0].Text = "3";
+            timedOn.Command.Execute(null);
+            Assert.Equal("3", panel.ArgumentInputs[0].Text);
+            relayRow.Commands.Single(c => c.Option.Key == TestRelayDriver.Off).Command.Execute(null);
+            Assert.False(panel.IsArgumentInputOpen);
+            await WaitUntilAsync(() => panel.Message?.StartsWith("已执行「释放」") == true && panel.CanCommand);
+
+            // 换了位置：收起
+            timedOn.Command.Execute(null);
+            panel.ShowNode(Node("C01-L01-S01-F01-P02"));
+            Assert.False(panel.IsArgumentInputOpen);
+            panel.ShowNode(Node("C01-L01-S01-F01-P01"));
+            timedOn = panel.Rows[1].Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
+
+            // 仿真下输出动作不用确认：连点两次"下发"只发出一帧（执行期间按钮禁用，下发后输入项已收起）
+            timedOn.Command.Execute(null);
+            panel.ArgumentInputs[0].Text = "1";
+            panel.SubmitArgumentsCommand.Execute(null);
+            Assert.False(panel.SubmitArgumentsCommand.CanExecute(null));
+            panel.SubmitArgumentsCommand.Execute(null);
+            await WaitUntilAsync(() => panel.Message?.StartsWith("已执行「定时吸合」") == true);
+            Assert.False(panel.IsArgumentInputOpen);
+            Assert.True(panel.CanCommand);
+            Assert.Equal(1, RelayFrames(TestRelayDriver.TimedOnCode));
         }
         finally
         {
