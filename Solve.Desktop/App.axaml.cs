@@ -97,12 +97,25 @@ public partial class App : Application
                     if (_host.BusService is not null)
                     {
                         var isHardware = report.Mode?.Mode == TransportMode.Hardware;
-                        var modeText = isHardware ? "实机模式 (Hardware)" : "仿真模式 (Dry-Run)";
+                        var modeText = isHardware ? "生产模式 (实机)" : "仿真模式 (Dry-Run)";
                         await vm.InitializeAsync(
                             _host.BusService,
                             modeText,
                             isHardware,
                             reason => _host.EmergencyStop(reason));
+                    }
+
+                    // 状态栏滑块：生产 / 仿真切换。保存成功后关闭窗口，Main 在释放全部通道、关闭日志之后启动新实例
+                    if (_host.ModeSwitch is { } modeSwitch)
+                    {
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.AttachModeSwitch(modeSwitch, () =>
+                        {
+                            if (!host.RequestRestart("操作员切换生产 / 仿真模式"))
+                                return false;
+
+                            Dispatcher.UIThread.Post(() => desktop.Shutdown());
+                            return true;
+                        }));
                     }
 
                     // 启动失败时总线服务可能为空、上面不会初始化，问题也必须让操作员看到，而不只是写进日志

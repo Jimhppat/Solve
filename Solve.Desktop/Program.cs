@@ -1,4 +1,6 @@
 ﻿using System;
+using System.ComponentModel;
+using System.Diagnostics;
 using Avalonia;
 using Microsoft.Extensions.Logging;
 using Solve.Desktop.Composition;
@@ -21,9 +23,10 @@ class Program
     public static int Main(string[] args)
     {
         var host = AppHost.Create(DesktopOptions.FromArgs(args, AppContext.BaseDirectory));
+        int exitCode;
         try
         {
-            return BuildAvaloniaApp(host).StartWithClassicDesktopLifetime(args);
+            exitCode = BuildAvaloniaApp(host).StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)
         {
@@ -34,6 +37,43 @@ class Program
         finally
         {
             host.Shutdown(ShutdownTimeout);
+        }
+
+        // 只在正常退出时重启：异常退出已在上面重新抛出，UI 线程故障退出（非 0 退出码）也不重启，避免带着故障反复拉起。
+        // 此时总线已释放、日志已关闭，新实例不会与本进程争用文件和通道
+        if (host.RestartRequested && exitCode == 0)
+            return Relaunch(args) ? exitCode : RelaunchFailedExitCode;
+
+        return exitCode;
+    }
+
+    /// <summary>
+    /// 模式切换后重启新实例失败时的退出码。日志此时已关闭，只能写标准错误；模式已保存，手动启动即按新模式运行
+    /// </summary>
+    private const int RelaunchFailedExitCode = 2;
+
+    private static bool Relaunch(string[] args)
+    {
+        var startInfo = ProcessRelaunch.CreateStartInfo(args);
+        if (startInfo is null)
+        {
+            Console.Error.WriteLine("模式已切换，但无法确定程序路径，未能自动重启。请手动启动程序。");
+            return false;
+        }
+
+        try
+        {
+            using var process = Process.Start(startInfo);
+            if (process is not null)
+                return true;
+
+            Console.Error.WriteLine("模式已切换，但新实例未能启动。请手动启动程序。");
+            return false;
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or PlatformNotSupportedException)
+        {
+            Console.Error.WriteLine($"模式已切换，但自动重启失败：{ex.Message}。请手动启动程序。");
+            return false;
         }
     }
 
