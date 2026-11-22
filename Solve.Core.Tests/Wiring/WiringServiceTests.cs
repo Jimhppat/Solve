@@ -767,6 +767,13 @@ public sealed class WiringServiceTests : IAsyncLifetime
         var statuses = _inspector.Inspect(product);
         Assert.Equal([true, false], statuses.Select(s => s.IsInherited));
         Assert.Equal("1# RS-485 · 电源", statuses[0].ModuleText);
+
+        // 只看本位置：产品位只有自己的继电器，层位只有自己的电源
+        var own = Assert.Single(_inspector.InspectOwn(product));
+        Assert.False(own.IsInherited);
+        Assert.Equal(statuses[1].Wire.Id, own.Wire.Id);
+        Assert.Equal(statuses[0].Wire.Id, Assert.Single(_inspector.InspectOwn(Node("C01-L01").Id)).Wire.Id);
+        Assert.Empty(_inspector.InspectOwn(Node("C01-L01-S01").Id));
         Assert.Equal(WireHealth.Waiting, statuses[0].Health);
 
         // 继电器板没有协议：只登记接线、不算故障，但联锁照样拒绝（没有协议就没有可信的状态）

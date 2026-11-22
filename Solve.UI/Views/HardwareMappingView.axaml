@@ -279,7 +279,7 @@
                 </Grid>
             </Border>
 
-            <!-- 中（按位置查看）：选中位置的接线（上级继承的在前）；批量接线、修改、拆除、命令 -->
+            <!-- 中（按位置查看）：选中位置自己的接线（不列上级的）；批量接线、修改、拆除、命令 -->
             <Border Grid.Column="2" Classes="panel" Padding="20,16" IsVisible="{Binding IsWiringMode}">
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="8">

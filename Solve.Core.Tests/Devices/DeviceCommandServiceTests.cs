@@ -647,16 +647,13 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         await StartPollingAsync(power, relay);
         var panel = new WiringPanelViewModel();
         panel.Attach(_inspector, Service());
-        panel.ShowNode(Node("C01-L01-S01-F01-P01"));
+        panel.ShowNode(Node("C01-L01"));
         try
         {
-            // 上级（层位）的电源在前，产品位自己的继电器在后；写参数类命令不在界面上提供
-            Assert.Equal(2, panel.Rows.Count);
-            var powerRow = panel.Rows[0];
-            var relayRow = panel.Rows[1];
+            // 层位只列自己的电源；写参数类命令不在界面上提供
+            var powerRow = Assert.Single(panel.Rows);
+            Assert.True(powerRow.IsOwn);
             Assert.Equal(["打开输出", "关闭输出"], powerRow.Commands.Select(c => c.Name));
-            Assert.Equal(["吸合", "释放", "高压脉冲", "定时吸合"], relayRow.Commands.Select(c => c.Name));
-            Assert.True(relayRow.Commands[2].IsHazardous);
 
             // 仿真下输出动作直接执行
             powerRow.Commands[0].Command.Execute(null);
@@ -667,6 +664,12 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             powerRow.Commands[1].Command.Execute(null);
             await WaitUntilAsync(() => panel.Message?.StartsWith("已执行「关闭输出」") == true);
             Assert.Equal(2, CommandFrames(0x10));
+
+            // 产品位只列自己的继电器：层位上的电源不在下级重复列出
+            panel.ShowNode(Node("C01-L01-S01-F01-P01"));
+            var relayRow = Assert.Single(panel.Rows);
+            Assert.Equal(["吸合", "释放", "高压脉冲", "定时吸合"], relayRow.Commands.Select(c => c.Name));
+            Assert.True(relayRow.Commands[2].IsHazardous);
 
             // 高危：先显示确认，确认后才发出报文；取消则什么都不发
             relayRow.Commands[2].Command.Execute(null);
@@ -687,11 +690,11 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             await _polling!.DisposeAsync();
             _polling = null;
             _statuses.Set(new ModuleStatus(relay.Id, _runtime.Id, ModuleCommState.CommFault, "响应超时", DateTimeOffset.UtcNow, 3, []));
-            powerRow.Commands[0].Command.Execute(null);
+            relayRow.Commands[0].Command.Execute(null);
             await WaitUntilAsync(() => panel.Message?.StartsWith("联锁未满足") == true);
             Assert.True(panel.IsError);
             Assert.Contains("响应超时", panel.Message);
-            Assert.Equal(2, CommandFrames(0x10));
+            Assert.Equal(0, RelayFrames(TestRelayDriver.OnCode));
         }
         finally
         {
@@ -711,7 +714,7 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         panel.ShowNode(Node("C01-L01-S01-F01-P01"));
         try
         {
-            var timedOn = panel.Rows[1].Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
+            var timedOn = Assert.Single(panel.Rows).Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
 
             // 点了带参数的命令：先出输入项，不解析、不下发
             timedOn.Command.Execute(null);
@@ -793,7 +796,7 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         panel.ShowNode(Node("C01-L01-S01-F01-P01"));
         try
         {
-            var relayRow = panel.Rows[1];
+            var relayRow = Assert.Single(panel.Rows);
             var timedOn = relayRow.Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
 
             // 再点同一命令保留已输入的值；点不带参数的命令则收起输入项
@@ -810,7 +813,7 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             panel.ShowNode(Node("C01-L01-S01-F01-P02"));
             Assert.False(panel.IsArgumentInputOpen);
             panel.ShowNode(Node("C01-L01-S01-F01-P01"));
-            timedOn = panel.Rows[1].Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
+            timedOn = Assert.Single(panel.Rows).Commands.Single(c => c.Option.Key == TestRelayDriver.TimedOn);
 
             // 仿真下输出动作不用确认：连点两次"下发"只发出一帧（执行期间按钮禁用，下发后输入项已收起）
             timedOn.Command.Execute(null);
