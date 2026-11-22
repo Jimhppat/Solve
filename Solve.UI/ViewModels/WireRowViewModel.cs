@@ -113,7 +113,7 @@ public sealed class CommandArgumentInputViewModel : ViewModelBase
 }
 
 /// <summary>
-/// 接线面板中的一行：一路有效接线（本位置的，或继承自上级的）。配置部分不可变，健康度与读数由面板定时刷新。
+/// 接线面板中的一行：直接接在选中位置上的一路接线。配置部分不可变，健康度与读数由面板定时刷新。
 /// 只显示人用信息：层级、位置编码、模块名、通道名；接线、模块、节点的 Id 不显示。
 /// </summary>
 public sealed class WireRowViewModel : ViewModelBase
@@ -152,7 +152,6 @@ public sealed class WireRowViewModel : ViewModelBase
 
         Wire = status.Wire;
         IsOwn = !status.IsInherited;
-        SourceText = status.IsInherited ? $"来自{status.Source.Level.DisplayName()} {status.Source.Address}" : string.Empty;
         ModuleText = status.ModuleText;
         ChannelText = status.ChannelText;
         EditCommand = new RelayCommand(() => onEdit(this));
@@ -168,16 +167,9 @@ public sealed class WireRowViewModel : ViewModelBase
     public WireId Id => Wire.Id;
 
     /// <summary>
-    /// 直接接在当前位置上（可修改、拆除）；继承自上级的只读，要到上级位置去改
+    /// 直接接在当前位置上（可修改、拆除）。面板只列本位置的接线；这里仍做防御性判断，上级的接线要到上级位置去改
     /// </summary>
     public bool IsOwn { get; }
-
-    public bool IsInherited => !IsOwn;
-
-    /// <summary>
-    /// 继承来源，如"来自层位 C01-L02"；本位置的为空串
-    /// </summary>
-    public string SourceText { get; }
 
     /// <summary>
     /// 功能与用途，如"供电 VBAT"

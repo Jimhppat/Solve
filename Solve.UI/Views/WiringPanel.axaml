@@ -7,7 +7,7 @@
              x:Class="Solve.UI.Views.WiringPanel"
              x:DataType="vm:WiringPanelViewModel"
              x:CompileBindings="True">
-    <!-- 选中位置的接线：上级的接线（继承）在前、本位置的在后；单路接线、批量接线、修改与拆除。
+    <!-- 选中位置的接线：只列直接接在本位置上的，上级的接线到上级位置查看；单路接线、批量接线、修改与拆除。
          只显示层级、位置编码、模块名与通道名，接线与模块的 Id 不显示；不放说明性小字，结果与确认在操作后出现 -->
 
     <UserControl.Styles>
@@ -87,7 +87,7 @@
 
         <TextBlock Classes="label" Text="未接线" IsVisible="{Binding IsUnwired}" />
 
-        <!-- 有效接线：上级的在前；只有本位置的接线可以修改、拆除 -->
+        <!-- 本位置的接线：可以修改、拆除、下发命令 -->
         <ItemsControl ItemsSource="{Binding Rows}" IsVisible="{Binding HasRows}">
             <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:WireRowViewModel">
@@ -107,8 +107,6 @@
                                             ToolTip.Tip="{Binding Problem}">
                                         <TextBlock Text="{Binding HealthText}" Foreground="{Binding HealthColor}" />
                                     </Border>
-                                    <TextBlock Text="{Binding SourceText}" IsVisible="{Binding IsInherited}" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource SemiColorText1}" />
                                 </StackPanel>
                             </DockPanel>
                             <TextBlock Text="{Binding HardwareText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText1}" />

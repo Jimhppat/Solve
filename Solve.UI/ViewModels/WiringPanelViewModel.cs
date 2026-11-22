@@ -37,8 +37,8 @@ public enum WiringEditorMode
 }
 
 /// <summary>
-/// 拓扑页的接线面板：选中位置的有效接线（本位置的在后，继承自上级的在前）及其运行状态，
-/// 以及单路接线、批量接线、修改与拆除。
+/// 拓扑页的接线面板：直接接在选中位置上的接线及其运行状态，以及单路接线、批量接线、修改与拆除。
+/// 上级的接线只在上级位置上显示与操作，下级不重复列出（联锁与命令解析仍按含上级的有效接线计算）。
 /// </summary>
 /// <remarks>
 /// <para>批量接线先预览（列出前几路与最后一路），确认后才写库；拆除先确认。新增单路接线不改变任何输出，直接保存。</para>
@@ -139,7 +139,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     public bool HasRows => _rows.Count > 0;
 
     /// <summary>
-    /// 本位置与上级都没有接线
+    /// 本位置没有直接接线（上级的接线不在这里列出）
     /// </summary>
     public bool IsUnwired => IsAvailable && _rows.Count == 0;
 
@@ -943,7 +943,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         }
 
         Action<WireRowViewModel>? locate = LocateChannelRequested is null ? null : row => LocateChannelRequested?.Invoke(row.Wire.Channel);
-        Rows = inspector.Inspect(node.Id)
+        Rows = inspector.InspectOwn(node.Id)
             .Select(s => new WireRowViewModel(s, Edit, Remove, ListCommands(s.Wire), RequestCommand, () => CanCommand, locate))
             .ToList();
         RebuildPorts();
@@ -1014,7 +1014,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 定时刷新：接线列表不变时只更新健康度与读数，变了（如其他位置拆了上级的线）才重建
+    /// 定时刷新：接线列表不变时只更新健康度与读数，变了才重建
     /// </summary>
     private void RefreshStatuses()
     {
@@ -1023,7 +1023,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
         try
         {
-            var statuses = inspector.Inspect(node.Id);
+            var statuses = inspector.InspectOwn(node.Id);
             if (statuses.Count != _rows.Count
                 || statuses.Where((s, i) => s.Wire.Id != _rows[i].Id || !_rows[i].HasSameCommands(ListCommands(s.Wire))).Any())
             {

@@ -121,6 +121,24 @@ public sealed class WiringInspector
     }
 
     /// <summary>
+    /// 直接接在该位置上的接线及其运行状态（不含上级继承的）。供按位置维护接线的界面：
+    /// 上级的接线只在它所在的位置上显示与操作，下级不重复列出。位置不在拓扑中时为空。
+    /// </summary>
+    /// <remarks>只影响显示；联锁判据与命令解析仍按有效接线（含上级）计算，见 <see cref="CheckReady"/>。</remarks>
+    public IReadOnlyList<WireStatus> InspectOwn(TopologyNodeId nodeId)
+    {
+        var map = _wiring.Current;
+        if (map.Topology is not { } topology || !topology.TryGetNode(nodeId, out var node))
+            return [];
+
+        var own = map.GetOwn(nodeId);
+        var result = new WireStatus[own.Count];
+        for (var i = 0; i < own.Count; i++)
+            result[i] = Inspect(new EffectiveWire(own[i], node), nodeId);
+        return result;
+    }
+
+    /// <summary>
     /// 位置的硬件健康度：有效接线中最严重的一路；没有接线为 null
     /// </summary>
     public WireHealth? Summarize(TopologyNodeId nodeId)
