@@ -71,10 +71,21 @@ public enum CommandSafety
 public sealed record CommandInfo(string Key, string Name, CommandSafety Safety)
 {
     /// <summary>
+    /// 一条命令最多的参数个数，与内核单次下发的参数上限一致
+    /// </summary>
+    public const int MaxArguments = 16;
+
+    /// <summary>
     /// 作用的通道组：命令针对某一路通道（如"打开第 3 路继电器"），执行时用 <see cref="DeviceCommand.Channel"/> 指定通道号。
     /// 为 null 表示模块级命令。
     /// </summary>
     public string? Group { get; init; }
+
+    /// <summary>
+    /// 命令的数值参数（SDK 1.2 新增）。声明了参数的命令，内核只接受声明过的参数、拒绝缺少必填参数或超出范围的调用，
+    /// 并在交给驱动前补全默认值；没有声明参数的命令保持 SDK 1.1 的行为（参数原样转交）。
+    /// </summary>
+    public IReadOnlyList<CommandArgumentInfo> Arguments { get; init; } = [];
 }
 
 /// <summary>
@@ -140,8 +151,42 @@ public sealed record DriverInfo(
                 problems.AddRange(parameter.ValidateDeclaration());
         }
 
+        foreach (var command in Commands ?? [])
+        {
+            if (command is not null)
+                ValidateArguments(command, problems);
+        }
+
         ValidateChannels(problems);
         return problems;
+    }
+
+    private void ValidateArguments(CommandInfo command, List<string> problems)
+    {
+        // 记录的 init 列表可被设成 null，这里不能信任可空注解
+        if (command.Arguments is null)
+        {
+            problems.Add($"驱动 {Id} 的命令 {command.Key} 参数列表不能为 null。");
+            return;
+        }
+
+        if (command.Arguments.Count > CommandInfo.MaxArguments)
+            problems.Add($"驱动 {Id} 的命令 {command.Key} 参数不能超过 {CommandInfo.MaxArguments} 个。");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var argument in command.Arguments)
+        {
+            if (argument is null)
+            {
+                problems.Add($"驱动 {Id} 的命令 {command.Key} 参数列表含 null。");
+                continue;
+            }
+
+            // 格式问题由 ValidateDeclaration 报告，这里只查重复
+            if (KeyFormat.IsValid(argument.Key) && !seen.Add(argument.Key))
+                problems.Add($"驱动 {Id} 的命令 {command.Key} 参数标识 {argument.Key} 重复。");
+            problems.AddRange(argument.ValidateDeclaration(command.Key).Select(p => $"驱动 {Id} 的{p}"));
+        }
     }
 
     private void ValidateChannels(List<string> problems)

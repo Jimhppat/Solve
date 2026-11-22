@@ -48,6 +48,41 @@ public sealed class SdkContractTests
         Assert.Equal(2, driver.Validate().Count);
     }
 
+    // ---------- 命令参数声明（SDK 1.2） ----------
+
+    private static DriverInfo WithArguments(params CommandArgumentInfo[] arguments)
+        => Valid() with { Commands = [new CommandInfo("load.cc", "恒流带载", CommandSafety.Output) { Arguments = arguments }] };
+
+    [Fact]
+    public void ValidArguments_HaveNoProblems()
+        => Assert.Empty(WithArguments(
+            new CommandArgumentInfo("current", "电流", "A", 0.1, 60),
+            new CommandArgumentInfo("start-delay", "启动延迟", "s", 0, 20) { DefaultValue = 0 }).Validate());
+
+    [Fact]
+    public void BadArgumentDeclarations_AreReported()
+    {
+        Assert.Single(WithArguments(new CommandArgumentInfo("Bad Key", "电流", "A", 0, 1)).Validate());
+        Assert.Single(WithArguments(new CommandArgumentInfo("current", "", "A", 0, 1)).Validate());
+        Assert.Single(WithArguments(new CommandArgumentInfo("current", "电流", null!, 0, 1)).Validate());
+        Assert.Single(WithArguments(new CommandArgumentInfo("current", "电流", "A", 2, 1)).Validate());
+        Assert.Single(WithArguments(new CommandArgumentInfo("current", "电流", "A", 0, double.PositiveInfinity)).Validate());
+        Assert.Single(WithArguments(new CommandArgumentInfo("current", "电流", "A", 0, 1) { DefaultValue = 2 }).Validate());
+        Assert.Single(WithArguments(new CommandArgumentInfo("current", "电流", "A", 0, 1), new CommandArgumentInfo("current", "电流 2", "A", 0, 1)).Validate());
+        Assert.Single(WithArguments(Enumerable.Range(0, CommandInfo.MaxArguments + 1)
+            .Select(i => new CommandArgumentInfo($"a{i}", $"参数 {i}", "", 0, 1)).ToArray()).Validate());
+        Assert.Single((Valid() with { Commands = [new CommandInfo("load.cc", "恒流带载", CommandSafety.Output) { Arguments = null! }] }).Validate());
+    }
+
+    [Theory]
+    [InlineData(0.1, true)]
+    [InlineData(60, true)]
+    [InlineData(0.09, false)]
+    [InlineData(60.001, false)]
+    [InlineData(double.NaN, false)]
+    public void ArgumentCheck_EnforcesInclusiveRange(double value, bool valid)
+        => Assert.Equal(valid, new CommandArgumentInfo("current", "电流", "A", 0.1, 60).Check(value) is null);
+
     [Fact]
     public void NullLists_AreReported_NotThrown()
     {

@@ -81,7 +81,7 @@ public sealed class DeviceCommandService
         return driver.Commands
             .Where(c => Enum.IsDefined(c.Safety)
                         && (string.Equals(c.Group, wire.Channel.Group, StringComparison.Ordinal) || c.Group is null && single))
-            .Select(c => new DeviceCommandOption(c.Key, c.Name, c.Safety))
+            .Select(c => new DeviceCommandOption(c.Key, c.Name, c.Safety) { Arguments = c.Arguments ?? [] })
             .ToList();
     }
 
@@ -338,9 +338,13 @@ public sealed class DeviceCommandService
             }
         }
 
+        var arguments = NormalizeArguments(command, request.Arguments);
+        if (arguments.IsFailure)
+            return Result<DeviceCommandPlan>.Failure(arguments.Error);
+
         var affected = source.Level == TopologyLevel.Product ? 1 : topology.GetDescendants(source.Address, TopologyLevel.Product).Count;
         var busName = _buses.GetRuntime(binding.Device.BusId) is { IsSuccess: true } runtime ? runtime.Value.Descriptor.Name : "未知总线";
-        var frozen = request with { Arguments = request.Arguments.ToFrozenDictionary(StringComparer.Ordinal) };
+        var frozen = request with { Arguments = arguments.Value };
 
         return Result<DeviceCommandPlan>.Success(new DeviceCommandPlan(
             this,
@@ -383,6 +387,43 @@ public sealed class DeviceCommandService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 按命令声明的参数校验并补全默认值，结果冻结（确认之后不会再被修改）。
+    /// 没有声明参数的命令（SDK 1.0 / 1.1 驱动）保持原行为：参数原样转交，由驱动自行校验。
+    /// </summary>
+    private static Result<IReadOnlyDictionary<string, double>> NormalizeArguments(CommandInfo command, IReadOnlyDictionary<string, double> arguments)
+    {
+        var declared = command.Arguments ?? [];
+        if (declared.Count == 0)
+            return Result<IReadOnlyDictionary<string, double>>.Success(arguments.ToFrozenDictionary(StringComparer.Ordinal));
+
+        foreach (var key in arguments.Keys)
+        {
+            if (declared.All(a => a?.Key != key))
+                return Result<IReadOnlyDictionary<string, double>>.Failure(DeviceCommandErrors.InvalidRequest($"「{command.Name}」没有参数 {key}。"));
+        }
+
+        var normalized = new Dictionary<string, double>(declared.Count, StringComparer.Ordinal);
+        foreach (var argument in declared)
+        {
+            if (argument is null)
+                continue;
+
+            if (!arguments.TryGetValue(argument.Key, out var value))
+            {
+                if (argument.DefaultValue is not { } fallback)
+                    return Result<IReadOnlyDictionary<string, double>>.Failure(DeviceCommandErrors.InvalidRequest($"「{command.Name}」缺少参数「{argument.Name}」。"));
+                value = fallback;
+            }
+
+            if (argument.Check(value) is { } error)
+                return Result<IReadOnlyDictionary<string, double>>.Failure(DeviceCommandErrors.InvalidRequest($"「{command.Name}」的{error}"));
+            normalized[argument.Key] = value;
+        }
+
+        return Result<IReadOnlyDictionary<string, double>>.Success(normalized.ToFrozenDictionary(StringComparer.Ordinal));
     }
 
     /// <summary>

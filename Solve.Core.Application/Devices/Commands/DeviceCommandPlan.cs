@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Globalization;
 using Solve.Core.Domain.Drivers;
 using Solve.Core.Domain.Topology;
 using Solve.Core.Domain.Wiring;
@@ -14,9 +15,9 @@ public sealed record DeviceCommandOptions
     public static DeviceCommandOptions Default { get; } = new();
 
     /// <summary>
-    /// 一条命令最多的参数个数，拦截误传的超大参数表
+    /// 一条命令最多的参数个数，拦截误传的超大参数表；与 SDK 声明上限一致
     /// </summary>
-    public const int MaxArguments = 16;
+    public const int MaxArguments = CommandInfo.MaxArguments;
 
     /// <summary>
     /// 传输为实机（真实串口 / TCP）。实机下输出动作（<see cref="CommandSafety.Output"/>）也要操作员确认；
@@ -47,7 +48,8 @@ public sealed record DeviceCommandRequest(TopologyNodeId Node, ChannelKind Kind,
     private static readonly IReadOnlyDictionary<string, double> NoArguments = FrozenDictionary<string, double>.Empty;
 
     /// <summary>
-    /// 命令参数（工程值），按驱动的约定；没有参数为空表
+    /// 命令参数（工程值），按驱动声明的 <see cref="CommandInfo.Arguments"/>；没有参数为空表。
+    /// 解析后（<see cref="DeviceCommandPlan.Request"/>）已按声明补全默认值。
     /// </summary>
     public IReadOnlyDictionary<string, double> Arguments { get; init; } = NoArguments;
 }
@@ -55,7 +57,18 @@ public sealed record DeviceCommandRequest(TopologyNodeId Node, ChannelKind Kind,
 /// <summary>
 /// 一路接线上可以下发的命令
 /// </summary>
-public sealed record DeviceCommandOption(string Key, string Name, CommandSafety Safety);
+public sealed record DeviceCommandOption(string Key, string Name, CommandSafety Safety)
+{
+    /// <summary>
+    /// 命令声明的数值参数（驱动 <see cref="CommandInfo.Arguments"/>）
+    /// </summary>
+    public IReadOnlyList<CommandArgumentInfo> Arguments { get; init; } = [];
+
+    /// <summary>
+    /// 有必填参数：下发前必须由操作员或测试流程给出数值
+    /// </summary>
+    public bool NeedsInput => Arguments.Any(a => a.IsRequired);
+}
 
 public static class CommandSafeties
 {
@@ -197,6 +210,8 @@ public sealed class DeviceCommandPlan
             $"通道：{ModuleText}  {ChannelText}",
             $"影响：{ScopeText}",
         };
+        if (Request.Arguments.Count > 0)
+            lines.Insert(1, $"参数：{ArgumentsText}");
         if (SharedWith.Count > 0)
         {
             lines.Add($"共用：这路通道还接在 {string.Join("、", SharedWith.Take(listed).Select(n => $"{n.Level.DisplayName()} {n.Address}"))}" +
@@ -208,10 +223,31 @@ public sealed class DeviceCommandPlan
     }
 
     /// <summary>
+    /// 参数的显示文本，如"电流 5 A、启动延迟 0 s"：按驱动声明的顺序与名称，未声明的参数按 Key 排序显示。
+    /// 设定值要出现在确认文案里：操作员确认的是"把电流设成多少"，而不只是"恒流带载"。
+    /// </summary>
+    public string ArgumentsText
+    {
+        get
+        {
+            var declared = Command.Arguments ?? [];
+            var parts = declared
+                .Where(a => Request.Arguments.ContainsKey(a.Key))
+                .Select(a => $"{a.Name} {Request.Arguments[a.Key].ToString("G", CultureInfo.InvariantCulture)}{(a.Unit.Length > 0 ? " " + a.Unit : string.Empty)}")
+                .Concat(Request.Arguments.Keys
+                    .Where(k => declared.All(a => a.Key != k))
+                    .Order(StringComparer.Ordinal)
+                    .Select(k => $"{k} {Request.Arguments[k].ToString("G", CultureInfo.InvariantCulture)}"));
+            return string.Join("、", parts);
+        }
+    }
+
+    /// <summary>
     /// 日志用的一行摘要
     /// </summary>
     public override string ToString()
-        => $"「{CommandName}」({Command.Key}, {Safety}) {Target.Address} {Wire.KindText} → {ModuleText} {ChannelText}";
+        => $"「{CommandName}」({Command.Key}, {Safety}) {Target.Address} {Wire.KindText} → {ModuleText} {ChannelText}"
+           + (Request.Arguments.Count > 0 ? $" 参数 {ArgumentsText}" : string.Empty);
 }
 
 /// <summary>

@@ -1,9 +1,10 @@
-# Solve 驱动开发规范（SDK 1）
+# Solve 驱动开发规范（SDK 1.2）
 
 本文写给为 Solve 开发设备驱动的工程师。按本文组织目录、编写清单与代码、完成测试，驱动包就能被驱动库扫描、经操作员信任后载入。
 
 - 契约来源：`Solve.Device.Sdk`（驱动唯一可以引用的程序集）
-- 参考实现：`Devicelibrary/Chroma/Chroma.Drivers`（真实设备）、`Sample.DriverPackage`（最小样板）
+- 参考实现：`Devicelibrary/Chroma/Chroma.Drivers`（程控电源）、`Devicelibrary/GJ/GJ.Drivers`（多通道电子负载，带参数命令）、`Sample.DriverPackage`（最小样板）
+- 分类规范：电源 / 电子负载驱动的标准通道组、点位、命令与参数 Key 见 `Docs/电源与电子负载模块对接规范.md`；每个真实设备驱动在 `Docs/` 下附一份驱动对接说明（如 `Docs/GJ DA750-4-60A 驱动对接说明.md`）
 - 规则的"为什么"写在 SDK 源码注释里；本文只写"怎么做"和"不能怎么做"。两者不一致时以 SDK 源码为准，并请修正本文。
 
 ---
@@ -56,7 +57,7 @@ Devicelibrary/
 
 | 对象 | 规则 | 示例 |
 |---|---|---|
-| 厂家目录 | 厂家英文名，PascalCase | `Chroma`、`Itech` |
+| 厂家目录 | 厂家英文名，PascalCase；两个字母的缩写保持大写 | `Chroma`、`Itech`、`GJ` |
 | 驱动项目 / 程序集 | `<厂家>.Drivers` | `Chroma.Drivers` |
 | 测试项目 | `<厂家>.Drivers.Tests` | `Chroma.Drivers.Tests` |
 | 命名空间 | 与项目同名，系列用子命名空间 | `Chroma.Drivers.Psu62000B` |
@@ -190,7 +191,7 @@ public sealed class AcmeDriverPackage : IDriverPackage
 | `Description` | 一句话：系列、额定参数、协议 |
 | `MinAddress` / `MaxAddress` | 设备在总线上的合法地址，1–255。协议里没有地址（如纯文本透传）时限定为 `1..1`，防止两个模块的命令发到同一台设备 |
 | `Points` | 点位：`Key`、显示名、物理单位（无单位填空串）、读写权限 |
-| `Commands` | 命令：`Key`、显示名、安全等级（见 5.5） |
+| `Commands` | 命令：`Key`、显示名、安全等级（见 5.5）；需要设定值的命令用 `Arguments` 声明参数（SDK 1.2，见 5.5） |
 | `Parameters` | 模块参数：同一型号在不同现场的不同配置（报文封装、延时、量程）。必须有合法默认值 |
 | `Channels` | 通道组：可以单独接线的端子。单路设备也声明一组、数量 1；不声明就不能接到设备拓扑上 |
 
@@ -251,12 +252,35 @@ step 是 Completed（上报点位）或 Failed（原因 + 分类）
 | `CommandSafety` | 用于 | 内核检查（`DeviceCommandPlan` / `DeviceCommandService`） |
 |---|---|---|
 | `Parameter` | 写设定值，不直接改变输出 | 与轮询串行执行 |
-| `Output` | 开关输出、启停 | 下游拓扑有停用位置时拒绝（联锁）；实机模式下需要操作员确认 |
+| `Output` | 开关输出、启停；**写入即生效的设定**（如电子负载的带载设定） | 下游拓扑有停用位置时拒绝（联锁）；实机模式下需要操作员确认 |
 | `Hazardous` | 高压、大电流、不可逆操作 | 联锁；仿真与实机模式下每次都需要操作员确认 |
 
 安全等级宁高勿低。驱动不能绕过内核的检查，也不要在驱动里自己实现"确认"。
 
 对输出类命令，执行后应**回读确认**设备状态（参考 `OutputExchange`：发送开关命令 → `DelayAfter` → 查询输出状态，与期望不符则失败），不要只发不验。
+
+**命令参数（SDK 1.2）**：需要数值的命令（设定电流、电压、时长）在 `CommandInfo.Arguments` 中用 `CommandArgumentInfo` 声明每个参数：
+
+```csharp
+new CommandInfo("load.cc", "恒流带载", CommandSafety.Output)
+{
+    Group = "load",
+    Arguments =
+    [
+        // 必填：没有默认值
+        new CommandArgumentInfo("current", "电流", "A", Minimum: 0.1, Maximum: 60),
+        // 可选：调用方不传时内核补默认值
+        new CommandArgumentInfo("start-delay", "启动延迟", "s", 0, 20) { DefaultValue = 0 },
+    ],
+}
+```
+
+- 内核据此拒绝缺少必填参数、未声明的参数、越界与非有限值，补全默认值后再交给 `BeginCommand`；参数值写进确认文案与命令日志。
+- 驱动编码前**按同一份声明再校验一次**（`CommandArgumentInfo.Check`），不合法即 `Failed(…, Configuration)` 且不发送任何字节（参考 `Da750Session.TryArgument`）。
+- 参数值是工程值，单位即声明的 `Unit`；范围取设备额定值，没有依据时取保守范围。
+- 一经发布，参数 Key 与单位不得修改，范围只能放宽；新增参数必须带默认值。
+- 没有声明参数的命令保持 SDK 1.1 行为：调用方传入的参数原样转交，由驱动自行校验。
+- 用到 `Arguments` 的驱动包要求主程序的 SDK 不低于 1.2（`sdkVersion` 仍为 1）。
 
 ### 5.6 数值、单位与字节序
 
@@ -290,6 +314,7 @@ step 是 Completed（上报点位）或 Failed（原因 + 分类）
 | 正常流程 | 轮询读出全部点位且数值换算正确；每条命令的报文与回读确认 |
 | 成帧 | 分包到达（逐字节喂给 `Match`）、粘包（帧后多余字节）、校验错误、非法字节、超长无结束符 |
 | 失败分类 | 超时 → `Transient`；型号不符 → `Configuration`；设备报警 → `Device`；不支持的命令不发送任何字节 |
+| 命令参数 | 每条带参数命令的报文编码（倍率、舍入）；缺参数、未声明参数、越界、`NaN`、无效通道号都按 `Configuration` 失败且不发送任何字节；可选参数的默认值 |
 | 数值边界 | 越界、格式错乱、`NaN` 都不上报 |
 | 仿真设备 | 用仿真设备跑一遍轮询与命令；不是发给自己的请求返回 `null` |
 
@@ -366,6 +391,8 @@ SDK 契约出现不兼容修改时，SDK 主版本与 `SdkInfo.MajorVersion` 一
 - [ ] 可预期的失败返回 `Failed` 且分类正确，没有抛异常的路径
 - [ ] 不支持的命令不发送任何字节
 - [ ] 输出类命令有回读确认；安全等级宁高勿低
+- [ ] 需要设定值的命令用 `Arguments` 声明参数，驱动按同一份声明再校验
+- [ ] 电源 / 电子负载驱动遵循 `Docs/电源与电子负载模块对接规范.md` 的标准 Key，并在 `Docs/` 下附驱动对接说明
 - [ ] 数值注释写明字节序、符号、倍率、偏移、单位；有合理性检查；数字解析用不变区域性
 - [ ] 实现了仿真设备，仿真身份可与实机区分
 - [ ] 测试覆盖第 6 节全部类别，`dotnet test` 通过
