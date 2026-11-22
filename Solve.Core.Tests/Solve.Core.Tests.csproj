@@ -27,15 +27,16 @@
     <!-- 设备库加载测试的夹具：只为把示例驱动包的程序集复制到测试输出目录，测试代码不直接引用其中的类型 -->
     <ProjectReference Include="..\Sample.DriverPackage\Sample.DriverPackage.csproj" />
     <!--
-        真实驱动包的仿真链路测试（DriverPackageSimulationTests）读取源码驱动库 Devicelibrary/<包标识>/ 下编译产出的驱动包。
-        这里只要构建顺序：不引用程序集（ReferenceOutputAssembly=false）、不复制任何文件（Private=false），内核与测试代码都不依赖驱动
+        不引用任何驱动项目，连只管构建顺序的引用也不加：编译内核（含测试）不编译驱动，
+        否则驱动包会跟着内核重新生成，驱动库就要重新信任。驱动由 Devicelibrary/Devicelibrary.slnx 单独编译。
     -->
-    <ProjectReference Include="..\Devicelibrary\GJ\GJ.Drivers\GJ.Drivers.csproj" ReferenceOutputAssembly="false" Private="false" />
-    <ProjectReference Include="..\Devicelibrary\Chroma\Chroma.Drivers\Chroma.Drivers.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 源码驱动库的位置写进程序集元数据：与测试输出目录在哪里无关（指定 artifacts 输出目录时也能找到） -->
+    <!--
+        源码驱动库的位置写进程序集元数据：仿真链路测试（DriverPackageSimulationTests）与主程序一样，
+        只读取这里已经编译好的驱动包。与测试输出目录在哪里无关（指定 artifacts 输出目录时也能找到）
+    -->
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>DeviceLibrarySource</_Parameter1>
       <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Devicelibrary'))</_Parameter2>

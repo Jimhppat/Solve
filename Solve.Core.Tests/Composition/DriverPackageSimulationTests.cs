@@ -20,7 +20,8 @@ namespace Solve.Core.Tests.Composition;
 /// <remarks>
 /// <para>链路：命令服务 → 执行器 → 总线通道锁 → 仿真通道 → 仿真设备分派 → 驱动包的仿真设备 → 应答 → 驱动会话解码 → 模块读数。
 /// 读数随命令变化、安全停止后归零，说明请求确实经过了驱动包的仿真设备，而不是停在内核的某一层。</para>
-/// <para>只用仿真通道与回环地址，不触碰任何真实设备。驱动包要先编译（编译解决方案即可；本测试项目对驱动项目只有构建顺序依赖）。</para>
+/// <para>只用仿真通道与回环地址，不触碰任何真实设备。内核不编译驱动：本测试与主程序一样只读取已经编译好的驱动包，
+/// 要先单独编译驱动库（dotnet build Devicelibrary/Devicelibrary.slnx）。找不到驱动包时失败而不是跳过：安全停止链路的回归不能悄悄不跑。</para>
 /// </remarks>
 [Collection(LoggingPipelineCollection.Name)]
 public sealed class DriverPackageSimulationTests : IAsyncLifetime
@@ -152,7 +153,7 @@ public sealed class DriverPackageSimulationTests : IAsyncLifetime
         {
             var source = Path.Combine(SourceLibrary, id);
             Assert.True(File.Exists(Path.Combine(source, SdkInfo.ManifestFileName)),
-                $"找不到编译好的驱动包 {source}：请先编译解决方案（dotnet build Solve.slnx）");
+                $"找不到编译好的驱动包 {source}：请先编译驱动库（dotnet build Devicelibrary/Devicelibrary.slnx）");
 
             var target = Directory.CreateDirectory(Path.Combine(library, id)).FullName;
             foreach (var file in Directory.EnumerateFiles(source).Where(f => !Path.GetFileName(f).StartsWith('.')))

@@ -18,6 +18,12 @@
         -->
         <Version>1.4.0</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <!--
+            版本信息里不写提交号：驱动编译时引用的是 SDK 的引用程序集，提交号会让每个驱动包的字节随提交变化，
+            而驱动库按指纹信任，源码没改也要重新信任。SDK 只改方法实现时驱动包不变；
+            增删类型或成员（包括 internal）后重新编译驱动，指纹会变，需要重新信任。
+        -->
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>
     </PropertyGroup>
