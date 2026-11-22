@@ -97,6 +97,28 @@ public sealed class ExchangeExecutor
         return result.IsSuccess ? result.Value : new ExchangeOutcome.BusUnavailable(result.Error);
     }
 
+    /// <summary>
+    /// 在调用方已持有的通道上创建并推进一次交互（安全停止流程用：总线锁存后由运行时交来的特许通道，调用方已持有通道锁）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ExecuteAsync(BusRuntime, Func{IExchange}, string, CancellationToken)"/> 的区别只在于不再经总线事务；
+    /// 驱动抛出的异常原样抛给调用方，由调用方决定如何记录。
+    /// </remarks>
+    public async Task<ExchangeOutcome> ExecuteOnChannelAsync(
+        IBusChannel channel,
+        BusDescriptor descriptor,
+        Func<IExchange> begin,
+        string label,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(channel);
+        ArgumentNullException.ThrowIfNull(descriptor);
+        ArgumentNullException.ThrowIfNull(begin);
+
+        var result = await BeginAndRunAsync(channel, begin, descriptor, label, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? result.Value : new ExchangeOutcome.BusUnavailable(result.Error);
+    }
+
     private ValueTask<Result<ExchangeOutcome>> BeginAndRunAsync(
         IBusChannel channel,
         Func<IExchange> begin,
@@ -210,8 +232,9 @@ public sealed class ExchangeExecutor
 
             if (read.IsFailure)
             {
-                // 单次读超时只说明这段时间没数据；本帧的响应超时还没到就继续等
-                if (read.Error.Code == BusErrors.TimeoutCode && watch.Elapsed < timeout)
+                // 单次读超时只说明这段时间没数据；本帧的响应超时还没到就继续等。
+                // 整个事务（或安全停止）的时限已到时通道同样报超时，此时再等只会空转，直接结束
+                if (read.Error.Code == BusErrors.TimeoutCode && watch.Elapsed < timeout && !tx.IsCancellationRequested)
                     continue;
 
                 return new Received(null, new ExchangeOutcome.BusUnavailable(read.Error));

@@ -33,6 +33,7 @@ public sealed class BusManager : IAsyncDisposable
     private readonly BusRuntimeOptions _options;
     private readonly TimeProvider _time;
     private readonly EventBroadcaster<BusRegistryEvent> _registryEvents;
+    private readonly SafeStopForwarder _safeStop = new();
 
     private readonly Lock _gate = new();
     private readonly Dictionary<BusId, BusRuntime> _buses = [];
@@ -112,7 +113,7 @@ public sealed class BusManager : IAsyncDisposable
             // Create 只校验配置、创建未打开的通道并启动空闲的监督任务，不做 I/O，可在锁内执行
             var created = BusRuntime.Create(
                 descriptor, _transportFactory, _interlock,
-                _loggerFactory.CreateLogger<BusRuntime>(), _options, _time);
+                _loggerFactory.CreateLogger<BusRuntime>(), _options, _time, _safeStop);
 
             if (created.IsFailure)
                 return created;
@@ -204,16 +205,42 @@ public sealed class BusManager : IAsyncDisposable
     }
 
     /// <summary>
-    /// 对所有已注册总线执行安全跳闸（系统级急停入口）。返回跳闸的总线数。
+    /// 挂接设备层的安全停止处理：此后任何总线从 Connected 安全跳闸时，关闭通道前先由它把设备带到安全状态。
+    /// 设备层晚于总线注册表创建，所以在组合根里事后挂接；对挂接前已注册的总线同样生效。只能挂接一次。
     /// </summary>
-    public int SafetyTripAll(string reason)
+    public void AttachSafeStopHandler(IBusSafeStopHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        if (Interlocked.CompareExchange(ref _safeStop.Inner, handler, null) is not null)
+            throw new InvalidOperationException("安全停止处理已经挂接。");
+    }
+
+    /// <summary>
+    /// 对所有已注册总线执行安全跳闸（系统级急停入口）。立即返回跳闸的总线数，不等待设备安全状态下发；
+    /// 下发由各总线的监督任务并行完成。
+    /// </summary>
+    public int SafetyTripAll(string reason) => TripAll(reason).Count;
+
+    /// <summary>
+    /// 对所有已注册总线执行安全跳闸，并等待各总线的设备安全状态下发结束（各自受 <see cref="BusRuntimeOptions.SafeStopTimeout"/> 约束）。
+    /// 用于急停后马上要退出进程的场合：先让设备卸载、关输出，再关闭通道。返回跳闸的总线数。
+    /// </summary>
+    /// <remarks>下发失败或超时不会让本方法失败（已记严重日志）；只有 <paramref name="cancellationToken"/> 取消时抛出。</remarks>
+    public async Task<int> SafetyTripAllAsync(string reason, CancellationToken cancellationToken)
+    {
+        var buses = TripAll(reason);
+        await Task.WhenAll(buses.Select(b => b.SafeStopSettled)).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return buses.Count;
+    }
+
+    private IReadOnlyList<BusRuntime> TripAll(string reason)
     {
         var buses = Buses;
         foreach (var bus in buses)
             bus.SafetyTrip(reason);
 
         _logger.LogError("全部总线安全跳闸（{Count} 条）：{Reason}", buses.Count, reason);
-        return buses.Count;
+        return buses;
     }
 
     /// <summary>
@@ -235,6 +262,19 @@ public sealed class BusManager : IAsyncDisposable
         await Task.WhenAll(buses.Select(b => b.DisposeAsync().AsTask())).ConfigureAwait(false);
         _registryEvents.Complete();
         _logger.LogInformation("BusManager 已释放 {Count} 条总线", buses.Length);
+    }
+
+    /// <summary>
+    /// 转发到事后挂接的安全停止处理；尚未挂接时什么也不做（总线上还没有可用的设备会话）
+    /// </summary>
+    private sealed class SafeStopForwarder : IBusSafeStopHandler
+    {
+        public IBusSafeStopHandler? Inner;
+
+        public Task RunAsync(BusId busId, BusDescriptor descriptor, IBusChannel channel, CancellationToken cancellationToken)
+            => Volatile.Read(ref Inner) is { } inner
+                ? inner.RunAsync(busId, descriptor, channel, cancellationToken)
+                : Task.CompletedTask;
     }
 
     // 调用方必须持有 _gate

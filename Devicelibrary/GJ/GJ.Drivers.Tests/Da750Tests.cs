@@ -374,6 +374,110 @@ public sealed class Da750Tests
         Assert.Equal([0x00, 0x00, 0xA0, 0x01, 0x90, 0x00], Slot(_device.Writes[2], 1));
     }
 
+    // ---------- 安全状态（SDK 1.3） ----------
+
+    private ExchangeRunner.Run SafeState(IDeviceSession session, string? group = null, int channel = 0)
+        => ExchangeRunner.Execute(Assert.IsAssignableFrom<ISafeStateProvider>(session).BeginSafeState(group, channel), _device.Handle);
+
+    [Fact]
+    public void SafeState_SingleChannel_UnloadsOnlyThatChannel_KeepsOthersFromMirror()
+    {
+        var session = NewSession();
+        Command(session, "load.cc", 1, new() { ["current"] = 3 });
+        Command(session, "load.cc", 2, new() { ["current"] = 4 });
+
+        Assert.IsType<ExchangeStep.Completed>(SafeState(session, "load", 2).Final);
+
+        var info = _device.Writes[^1];
+        Assert.Equal([0x00, 0x00, 0xA0, 0x01, 0x2C, 0x00], Slot(info, 0));
+        Assert.Equal(UnloadedSlot, Slot(info, 1));
+        Assert.Equal(Da750Setting.Unloaded, session.Applied[1]);
+    }
+
+    [Fact]
+    public void SafeState_SingleChannel_Failed_ChannelStaysUnloadedInMirror()
+    {
+        var session = NewSession();
+        Command(session, "load.cc", 2, new() { ["current"] = 4 });
+        _device.Silent = true;
+        Assert.IsType<ExchangeStep.Failed>(SafeState(session, "load", 2).Final);
+        _device.Silent = false;
+
+        Command(session, "load.cc", 1, new() { ["current"] = 3 });
+
+        Assert.Equal(UnloadedSlot, Slot(_device.Writes[^1], 1));
+    }
+
+    [Theory]
+    [InlineData("load", 0)]
+    [InlineData("load", 5)]
+    [InlineData("output", 1)]
+    [InlineData(null, 1)]
+    public void SafeState_UndeclaredTarget_IsConfigurationError_WithoutSending(string? group, int channel)
+    {
+        var run = SafeState(NewSession(), group, channel);
+
+        Assert.Equal(FailureKind.Configuration, Assert.IsType<ExchangeStep.Failed>(run.Final).Kind);
+        Assert.Empty(run.Sent);
+    }
+
+    [Fact]
+    public void SafeState_WritesEightUnloadedSlots_FrameVector()
+    {
+        var run = SafeState(NewSession());
+
+        Assert.IsType<ExchangeStep.Completed>(run.Final);
+
+        // EE ADR=01 CID=41 LEN=3+48=0x33，8 槽 × [模式 00, Von 00A0, 负载值 0000, 附加 00]，
+        // CHK = 01 + 41 + 33 + 8 × A0 = 0x0575，EF
+        byte[] expected =
+        [
+            0xEE, 0x01, 0x41, 0x33,
+            .. Enumerable.Repeat(UnloadedSlot, Da750Protocol.SlotCount).SelectMany(s => s),
+            0x05, 0x75, 0xEF,
+        ];
+        Assert.Equal(expected, Assert.Single(run.Sent));
+    }
+
+    [Fact]
+    public void SafeState_UnloadsChannelsThatWereLoaded()
+    {
+        var session = NewSession();
+        Command(session, "load.cc", 1, new() { ["current"] = 3 });
+        Command(session, "load.cv", 2, new() { ["voltage"] = 12 });
+
+        SafeState(session);
+
+        var info = _device.Writes[2];
+        Assert.All(Enumerable.Range(0, Da750Protocol.SlotCount), slot => Assert.Equal(UnloadedSlot, Slot(info, slot)));
+        Assert.All(session.Applied, s => Assert.Equal(Da750Setting.Unloaded, s));
+    }
+
+    [Fact]
+    public void SafeState_Failed_NextCommandStillDoesNotRestorePreviousLoad()
+    {
+        // 跳闸时设备没应答：设备状态未知，但复位后的下一条命令也不能把跳闸前的拉载写回去
+        var session = NewSession();
+        Command(session, "load.cc", 1, new() { ["current"] = 3 });
+        _device.Silent = true;
+        Assert.IsType<ExchangeStep.Failed>(SafeState(session).Final);
+        _device.Silent = false;
+
+        Command(session, "load.cc", 2, new() { ["current"] = 4 });
+
+        var info = _device.Writes[^1];
+        Assert.Equal(UnloadedSlot, Slot(info, 0));
+        Assert.Equal([0x00, 0x00, 0xA0, 0x01, 0x90, 0x00], Slot(info, 1));
+    }
+
+    [Fact]
+    public void SafeState_DeviceRejects_IsFailed()
+    {
+        _device.ForcedCode = Ers272Code.InvalidData;
+
+        Assert.IsType<ExchangeStep.Failed>(SafeState(NewSession()).Final);
+    }
+
     [Fact]
     public void RejectedWrite_DoesNotUpdateMirror()
     {

@@ -525,6 +525,8 @@ public sealed class AppHost : IAsyncDisposable
             // 轮询调度：总线已连接时用绑定好的驱动会话收发报文，写入模块通信状态与点位实时值
             var statuses = new ModuleStatusStore();
             var executor = new ExchangeExecutor(_loggerFactory.CreateLogger<ExchangeExecutor>());
+            // 安全跳闸（急停、驱动异常）时，关闭通道前先让总线上的设备卸载、关输出，而不是保持最后设定
+            manager.AttachSafeStopHandler(new DeviceSafeStopHandler(bindings, executor, _loggerFactory.CreateLogger<DeviceSafeStopHandler>()));
             var polling = new DevicePollingService(
                 service,
                 bindings,
@@ -668,14 +670,31 @@ public sealed class AppHost : IAsyncDisposable
         _logger.LogCritical(e.ExceptionObject as Exception,
             "进程级未处理异常（即将终止={Terminating}），对全部总线执行安全跳闸", e.IsTerminating);
 
-        var tripped = EmergencyStop("进程级未处理异常");
-        _logger.LogCritical("已安全跳闸 {Count} 条总线", tripped);
-
-        if (e.IsTerminating)
+        if (!e.IsTerminating)
         {
-            // 进程即将结束，来不及走正常关停：立即刷写异步日志队列，保住事故现场
-            _logging.Dispose();
+            var tripped = EmergencyStop("进程级未处理异常");
+            _logger.LogCritical("已安全跳闸 {Count} 条总线", tripped);
+            return;
         }
+
+        // 进程马上结束、不会再走正常关停：在有限时间内等各总线把设备带到安全状态，否则串口随进程关闭，负载保持带载。
+        // 这里只能同步等待；等待的任务由各总线的监督任务在线程池上完成，不依赖当前线程或同步上下文，不会死锁
+        if (Buses is { } buses)
+        {
+            try
+            {
+                using var limit = new CancellationTokenSource(BusRuntimeOptions.Default.SafeStopTimeout + TimeSpan.FromSeconds(1));
+                var count = buses.SafetyTripAllAsync("进程级未处理异常", limit.Token).GetAwaiter().GetResult();
+                _logger.LogCritical("已安全跳闸 {Count} 条总线，设备安全状态下发已结束", count);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogCritical("进程即将结束，设备安全状态未在时限内下发完毕");
+            }
+        }
+
+        // 进程即将结束，来不及走正常关停：立即刷写异步日志队列，保住事故现场
+        _logging.Dispose();
     }
 
     private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)

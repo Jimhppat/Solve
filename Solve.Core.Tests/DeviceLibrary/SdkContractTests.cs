@@ -226,6 +226,45 @@ public sealed class SdkContractTests
     public void Failed_DefaultsToTransient()
         => Assert.Equal(FailureKind.Transient, new ExchangeStep.Failed("干扰").Kind);
 
+    // ---------- 安全状态（SDK 1.3，可选能力） ----------
+
+    /// <summary>
+    /// 安全状态是会话上追加的可选接口：IDeviceSession 本身不变，1.0–1.2 的驱动不实现它也照常编译、加载
+    /// </summary>
+    [Fact]
+    public void SafeState_IsOptional_SessionContractUnchanged()
+    {
+        Assert.Empty(typeof(IDeviceSession).GetInterfaces());
+        Assert.Equal(
+            ["BeginCommand", "BeginPoll"],
+            typeof(IDeviceSession).GetMethods().Select(m => m.Name).Order(StringComparer.Ordinal));
+        Assert.False(typeof(ISafeStateProvider).IsAssignableFrom(typeof(IDeviceSession)));
+        Assert.Equal(1, SdkInfo.MajorVersion);
+    }
+
+    [Fact]
+    public void SafeState_ContractShape()
+    {
+        var begin = Assert.Single(typeof(ISafeStateProvider).GetMethods());
+        Assert.Equal(nameof(ISafeStateProvider.BeginSafeState), begin.Name);
+        Assert.Equal(typeof(IExchange), begin.ReturnType);
+        Assert.Equal([typeof(string), typeof(int)], begin.GetParameters().Select(p => p.ParameterType));
+    }
+
+    [Fact]
+    public void SdkVersion_IsMinorBump_ForSafeState()
+    {
+        var version = typeof(ISafeStateProvider).Assembly.GetName().Version!;
+
+        // AssemblyVersion 固定 1.0.0.0（只加成员不改绑定），次版本号体现在包版本
+        Assert.Equal(new Version(1, 0, 0, 0), version);
+        var informational = typeof(ISafeStateProvider).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .Single().InformationalVersion;
+        Assert.StartsWith("1.3.", informational, StringComparison.Ordinal);
+    }
+
     // ---------- 设备仿真（可选能力） ----------
 
     /// <summary>

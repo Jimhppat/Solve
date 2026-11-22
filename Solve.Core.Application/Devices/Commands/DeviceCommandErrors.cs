@@ -19,6 +19,7 @@ public static class DeviceCommandErrors
     public const string ConfirmationRequiredCode = "Command.ConfirmationRequired";
     public const string ExpiredCode = "Command.Expired";
     public const string StaleCode = "Command.Stale";
+    public const string SafeStopUnsupportedCode = "Command.SafeStopUnsupported";
 
     // ---------- 执行：报文已经或可能已经发出 ----------
 
@@ -47,6 +48,9 @@ public static class DeviceCommandErrors
 
     public static Error SubtreeDisabled(string command, string source, string disabled)
         => new(SubtreeDisabledCode, $"联锁未满足：{disabled} 已停用（维护屏蔽），「{command}」经 {source} 的接线会同时作用到它。");
+
+    public static Error SafeStopUnsupported(string driver)
+        => new(SafeStopUnsupportedCode, $"{driver}的驱动没有提供安全停止，请用对应的关闭命令，或执行系统急停。");
 
     public static Error ConfirmationRequired(string command)
         => new(ConfirmationRequiredCode, $"「{command}」需要操作员确认后才能执行。");

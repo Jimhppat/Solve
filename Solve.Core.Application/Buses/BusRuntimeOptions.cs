@@ -28,6 +28,12 @@ public sealed record BusRuntimeOptions
     public TimeSpan FaultCooldown { get; init; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
+    /// 安全跳闸后、关闭物理通道前，向设备下发安全状态（卸载、关输出）的总时限（默认 3 s），含等待在途事务让出通道锁。
+    /// 到时未完成的模块放弃并记严重日志，通道照常关闭：跳闸不能被设备拖住。
+    /// </summary>
+    public TimeSpan SafeStopTimeout { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// 状态事件队列容量。满时丢弃最旧事件（UI 只关心最新状态；完整轨迹以日志为准）。
     /// </summary>
     public int StateEventCapacity { get; init; } = 64;
@@ -38,6 +44,7 @@ public sealed record BusRuntimeOptions
         EnsurePositive(TransactionTimeout, nameof(TransactionTimeout));
         EnsurePositive(ShutdownTimeout, nameof(ShutdownTimeout));
         EnsurePositive(FaultCooldown, nameof(FaultCooldown));
+        EnsurePositive(SafeStopTimeout, nameof(SafeStopTimeout));
         ArgumentOutOfRangeException.ThrowIfLessThan(StateEventCapacity, 1, nameof(StateEventCapacity));
     }
 
