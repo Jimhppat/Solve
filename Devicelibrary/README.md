@@ -267,8 +267,10 @@ new CommandInfo("load.cc", "恒流带载", CommandSafety.Output)
     Group = "load",
     Arguments =
     [
-        new CommandArgumentInfo("current", "电流", "A", Minimum: 0.1, Maximum: 60),                // 必填
-        new CommandArgumentInfo("start-delay", "启动延迟", "s", 0, 20) { DefaultValue = 0 },     // 可选
+        // 必填：没有默认值
+        new CommandArgumentInfo("current", "电流", "A", Minimum: 0.1, Maximum: 60),
+        // 可选：调用方不传时内核补默认值
+        new CommandArgumentInfo("start-delay", "启动延迟", "s", 0, 20) { DefaultValue = 0 },
     ],
 }
 ```
