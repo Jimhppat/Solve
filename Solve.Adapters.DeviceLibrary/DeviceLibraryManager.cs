@@ -15,7 +15,7 @@ namespace Solve.Adapters.DeviceLibrary;
 /// <remarks>
 /// <para>信任策略：扫描只读清单与文件（清单声明了包内驱动，不执行代码就能列出）。信任记录保存在设置库
 /// （键 devicelibrary.approved.&lt;包标识&gt;，值为信任时的指纹）；包第一次出现或任一文件变化都需要重新信任。
-/// 信任后立即在独立加载上下文中载入，并核对代码中的驱动说明与清单声明一致。</para>
+/// 信任后立即在独立加载上下文中载入，并核对代码中的驱动说明与清单声明一致、每个驱动都带仿真设备（SDK 1.4）。</para>
 /// <para>无法卸载：.NET 不能安全卸载仍被引用的程序集，所以已载入的包在本次运行中不会被替换：
 /// 磁盘上换成新版本时，新版本需要重启生效；撤销信任与停用驱动只把驱动从驱动表移除，代码留在内存中但不再被调用。</para>
 /// <para>隔离：每个包一个加载上下文，只共享 SDK；包内代码在载入期抛出的任何异常都只让该包载入失败。
@@ -724,6 +724,8 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
                     problems.Add($"驱动 {descriptor.Id} 的名称与清单不一致：清单为「{declared.Name}」，代码为「{descriptor.Name}」。");
                 if (!CategoryMap.TryMap(declared.Category, out var declaredCategory) || declaredCategory != descriptor.Category)
                     problems.Add($"驱动 {descriptor.Id} 的分类与清单不一致。");
+                if (CheckSimulation(implementation!, descriptor.Id) is { } simulation)
+                    problems.Add(simulation);
 
                 drivers.Add(new LoadedDriver(descriptor, implementation!, declared));
             }
@@ -745,6 +747,23 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
             logger.LogError(root, "驱动包 {PackageId} 载入失败", manifest.Id);
             return LoadOutcome.Failed($"{root.GetType().Name}：{root.Message}");
         }
+    }
+
+    /// <summary>
+    /// SDK 1.4：每个驱动都必须带仿真设备。缺少时返回面向操作员的原因，否则为 null
+    /// </summary>
+    /// <remarks>
+    /// 载入时就拒绝，而不是等到仿真模式下模块按超时报通信异常：问题在信任驱动包的那一刻暴露，
+    /// 原因直接显示在驱动库里。只检查类型是否实现了接口，不调用 <see cref="IDeviceSimulatorProvider.CreateSimulator"/>，
+    /// 载入期不为核对而多执行第三方代码。
+    /// </remarks>
+    internal static string? CheckSimulation(IDeviceDriver implementation, DriverId id)
+    {
+        ArgumentNullException.ThrowIfNull(implementation);
+
+        return implementation is IDeviceSimulatorProvider
+            ? null
+            : $"驱动 {id} 没有实现仿真设备（{nameof(IDeviceSimulatorProvider)}）。SDK 1.4 起每个驱动都必须带仿真设备，见驱动开发规范 5.7 节。";
     }
 
     private static DriverDescriptor? ToDescriptor(DriverInfo? info, out string? problem)

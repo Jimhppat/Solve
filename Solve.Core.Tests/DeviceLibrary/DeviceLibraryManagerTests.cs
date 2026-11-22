@@ -605,6 +605,41 @@ public sealed class DeviceLibraryManagerTests : IDisposable
         Assert.Contains("没有在清单中声明", package.Problem);
     }
 
+    // ---------- 仿真设备（SDK 1.4 起每个驱动都必须带） ----------
+
+    /// <summary>
+    /// 只实现了驱动、没有仿真设备的驱动（1.4 之前合法，1.4 起不能载入）
+    /// </summary>
+    private sealed class DriverWithoutSimulator : IDeviceDriver
+    {
+        public DriverInfo Info { get; } = new("acme.bare", "无仿真驱动", DeviceCategory.General, "测试用", MinAddress: 1, MaxAddress: 1);
+
+        public IDeviceSession CreateSession(DeviceContext context) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void DriverWithoutSimulator_IsRejected_WithReasonForOperator()
+    {
+        var problem = DeviceLibraryManager.CheckSimulation(new DriverWithoutSimulator(), DriverId.Of("acme.bare"));
+
+        Assert.NotNull(problem);
+        Assert.Contains("acme.bare", problem);
+        Assert.Contains(nameof(IDeviceSimulatorProvider), problem);
+    }
+
+    [Fact]
+    public async Task LoadedDriver_ProvidesSimulator_AcrossLoadContexts()
+    {
+        AddPackage("sample");
+        var library = await LoadAsync();
+        await ApproveAsync(library);
+
+        // 驱动在独立加载上下文里，只共享 SDK：接口类型必须是同一个，内核才认得出它的仿真设备
+        var driver = library.Drivers[SamplePower];
+        Assert.IsAssignableFrom<IDeviceSimulatorProvider>(driver);
+        Assert.Null(DeviceLibraryManager.CheckSimulation(driver, SamplePower));
+    }
+
     // ---------- 异常包 ----------
 
     [Fact]

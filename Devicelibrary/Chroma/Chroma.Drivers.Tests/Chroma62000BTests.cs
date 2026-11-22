@@ -87,6 +87,11 @@ public sealed class Chroma62000BTests
     public void Package_ListsDriver()
         => Assert.Equal(["chroma.62015b-15-90"], new ChromaDriverPackage().Drivers.Select(d => d.Info.Id));
 
+    // SDK 1.4 起每个驱动都必须带仿真设备，否则设备库拒绝载入整个驱动包；仿真行为见 Chroma62000BSimulatorTests
+    [Fact]
+    public void Package_EveryDriverProvidesSimulator()
+        => Assert.All(new ChromaDriverPackage().Drivers, d => Assert.IsAssignableFrom<IDeviceSimulatorProvider>(d));
+
     [Fact]
     public void Package_DependsOnlyOnSdkAndFramework()
     {

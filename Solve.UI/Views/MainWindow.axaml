@@ -45,6 +45,16 @@
         <!-- ReSharper disable once Xaml.RedundantResource -->
         <!-- Semi 默认在浮层展开时给内容区压一层深色遮罩；这里换成透明：仍可点击外部收起，但页面状态始终清晰可读 -->
         <SolidColorBrush x:Key="SplitViewMaskBrush" Color="Transparent" />
+
+        <!-- 状态栏胶囊开关的滑块颜色：仿真为蓝色系，生产为红色系（与状态圆点一致），白字在两种底色上都清晰 -->
+        <LinearGradientBrush x:Key="CapsuleSimulationBrush" StartPoint="0%,0%" EndPoint="100%,100%">
+            <GradientStop Offset="0" Color="#60A5FA" />
+            <GradientStop Offset="1" Color="#2563EB" />
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="CapsuleProductionBrush" StartPoint="0%,0%" EndPoint="100%,100%">
+            <GradientStop Offset="0" Color="#FB7185" />
+            <GradientStop Offset="1" Color="#DC2626" />
+        </LinearGradientBrush>
     </Window.Resources>
 
     <Window.Styles>
@@ -130,6 +140,85 @@
             <Setter Property="Height" Value="8" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+
+        <!--
+            状态栏的生产 / 仿真胶囊开关：左"仿真"、右"生产"，文字在胶囊里，滑块在两侧之间滑动并渐变变色。
+            显示只读 IsModeThumbProduction（单向），点击只发出切换请求，控件本身不保存选中状态。
+            宽度：2 + 54 + 54 + 2 = 112，滑块到生产一侧平移 54
+        -->
+        <Style Selector="Button.mode-capsule">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Name="PART_ContentPresenter"
+                                      Background="Transparent"
+                                      Content="{TemplateBinding Content}" />
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button.mode-capsule:disabled">
+            <Setter Property="Opacity" Value="0.55" />
+        </Style>
+        <Style Selector="Button.mode-capsule Border.capsule-track">
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill1}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+        </Style>
+        <Style Selector="Button.mode-capsule:pointerover Border.capsule-track">
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill2}" />
+        </Style>
+
+        <!-- 滑块：平移 + 两层渐变交叉淡入淡出，滑动的同时颜色从仿真渐变到生产 -->
+        <Style Selector="Button.mode-capsule Panel.capsule-thumb">
+            <Setter Property="RenderTransform" Value="translateX(0px)" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.32" Easing="CubicEaseOut" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Button.mode-capsule.production Panel.capsule-thumb">
+            <Setter Property="RenderTransform" Value="translateX(54px)" />
+        </Style>
+        <Style Selector="Button.mode-capsule Border.thumb-layer">
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.32" Easing="CubicEaseOut" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Button.mode-capsule Border.thumb-layer.production">
+            <Setter Property="Opacity" Value="0" />
+        </Style>
+        <Style Selector="Button.mode-capsule.production Border.thumb-layer.production">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.mode-capsule.production Border.thumb-layer.simulation">
+            <Setter Property="Opacity" Value="0" />
+        </Style>
+
+        <!-- 文字：滑块所在一侧为白色粗体，另一侧为次要文字色，颜色同样渐变 -->
+        <Style Selector="Button.mode-capsule TextBlock.capsule-label">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText2}" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="Foreground" Duration="0:0:0.32" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Button.mode-capsule:not(.production) TextBlock.capsule-label.simulation">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.mode-capsule.production TextBlock.capsule-label.production">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
     </Window.Styles>
 
     <Grid>
@@ -199,8 +288,35 @@
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Ellipse Classes="dot" Fill="{Binding ModeBadgeColor}" />
                         <TextBlock FontSize="12" FontWeight="Medium"
+                                   VerticalAlignment="Center"
                                    Foreground="{DynamicResource SemiColorText1}"
                                    Text="{Binding ModeText}" />
+
+                        <!-- 生产 / 仿真胶囊开关：点击只打开确认弹窗；确认中滑块先滑到目标一侧，取消后滑回实际模式 -->
+                        <Button Classes="mode-capsule" Margin="8,0,0,0"
+                                Classes.production="{Binding IsModeThumbProduction}"
+                                Command="{Binding RequestModeToggleCommand}"
+                                AutomationProperties.Name="运行模式切换"
+                                ToolTip.Tip="切换生产 / 仿真模式（重启生效）">
+                            <Panel Width="112" Height="22">
+                                <Border Classes="capsule-track" CornerRadius="11" BorderThickness="1" />
+
+                                <Panel Classes="capsule-thumb" Width="54" Height="18" Margin="2,0,0,0"
+                                       HorizontalAlignment="Left" VerticalAlignment="Center">
+                                    <Border Classes="thumb-layer simulation" CornerRadius="9"
+                                            Background="{StaticResource CapsuleSimulationBrush}"
+                                            BoxShadow="0 1 3 #33000000" />
+                                    <Border Classes="thumb-layer production" CornerRadius="9"
+                                            Background="{StaticResource CapsuleProductionBrush}"
+                                            BoxShadow="0 1 3 #33000000" />
+                                </Panel>
+
+                                <Grid ColumnDefinitions="*,*" Margin="2,0">
+                                    <TextBlock Grid.Column="0" Classes="capsule-label simulation" Text="仿真" />
+                                    <TextBlock Grid.Column="1" Classes="capsule-label production" Text="生产" />
+                                </Grid>
+                            </Panel>
+                        </Button>
                     </StackPanel>
 
                     <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12"
@@ -288,5 +404,67 @@
                 <ContentControl Content="{Binding CurrentPage}" />
             </SplitView>
         </DockPanel>
+
+        <!-- ==================== 生产 / 仿真切换 确认弹窗 ==================== -->
+        <Grid IsVisible="{Binding IsModeDialogOpen}">
+            <Border Background="#80000000" />
+
+            <Border Width="460" Margin="24"
+                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Padding="24,20"
+                    CornerRadius="{DynamicResource SemiBorderRadiusLarge}"
+                    Background="{DynamicResource SemiColorBackground1}"
+                    BorderBrush="{DynamicResource SemiColorBorder}"
+                    BorderThickness="1"
+                    BoxShadow="0 12 40 #33000000">
+                <StackPanel Spacing="20">
+                    <DockPanel>
+                        <!-- 切到生产：红色警示；切到仿真：常规色 -->
+                        <Panel DockPanel.Dock="Left" Width="36" Height="36" Margin="0,0,14,0" VerticalAlignment="Top">
+                            <Border CornerRadius="{DynamicResource SemiBorderRadiusFull}"
+                                    Background="{DynamicResource SemiColorDangerLight}"
+                                    IsVisible="{Binding IsModeDialogProduction}">
+                                <PathIcon Data="{DynamicResource SemiIconAlertTriangle}" Width="16" Height="16"
+                                          Foreground="{DynamicResource SemiColorDanger}" />
+                            </Border>
+                            <Border CornerRadius="{DynamicResource SemiBorderRadiusFull}"
+                                    Background="{DynamicResource SemiColorPrimaryLight}"
+                                    IsVisible="{Binding !IsModeDialogProduction}">
+                                <PathIcon Data="{DynamicResource SemiIconRefresh}" Width="16" Height="16"
+                                          Foreground="{DynamicResource SemiColorPrimary}" />
+                            </Border>
+                        </Panel>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{Binding ModeDialogTitle}" FontSize="16" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SemiColorText0}" />
+                            <TextBlock Text="{Binding ModeDialogMessage}" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SemiColorText1}" />
+                            <TextBlock Text="{Binding ModeDialogError}" FontSize="13" TextWrapping="Wrap"
+                                       IsVisible="{Binding ModeDialogError, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                       Foreground="{DynamicResource SemiColorDanger}" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                        <Button Classes="Tertiary" Content="{Binding ModeDialogCancelText}"
+                                Command="{Binding CancelModeSwitchCommand}" />
+                        <Button Classes="Danger" Theme="{DynamicResource SolidButton}"
+                                Content="切换到生产并重启"
+                                Command="{Binding ConfirmModeSwitchCommand}">
+                            <Button.IsVisible>
+                                <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                    <Binding Path="IsModeDialogProduction" />
+                                    <Binding Path="CanConfirmModeSwitch" />
+                                </MultiBinding>
+                            </Button.IsVisible>
+                        </Button>
+                        <Button Classes="Primary" Theme="{DynamicResource SolidButton}"
+                                Content="切换到仿真并重启"
+                                IsVisible="{Binding !IsModeDialogProduction}"
+                                Command="{Binding ConfirmModeSwitchCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

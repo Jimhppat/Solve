@@ -21,6 +21,7 @@ using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Devices.Simulation;
 using Solve.Core.Application.Logging;
+using Solve.Core.Application.Settings;
 using Solve.Core.Application.Settings.Ports;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
@@ -72,6 +73,8 @@ public sealed class AppHost : IAsyncDisposable
     private WiringService? _wiring;
     private WiringInspector? _wiringInspector;
     private DeviceCommandService? _commands;
+    private OperatingModeSwitch? _modeSwitch;
+    private int _restartRequested;
     private bool _disposed;
 
     private AppHost(DesktopOptions options)
@@ -284,6 +287,42 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// 生产 / 仿真切换（保存目标模式，重启生效）；启动完成前或配置库不可用时为 null
+    /// </summary>
+    public IOperatingModeSwitch? ModeSwitch
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _modeSwitch;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 是否已请求在本次退出后重启（模式切换保存成功后由界面发起）
+    /// </summary>
+    public bool RestartRequested => Volatile.Read(ref _restartRequested) != 0;
+
+    /// <summary>
+    /// 标记退出后重启。只在模式已保存、等待重启时接受，防止误触发；返回是否已标记。
+    /// 重启本身由 Main 在资源释放、日志关闭之后执行：新旧进程不会同时占用日志文件与物理通道。
+    /// </summary>
+    public bool RequestRestart(string reason)
+    {
+        if (ModeSwitch is not { IsRestartPending: true })
+        {
+            _logger.LogWarning("拒绝重启请求：没有待生效的模式切换（{Reason}）", reason);
+            return false;
+        }
+
+        if (Interlocked.Exchange(ref _restartRequested, 1) == 0)
+            _logger.LogWarning("已请求重启：{Reason}。退出时先释放全部总线与通道，再启动新实例", reason);
+        return true;
+    }
+
+    /// <summary>
     /// 在线程池上启动总线系统，幂等。返回的任务不会以异常结束，结果见 <see cref="StartupReport"/>。
     /// </summary>
     public Task<StartupReport> Start()
@@ -349,6 +388,7 @@ public sealed class AppHost : IAsyncDisposable
             _wiring = null;
             _wiringInspector = null;
             _commands = null;
+            _modeSwitch = null;
             bindings = _bindings;
             polling = _polling;
             _buses = null;
@@ -554,11 +594,15 @@ public sealed class AppHost : IAsyncDisposable
                 TimeProvider.System,
                 _loggerFactory.CreateLogger<DeviceCommandService>());
             var devices = new DeviceService(deviceRepository, catalog, bindings, statuses, _loggerFactory.CreateLogger<DeviceService>(), wiring);
+            // 模式切换只写配置库、重启生效；本次运行的模式不变
+            var modeSwitch = new OperatingModeSwitch(
+                mode.Mode, Options.HardwareRequested, settings, manager, _loggerFactory.CreateLogger<OperatingModeSwitch>());
             lock (_gate)
             {
                 if (_disposed)
                     return StartupReport.Failed(mode, Cancelled());
 
+                _modeSwitch = modeSwitch;
                 _busService = service;
                 _devices = devices;
                 _deviceLibrary = library;

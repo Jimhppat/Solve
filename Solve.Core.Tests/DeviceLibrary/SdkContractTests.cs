@@ -252,26 +252,28 @@ public sealed class SdkContractTests
     }
 
     [Fact]
-    public void SdkVersion_IsMinorBump_ForSafeState()
+    public void SdkVersion_IsMinorBump_ForMandatorySimulator()
     {
         var version = typeof(ISafeStateProvider).Assembly.GetName().Version!;
 
-        // AssemblyVersion 固定 1.0.0.0（只加成员不改绑定），次版本号体现在包版本
+        // AssemblyVersion 固定 1.0.0.0（契约类型不变、不改绑定），次版本号体现在包版本：
+        // 1.3 新增安全状态能力，1.4 把仿真设备由可选改为载入时必须
         Assert.Equal(new Version(1, 0, 0, 0), version);
         var informational = typeof(ISafeStateProvider).Assembly
             .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
             .Single().InformationalVersion;
-        Assert.StartsWith("1.3.", informational, StringComparison.Ordinal);
+        Assert.StartsWith("1.4.", informational, StringComparison.Ordinal);
     }
 
-    // ---------- 设备仿真（可选能力） ----------
+    // ---------- 设备仿真（SDK 1.4 起每个驱动都必须带） ----------
 
     /// <summary>
-    /// 仿真是追加的可选接口：驱动契约本身不变，SDK 1 的已有驱动不实现它也照常编译、加载
+    /// 仿真是独立接口，驱动契约本身不变：要求由设备库在载入时核对（DeviceLibraryManager.CheckSimulation），
+    /// 不在类型层面强制，所以 sdkVersion 仍为 1，已实现仿真设备的 1.x 驱动包不需要重新编译
     /// </summary>
     [Fact]
-    public void Simulation_IsOptional_DriverContractUnchanged()
+    public void Simulation_IsSeparateInterface_DriverContractUnchanged()
     {
         Assert.Empty(typeof(IDeviceDriver).GetInterfaces());
         Assert.Equal(
