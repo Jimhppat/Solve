@@ -11,7 +11,13 @@ namespace Solve.Core.Domain.Topology;
 /// <param name="Id">系统根节点的身份</param>
 /// <param name="Name">系统名称（必填）</param>
 /// <param name="Cabinets">柜体定义</param>
-public sealed record TopologyDefinition(TopologyNodeId Id, string Name, IReadOnlyList<TopologyNodeDefinition> Cabinets);
+public sealed record TopologyDefinition(TopologyNodeId Id, string Name, IReadOnlyList<TopologyNodeDefinition> Cabinets)
+{
+    /// <summary>
+    /// 整机每个产品位都要求的接点（如每个产品都要接 VBAT）
+    /// </summary>
+    public IReadOnlyList<PortGroup> Ports { get; init; } = [];
+}
 
 /// <summary>
 /// 柜体及以下任意一层的节点定义。所属层级由它在树中的深度决定，不单独声明，
@@ -31,6 +37,11 @@ public sealed record TopologyNodeDefinition(TopologyNodeId Id, int Ordinal, IRea
     /// 是否启用。停用（维护屏蔽）的节点连同全部下级都视为不可用，联锁检查会拒绝向其下发命令。
     /// </summary>
     public bool Enabled { get; init; } = true;
+
+    /// <summary>
+    /// 本位置声明的接点组：对它下面的全部产品位（含它自己，若它是产品位）生效，见 <see cref="PortGroup"/>
+    /// </summary>
+    public IReadOnlyList<PortGroup> Ports { get; init; } = [];
 
     /// <summary>
     /// 没有下级的节点（产品位）

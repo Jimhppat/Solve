@@ -276,6 +276,40 @@
                                                    Value="{Binding ChildCountInput}"
                                                    Minimum="{Binding MinChildCount}" Maximum="{Binding MaxCount}" />
                                 </Grid>
+
+                                <!-- 接点：这里的产品要接几路、各是什么功能。声明在上级位置时对它下面全部产品位生效 -->
+                                <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                                    <TextBlock Grid.Column="0" Classes="label" Text="{Binding PortsLabel}" VerticalAlignment="Top" Margin="0,6,0,0" />
+                                    <StackPanel Grid.Column="1" Spacing="8">
+                                        <ItemsControl ItemsSource="{Binding InheritedPorts}" IsVisible="{Binding HasInheritedPorts}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="x:String">
+                                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,2"
+                                                               Foreground="{DynamicResource SemiColorText1}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <ItemsControl ItemsSource="{Binding PortRows}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:PortRowViewModel">
+                                                    <Grid ColumnDefinitions="96,*,84,Auto" ColumnSpacing="8" Margin="0,0,0,8">
+                                                        <ComboBox Grid.Column="0" HorizontalAlignment="Stretch"
+                                                                  AutomationProperties.Name="接点功能"
+                                                                  ItemsSource="{Binding KindOptions}" SelectedItem="{Binding Kind}" />
+                                                        <TextBox Grid.Column="1" Text="{Binding Name}" PlaceholderText="名称，如 V 或 VBAT"
+                                                                 AutomationProperties.Name="接点名称" MaxLength="{Binding MaxNameLength}" />
+                                                        <NumericUpDown Grid.Column="2" AutomationProperties.Name="接点数量"
+                                                                       Increment="1" FormatString="0" ParsingNumberStyle="Integer" ClipValueToMinMax="True"
+                                                                       Minimum="1" Maximum="{Binding MaxCount}" Value="{Binding CountInput}" />
+                                                        <Button Grid.Column="3" Classes="Small Danger" Content="删除" Command="{Binding RemoveCommand}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Button Classes="Small Tertiary" HorizontalAlignment="Left" Content="添加接点"
+                                                Command="{Binding AddPortCommand}" />
+                                    </StackPanel>
+                                </Grid>
                             </StackPanel>
 
                             <TextBlock Classes="message"

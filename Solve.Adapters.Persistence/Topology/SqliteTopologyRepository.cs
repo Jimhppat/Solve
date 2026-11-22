@@ -33,6 +33,7 @@ public sealed class SqliteTopologyRepository : ITopologyRepository
                address    AS Address,
                name       AS Name,
                enabled    AS Enabled,
+               ports      AS Ports,
                created_at AS CreatedAt,
                updated_at AS UpdatedAt
           FROM topology_nodes
@@ -45,8 +46,8 @@ public sealed class SqliteTopologyRepository : ITopologyRepository
     private const string DeleteAllSql = "DELETE FROM topology_nodes;";
 
     private const string InsertSql = """
-        INSERT INTO topology_nodes (id, parent_id, level, ordinal, address, name, enabled, created_at, updated_at)
-        VALUES (@Id, @ParentId, @Level, @Ordinal, @Address, @Name, @Enabled, @CreatedAt, @UpdatedAt);
+        INSERT INTO topology_nodes (id, parent_id, level, ordinal, address, name, enabled, ports, created_at, updated_at)
+        VALUES (@Id, @ParentId, @Level, @Ordinal, @Address, @Name, @Enabled, @Ports, @CreatedAt, @UpdatedAt);
         """;
 
     // 接线随位置一起删除：只删落点已不在新快照中的接线，仍存在的位置 Id 不变、接线原样保留。

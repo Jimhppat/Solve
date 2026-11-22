@@ -32,6 +32,11 @@ internal sealed class TopologyNodeRow
 
     public long Enabled { get; set; }
 
+    /// <summary>
+    /// 本位置声明的接点组，JSON 数组 [{kind, name, count}]；不声明为 "[]"
+    /// </summary>
+    public string Ports { get; set; } = "[]";
+
     public string CreatedAt { get; set; } = "";
 
     public string UpdatedAt { get; set; } = "";
@@ -45,5 +50,6 @@ internal sealed class TopologyNodeRow
             && Ordinal == other.Ordinal
             && string.Equals(Address, other.Address, StringComparison.Ordinal)
             && string.Equals(Name, other.Name, StringComparison.Ordinal)
-            && Enabled == other.Enabled;
+            && Enabled == other.Enabled
+            && string.Equals(Ports, other.Ports, StringComparison.Ordinal);
 }

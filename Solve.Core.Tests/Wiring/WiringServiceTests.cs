@@ -304,7 +304,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
 
         // 退回 v5：去掉接线表
         await using (var connection = await _database.OpenConnectionAsync(CancellationToken.None))
-            await Dapper.SqlMapper.ExecuteAsync(connection, "ALTER TABLE bus_devices DROP COLUMN channels; DROP TABLE topology_wires; PRAGMA user_version = 5;");
+            await Dapper.SqlMapper.ExecuteAsync(connection, "ALTER TABLE topology_nodes DROP COLUMN ports; ALTER TABLE bus_devices DROP COLUMN channels; DROP TABLE topology_wires; PRAGMA user_version = 5;");
         SqliteDatabase.ClearPool(StorageOptions);
 
         var reopened = await SqliteDatabase.OpenAsync(StorageOptions, NullLogger.Instance, CancellationToken.None);
@@ -518,6 +518,51 @@ public sealed class WiringServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MappingDraft_PairsChannelsWithOpenPorts_UsingPortNamesAsPurpose()
+    {
+        // 层位 C01-L01 声明"每个产品位要采集 V × 2"；它下面 4 个产品位共 8 个接点
+        var ports = new[] { new PortGroup(ChannelKind.Measure, "V", 2) };
+        Assert.True((await _topology.SaveAsync(
+            _topology.PlanNodeEdit(Node("C01-L01").Id, new TopologyNodeEdit(null, true, Ports: ports)).Value, CancellationToken.None)).IsSuccess);
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var daq = await AddModuleAsync(Daq, "采集卡", 2);
+
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        page.IsDraftMode = true;
+        page.SelectedItem = page.Roots[0].Children[0].Children[0];
+        var draft = page.Draft;
+        draft.SelectAllPositionsCommand.Execute(null);
+
+        // 3 路采集 + 1 路继电器：继电器没有同功能的空接点，不参与
+        var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        foreach (var index in new[] { 1, 2, 3 })
+            channels.Single(c => c.Channel == new ChannelRef(daq.Id, "input", index)).IsChecked = true;
+        channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 1)).IsChecked = true;
+
+        await draft.AssembleCommand.ExecuteAsync();
+
+        Assert.Equal(
+            [("C01-L01-S01-F01-P01", "V1", 1), ("C01-L01-S01-F01-P01", "V2", 2), ("C01-L01-S01-F01-P02", "V1", 3)],
+            draft.Rows.Select(r => (r.Position.Address.ToString(), r.Purpose, r.Channel.Channel.Index)));
+        Assert.Contains("还有 5 个接点没有分配通道", draft.Message);
+        Assert.Contains("1 路通道没有同功能的空接点", draft.Message);
+
+        await WaitUntilAsync(() => draft.ConfirmCommand.CanExecute(null));
+        await draft.ConfirmCommand.ExecuteAsync();
+
+        Assert.All(_wiring.Current.GetPortCoverage(Node("C01-L01-S01-F01-P01").Id), p => Assert.True(p.IsConnected));
+        Assert.Single(_wiring.Current.GetPortCoverage(Node("C01-L01-S01-F01-P02").Id), p => p.IsConnected);
+
+        // "缺少采集"筛选：P01 接完了，不再列出；其余 3 个产品位还缺
+        draft.Filter = Solve.UI.ViewModels.PositionFilterOption.All.Single(o => o.Missing == ChannelKind.Measure);
+        Assert.Equal(["C01-L01-S01-F01-P02", "C01-L01-S02-F01-P01", "C01-L01-S02-F01-P02"],
+            draft.Positions.Select(p => p.Node.Address.ToString()));
+        page.Dispose();
+    }
+
+    [Fact]
     public async Task MappingDraft_ConflictingRow_BlocksConfirm()
     {
         var relay = await AddModuleAsync(Relay, "继电器", 1);
@@ -593,6 +638,37 @@ public sealed class WiringServiceTests : IAsyncLifetime
         var disable = _topology.PlanNodeEdit(Node("C01").Id, new TopologyNodeEdit(null, false, 1, null)).Value;
         Assert.True((await _topology.SaveAsync(disable, CancellationToken.None)).IsSuccess);
         Assert.Equal("Wiring.NodeDisabled", _inspector.CheckReady(Node("C01-L02").Id).Error.Code);
+    }
+
+    [Fact]
+    public async Task CheckReady_RejectsProductWithMissingPorts_UntilAllAreWired()
+    {
+        // 层位上接 VBAT，层位声明"下面每个产品位要 VBAT + VCC"
+        var vbat = await AddModuleAsync(SamplePower, "VBAT 电源", 1);
+        await WireAsync("C01-L02", new ChannelRef(vbat.Id, "output", 1), "VBAT");
+        _statuses.Set(new ModuleStatus(vbat.Id, _busId, ModuleCommState.Online, null, DateTimeOffset.UtcNow, 0, []));
+
+        var ports = new[] { new PortGroup(ChannelKind.PowerSupply, "VBAT", 1), new PortGroup(ChannelKind.PowerSupply, "VCC", 1) };
+        var edit = _topology.PlanNodeEdit(Node("C01-L02").Id, new TopologyNodeEdit(null, true, Ports: ports));
+        Assert.True(edit.IsSuccess, edit.IsFailure ? edit.Error.Message : null);
+        Assert.Contains("接点改为", edit.Value.Operation);
+        Assert.True((await _topology.SaveAsync(edit.Value, CancellationToken.None)).IsSuccess);
+
+        var product = Node("C01-L02-S01-F01-P01").Id;
+        var refused = _inspector.CheckReady(product);
+        Assert.Equal(WiringErrors.PortsMissingCode, refused.Error.Code);
+        Assert.Contains("供电 VCC", refused.Error.Message);
+        Assert.DoesNotContain("VBAT", refused.Error.Message);
+
+        // 接点只在产品位上核对：层位本身照常可用
+        Assert.True(_inspector.CheckReady(Node("C01-L02").Id).IsSuccess);
+
+        var vcc = await AddModuleAsync(SamplePower, "VCC 电源", 2);
+        await WireAsync("C01-L02-S01-F01-P01", new ChannelRef(vcc.Id, "output", 1), "vcc");
+        _statuses.Set(new ModuleStatus(vcc.Id, _busId, ModuleCommState.Online, null, DateTimeOffset.UtcNow, 0, []));
+
+        Assert.True(_inspector.CheckReady(product).IsSuccess);
+        Assert.Equal(WiringErrors.PortsMissingCode, _inspector.CheckReady(Node("C01-L02-S01-F01-P02").Id).Error.Code);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

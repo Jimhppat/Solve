@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Solve.Core.Domain.Common;
+using Solve.Core.Domain.Drivers;
 using Solve.Core.Domain.Topology;
 
 namespace Solve.Adapters.Persistence.Topology;
@@ -36,6 +38,7 @@ internal static class TopologyRowMapper
                 Address = node.Address.ToString(),
                 Name = node.Name,
                 Enabled = node.IsEnabled ? 1 : 0,
+                Ports = SerializePorts(node.Ports),
             });
 
             for (var i = node.Children.Count - 1; i >= 0; i--)
@@ -95,7 +98,7 @@ internal static class TopologyRowMapper
             collector.Add(TreeRowId, $"{parsed.Count - reached - 1} 行无法从系统根到达（上级缺失、成环或超过 {TopologyLevels.Count} 层）");
 
         // 3. 领域校验（序号范围、同级重复、名称长度、Id 唯一等）
-        var created = EquipmentTopology.Create(new TopologyDefinition(root.Id, root.Row.Name ?? "", cabinets), out var invalid);
+        var created = EquipmentTopology.Create(new TopologyDefinition(root.Id, root.Row.Name ?? "", cabinets) { Ports = root.Ports }, out var invalid);
         foreach (var error in invalid)
             collector.Add(error);
 
@@ -142,6 +145,7 @@ internal static class TopologyRowMapper
                 {
                     Name = child.Row.Name,
                     Enabled = child.Enabled,
+                    Ports = child.Ports,
                 };
             }
 
@@ -186,16 +190,65 @@ internal static class TopologyRowMapper
             valid = false;
         }
 
+        if (!TryParsePorts(row, collector, out var ports))
+            valid = false;
+
         if (valid)
-            parsed = new ParsedRow(row, id, parentId, (int)row.Ordinal, row.Enabled == 1);
+            parsed = new ParsedRow(row, id, parentId, (int)row.Ordinal, row.Enabled == 1, ports);
 
         return valid;
+    }
+
+    // ==================== 接点组 ====================
+
+    private static readonly JsonSerializerOptions PortJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    private sealed class PortGroupDto
+    {
+        public int? Kind { get; set; }
+
+        public string? Name { get; set; }
+
+        public int? Count { get; set; }
+    }
+
+    private static string SerializePorts(IReadOnlyList<PortGroup> ports)
+        => ports.Count == 0
+            ? "[]"
+            : JsonSerializer.Serialize(ports.Select(p => new PortGroupDto { Kind = (int)p.Kind, Name = p.Name, Count = p.Count }).ToList(), PortJson);
+
+    /// <summary>
+    /// 只接受"对象数组，每项都有 kind、name、count"。取值范围（功能已定义、数量、名称长度、重复）由领域层统一校验
+    /// </summary>
+    private static bool TryParsePorts(TopologyNodeRow row, ProblemCollector collector, out IReadOnlyList<PortGroup> ports)
+    {
+        ports = [];
+        List<PortGroupDto?>? groups;
+        try
+        {
+            groups = JsonSerializer.Deserialize<List<PortGroupDto?>>(row.Ports, PortJson);
+        }
+        catch (JsonException ex)
+        {
+            collector.Add(row.Id, $"ports '{row.Ports}' 不是有效的接点配置：{ex.Message}");
+            return false;
+        }
+
+        if (groups is null || groups.Any(g => g is not { Kind: not null, Name: not null, Count: not null }))
+        {
+            collector.Add(row.Id, $"ports '{row.Ports}' 不是有效的接点配置：每项都必须有 kind、name、count");
+            return false;
+        }
+
+        ports = groups.Select(g => new PortGroup((ChannelKind)g!.Kind!.Value, g.Name!, g.Count!.Value)).ToArray();
+        return true;
     }
 
     private static Result<EquipmentTopology> Fail(ProblemCollector collector)
         => Result<EquipmentTopology>.Failure(TopologyErrors.StorageCorrupt(collector.Errors, collector.Total));
 
-    private sealed record ParsedRow(TopologyNodeRow Row, TopologyNodeId Id, TopologyNodeId? ParentId, int Ordinal, bool Enabled);
+    private sealed record ParsedRow(TopologyNodeRow Row, TopologyNodeId Id, TopologyNodeId? ParentId, int Ordinal, bool Enabled,
+        IReadOnlyList<PortGroup> Ports);
 
     private sealed class ProblemCollector
     {

@@ -18,7 +18,7 @@ namespace Solve.Core.Application.Devices.Commands;
 /// <remarks>
 /// <para>两步：<see cref="Prepare"/> 解析并过联锁，得到预览（需要确认时作为确认文案）→ <see cref="ExecuteAsync"/>
 /// 检查确认与有效期，按当前状态重新解析、再过一次联锁，目标没变才发出报文。任何一步不满足都拒绝（故障安全方向）。</para>
-/// <para>联锁：所有命令都要求选中位置与接线所在位置 <see cref="WiringInspector.CheckReady"/>（位置启用、全部有效接线就绪）。
+/// <para>联锁：所有命令都要求选中位置与接线所在位置 <see cref="WiringInspector.CheckReady"/>（位置启用、产品位的接点接完、全部有效接线就绪）。
 /// 输出动作与高危命令另要求接线所在位置的子树内没有停用的位置——上级的一路电源会同时作用到维护屏蔽中的产品位。
 /// 内核不知道哪条命令是"关闭"方向，所以关闭输出同样受联锁约束；紧急情况走系统急停（全部总线安全跳闸）。</para>
 /// <para>执行：与轮询共用总线的通道锁，同一条总线上的报文串行；会话的 BeginCommand 也在锁内调用，保证同一会话的调用串行。

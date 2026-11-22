@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 using Solve.Core.Domain.Common;
+using Solve.Core.Domain.Drivers;
 
 namespace Solve.Core.Domain.Topology;
 
@@ -105,6 +106,20 @@ public sealed class EquipmentTopology
         }
 
         return Create(Export(node => node.Id == id ? (name, enabled) : (node.Name, node.IsEnabled)));
+    }
+
+    /// <summary>
+    /// 修改单个位置自身声明的接点组，得到一份新拓扑（本实例不变）。对它下面的全部产品位生效；空列表表示不声明。
+    /// </summary>
+    public Result<EquipmentTopology> WithNodePorts(TopologyNodeId id, IReadOnlyList<PortGroup> ports)
+    {
+        ArgumentNullException.ThrowIfNull(ports);
+        if (!TryGetNode(id, out _))
+            return Result<EquipmentTopology>.Failure(TopologyErrors.NodeNotFound(id));
+
+        // 先复制：调用方之后改动原列表不能影响新拓扑
+        var copy = ports.ToArray();
+        return Create(Export(node => (node.Name, node.IsEnabled), ports: node => node.Id == id ? copy : node.Ports));
     }
 
     // ---------- 结构编辑 ----------
@@ -336,12 +351,14 @@ public sealed class EquipmentTopology
 
     /// <summary>
     /// 复制一棵子树并全部换新 Id。<paramref name="keepSettings"/> 为 false 时只照抄结构：未命名、全部启用。
+    /// 接点组属于结构（这类位置要接什么），两种情况都照抄。
     /// </summary>
     private static TopologyNodeDefinition Clone(TopologyNodeDefinition source, bool keepSettings)
         => new(TopologyNodeId.New(), source.Ordinal, source.Children.Select(child => Clone(child, keepSettings)).ToArray())
         {
             Name = keepSettings ? source.Name : null,
             Enabled = !keepSettings || source.Enabled,
+            Ports = source.Ports,
         };
 
     /// <summary>
@@ -394,16 +411,23 @@ public sealed class EquipmentTopology
     private TopologyDefinition Export(
         Func<TopologyNode, (string? Name, bool Enabled)> settings,
         TopologyNodeId rewriteParent = default,
-        Func<TopologyNodeDefinition[], TopologyNodeDefinition[]>? rewriteChildren = null)
+        Func<TopologyNodeDefinition[], TopologyNodeDefinition[]>? rewriteChildren = null,
+        Func<TopologyNode, IReadOnlyList<PortGroup>>? ports = null)
     {
-        return new TopologyDefinition(Root.Id, settings(Root).Name ?? "", ExportChildren(Root));
+        ports ??= static node => node.Ports;
+        return new TopologyDefinition(Root.Id, settings(Root).Name ?? "", ExportChildren(Root)) { Ports = ports(Root) };
 
         TopologyNodeDefinition[] ExportChildren(TopologyNode parent)
         {
             var children = Array.ConvertAll(parent.Children.ToArray(), node =>
             {
                 var (name, enabled) = settings(node);
-                return new TopologyNodeDefinition(node.Id, node.Ordinal, ExportChildren(node)) { Name = name, Enabled = enabled };
+                return new TopologyNodeDefinition(node.Id, node.Ordinal, ExportChildren(node))
+                {
+                    Name = name,
+                    Enabled = enabled,
+                    Ports = ports(node),
+                };
             });
 
             // 空 Id 不属于任何节点：不改写时 rewriteParent 为 default，永远匹配不上
@@ -590,15 +614,20 @@ public sealed class EquipmentTopology
             else
                 name = CheckName(TopologyAddress.System, definition.Name);
 
+            var ports = CheckPorts(TopologyAddress.System, definition.Ports);
+            var required = MergeRequired([], ports, definition.Id);
+
             // 系统根不可停用：停用整台设备不属于拓扑配置，应由上层的急停 / 安全停机处理
-            var cabinets = BuildChildren(TopologyAddress.System, definition.Cabinets, parentEffectivelyEnabled: true);
-            return new TopologyNode(definition.Id, TopologyAddress.System, name, isEnabled: true, isEffectivelyEnabled: true, cabinets);
+            var cabinets = BuildChildren(TopologyAddress.System, definition.Cabinets, parentEffectivelyEnabled: true, required);
+            return new TopologyNode(definition.Id, TopologyAddress.System, name, isEnabled: true, isEffectivelyEnabled: true,
+                ports, required, cabinets);
         }
 
         private TopologyNode[] BuildChildren(
             TopologyAddress parent,
             IReadOnlyList<TopologyNodeDefinition>? definitions,
-            bool parentEffectivelyEnabled)
+            bool parentEffectivelyEnabled,
+            IReadOnlyList<RequiredPort> parentRequired)
         {
             // 反序列化可能把列表置为 null，不能信任可空注解
             if (definitions is null)
@@ -651,8 +680,10 @@ public sealed class EquipmentTopology
 
                 var name = definition.Name is null ? null : CheckName(address, definition.Name);
                 var effectivelyEnabled = parentEffectivelyEnabled && definition.Enabled;
-                var children = BuildChildren(address, definition.Children, effectivelyEnabled);
-                built.Add(new TopologyNode(definition.Id, address, name, definition.Enabled, effectivelyEnabled, children));
+                var ports = CheckPorts(address, definition.Ports);
+                var required = MergeRequired(parentRequired, ports, definition.Id);
+                var children = BuildChildren(address, definition.Children, effectivelyEnabled, required);
+                built.Add(new TopologyNode(definition.Id, address, name, definition.Enabled, effectivelyEnabled, ports, required, children));
             }
 
             built.Sort(static (a, b) => a.Ordinal.CompareTo(b.Ordinal));
@@ -684,6 +715,79 @@ public sealed class EquipmentTopology
             }
 
             return trimmed.Length == 0 ? null : trimmed;
+        }
+
+        /// <summary>
+        /// 校验并规范化接点组（名称去首尾空白）。有任何问题时报错并返回空列表：不得到"部分有效"的接点要求。
+        /// </summary>
+        private IReadOnlyList<PortGroup> CheckPorts(TopologyAddress address, IReadOnlyList<PortGroup>? ports)
+        {
+            // 反序列化可能把列表置为 null，不能信任可空注解
+            if (ports is null)
+            {
+                AddError(TopologyErrors.PortsField, $"{address} 的接点列表为空引用，没有接点时应为空列表。");
+                return [];
+            }
+
+            if (ports.Count == 0)
+                return [];
+
+            var before = TotalErrorCount;
+            if (ports.Count > PortGroup.MaxGroupsPerNode)
+                AddError(TopologyErrors.PortsField, $"{address} 的接点组不能超过 {PortGroup.MaxGroupsPerNode} 个，当前为 {ports.Count} 个。");
+
+            var normalized = new List<PortGroup>(ports.Count);
+            var keys = new HashSet<(ChannelKind, string)>();
+            foreach (var group in ports)
+            {
+                if (group is null)
+                {
+                    AddError(TopologyErrors.PortsField, $"{address} 的接点组定义为空引用。");
+                    continue;
+                }
+
+                var groupBefore = TotalErrorCount;
+                var name = group.Name?.Trim() ?? string.Empty;
+                if (!group.Kind.IsDefined())
+                    AddError(TopologyErrors.PortsField, $"{address} 的接点组「{name}」功能未定义：{(int)group.Kind}。");
+                if (group.Count is < 1 or > PortGroup.MaxCount)
+                    AddError(TopologyErrors.PortsField, $"{address} 的接点组「{name}」数量必须在 [1, {PortGroup.MaxCount}] 之间，当前为 {group.Count}。");
+                if (name.Length > PortGroup.MaxNameLength)
+                    AddError(TopologyErrors.PortsField, $"{address} 的接点名「{name}」不能超过 {PortGroup.MaxNameLength} 个字符。");
+                if (name.Length == 0 && group.Count > 1)
+                    AddError(TopologyErrors.PortsField, $"{address} 的{group.Kind.DisplayName()}接点有 {group.Count} 个，必须填写名称（用作前缀，如 V → V1、V2）。");
+                if (TotalErrorCount > groupBefore)
+                    continue;
+
+                var clean = group with { Name = name };
+                foreach (var port in clean.Expand())
+                {
+                    if (!keys.Add((port.Kind, port.PurposeKey)))
+                        AddError(TopologyErrors.PortsField, $"{address} 的接点「{port.DisplayText}」重复。");
+                }
+
+                normalized.Add(clean);
+            }
+
+            return TotalErrorCount > before ? [] : normalized.ToArray();
+        }
+
+        /// <summary>
+        /// 上级要求的接点 + 本位置声明的接点。同一接点（功能 + 用途）只保留最上层的声明；本位置没有声明时直接沿用上级的列表，不复制
+        /// </summary>
+        private static IReadOnlyList<RequiredPort> MergeRequired(IReadOnlyList<RequiredPort> parent, IReadOnlyList<PortGroup> own, TopologyNodeId source)
+        {
+            if (own.Count == 0)
+                return parent;
+
+            var merged = new List<RequiredPort>(parent);
+            foreach (var port in own.SelectMany(group => group.Expand()))
+            {
+                if (!merged.Exists(existing => existing.Port.Matches(port.Kind, port.PurposeKey)))
+                    merged.Add(new RequiredPort(port, source));
+            }
+
+            return merged.ToArray();
         }
 
         private void AddError(string field, string message)

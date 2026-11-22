@@ -167,6 +167,12 @@ public sealed class SqliteDatabase
         """
         ALTER TABLE bus_devices ADD COLUMN channels TEXT NOT NULL DEFAULT '[]';
         """,
+
+        // v8：位置的接点组（需求侧：这里的产品要接几路、各是什么功能）。JSON 数组，每项 {kind, name, count}。
+        // 只加列、不动既有数据：已有位置为空数组，即不要求接点，联锁与接线行为不变。
+        """
+        ALTER TABLE topology_nodes ADD COLUMN ports TEXT NOT NULL DEFAULT '[]';
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

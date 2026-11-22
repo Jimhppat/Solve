@@ -45,6 +45,11 @@ public enum WiringEditorMode
 /// <para>健康度与读数按 <see cref="RefreshInterval"/> 从内存快照刷新，接线列表不变时只更新数值，不重建行。</para>
 /// <para>只能在 UI 线程上使用；预览计算与磁盘 I/O 在线程池上完成。</para>
 /// </remarks>
+public sealed record PortStatusRow(string PortText, string StateText, bool IsConnected);
+
+/// <summary>
+/// 接线面板：选中位置的接线、批量接线、修改、拆除、下发命令，以及产品位的接点核对
+/// </summary>
 public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 {
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(1);
@@ -59,6 +64,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     private DeviceCommandService? _commands;
     private DeviceCommandPlan? _pendingCommand;
     private TopologyNode? _node;
+    private IReadOnlyList<PortStatusRow> _portRows = [];
     private DispatcherTimer? _timer;
     private bool _disposed;
     private bool _busy;
@@ -818,6 +824,57 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         Rows = inspector.Inspect(node.Id)
             .Select(s => new WireRowViewModel(s, Edit, Remove, ListCommands(s.Wire), RequestCommand, () => CanCommand))
             .ToList();
+        RebuildPorts();
+    }
+
+    /// <summary>
+    /// 产品位的接点核对：每个接点已接（来自哪个位置）或未接。不是产品位、没有接点要求时为空
+    /// </summary>
+    public IReadOnlyList<PortStatusRow> PortRows
+    {
+        get => _portRows;
+        private set
+        {
+            if (SetProperty(ref _portRows, value))
+            {
+                OnPropertyChanged(nameof(HasPorts));
+                OnPropertyChanged(nameof(PortSummaryText));
+                OnPropertyChanged(nameof(HasMissingPorts));
+            }
+        }
+    }
+
+    public bool HasPorts => _portRows.Count > 0;
+
+    public bool HasMissingPorts => _portRows.Any(p => !p.IsConnected);
+
+    /// <summary>
+    /// 如"接点 3 / 5 已接"；接点没接完时安全联锁拒绝向这个产品位发命令
+    /// </summary>
+    public string PortSummaryText => HasMissingPorts
+        ? $"接点 {_portRows.Count(p => p.IsConnected)} / {_portRows.Count} 已接，没接完不能下发命令"
+        : $"接点 {_portRows.Count} / {_portRows.Count} 已接";
+
+    private void RebuildPorts()
+    {
+        if (!IsAvailable || _inspector is not { } inspector || _node is not { } node)
+        {
+            PortRows = [];
+            return;
+        }
+
+        var rows = inspector.Wiring.Current.GetPortCoverage(node.Id)
+            .Select(p => new PortStatusRow(
+                p.Required.Port.DisplayText,
+                p.Wire is { } wire
+                    ? wire.Source.Id == node.Id ? "已接" : $"已接（接在 {wire.Source.Address}）"
+                    : "未接",
+                p.IsConnected))
+            .ToList();
+
+        // 内容没变时不替换列表：定时刷新不让界面闪动
+        if (!rows.SequenceEqual(_portRows))
+            PortRows = rows;
     }
 
     /// <summary>
@@ -840,6 +897,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
             for (var i = 0; i < statuses.Count; i++)
                 _rows[i].Apply(statuses[i]);
+            RebuildPorts();
         }
         catch (Exception ex)
         {

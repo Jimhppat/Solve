@@ -65,7 +65,7 @@ public sealed class TopologyChangePlan
     public IReadOnlyList<TopologyAddress> AddedEnabledRoots { get; private init; } = [];
 
     /// <summary>
-    /// Id 不变、但位置编码 / 名称 / 启用状态有变化的节点数
+    /// Id 不变、但位置编码 / 名称 / 启用状态 / 接点有变化的节点数
     /// </summary>
     public int ChangedCount { get; private init; }
 
@@ -142,7 +142,8 @@ public sealed class TopologyChangePlan
             if (previous.Address != node.Address)
                 renumbered.Add(node);
 
-            if (previous.Address != node.Address || previous.Name != node.Name || previous.IsEnabled != node.IsEnabled)
+            if (previous.Address != node.Address || previous.Name != node.Name || previous.IsEnabled != node.IsEnabled
+                || !previous.Ports.SequenceEqual(node.Ports))
                 changed++;
 
             if (!previous.IsEffectivelyEnabled && node.IsEffectivelyEnabled)

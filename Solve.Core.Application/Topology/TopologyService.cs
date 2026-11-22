@@ -122,7 +122,7 @@ public sealed class TopologyService : ITopologyService
     }
 
     /// <summary>
-    /// 依次应用名称与启用、序号、下级数量，只改有变化的项；任一步失败即整体失败，拓扑不变。
+    /// 依次应用名称与启用、序号、下级数量、接点，只改有变化的项；任一步失败即整体失败，拓扑不变。
     /// 都按 Id 定位，前一步改了位置编码不影响后一步。
     /// </summary>
     private static Result<EquipmentTopology> ApplyEdit(EquipmentTopology topology, TopologyNode node, TopologyNodeEdit edit)
@@ -137,8 +137,17 @@ public sealed class TopologyService : ITopologyService
         if (result.IsSuccess && edit.ChildCount is { } count && count != node.Children.Count)
             result = result.Value.WithChildCount(node.Id, count);
 
+        if (result.IsSuccess && edit.Ports is { } ports && !SamePorts(ports, node.Ports))
+            result = result.Value.WithNodePorts(node.Id, ports);
+
         return result;
     }
+
+    /// <summary>
+    /// 与领域层的规范化一致：名称去首尾空白后逐组比较
+    /// </summary>
+    private static bool SamePorts(IReadOnlyList<PortGroup> edited, IReadOnlyList<PortGroup> current)
+        => edited.Select(g => g with { Name = g.Name?.Trim() ?? string.Empty }).SequenceEqual(current);
 
     private static string DescribeEdit(TopologyNode node, TopologyNodeEdit edit)
     {
@@ -155,6 +164,9 @@ public sealed class TopologyService : ITopologyService
 
         if (edit.ChildCount is { } count && count != node.Children.Count)
             parts.Add($"下级数量 {node.Children.Count} → {count}");
+
+        if (edit.Ports is { } ports && !SamePorts(ports, node.Ports))
+            parts.Add($"接点改为「{(ports.Count == 0 ? "无" : string.Join("、", ports))}」");
 
         return $"修改 {node}：{(parts.Count == 0 ? "无变化" : string.Join("，", parts))}";
     }

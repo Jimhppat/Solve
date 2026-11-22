@@ -65,6 +65,26 @@
             <TextBlock Text="{Binding LoadErrorText}" TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText0}" />
         </Border>
 
+        <!-- 产品位的接点核对：自身与上级声明的接点，每个已接 / 未接；没接完时联锁拒绝命令 -->
+        <StackPanel Spacing="6" IsVisible="{Binding HasPorts}">
+            <TextBlock Text="{Binding PortSummaryText}" FontWeight="SemiBold" TextWrapping="Wrap"
+                       Foreground="{DynamicResource SemiColorText0}" />
+            <ItemsControl ItemsSource="{Binding PortRows}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PortStatusRow">
+                        <Grid ColumnDefinitions="*,Auto" Margin="0,2">
+                            <TextBlock Grid.Column="0" Text="{Binding PortText}" Foreground="{DynamicResource SemiColorText0}" />
+                            <TextBlock Grid.Column="1" Text="{Binding StateText}" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SemiColorSuccess}" IsVisible="{Binding IsConnected}" />
+                            <TextBlock Grid.Column="1" Text="{Binding StateText}" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SemiColorDanger}" IsVisible="{Binding !IsConnected}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
+        </StackPanel>
+
         <TextBlock Classes="label" Text="未接线" IsVisible="{Binding IsUnwired}" />
 
         <!-- 有效接线：上级的在前；只有本位置的接线可以修改、拆除 -->

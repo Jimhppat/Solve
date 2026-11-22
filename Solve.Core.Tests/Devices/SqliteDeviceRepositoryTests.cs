@@ -366,7 +366,7 @@ public sealed class SqliteDeviceRepositoryTests : IAsyncLifetime
 
         // 退回 v4：去掉 parameters 列（SQLite 3.35+ 支持 DROP COLUMN）
         await using (var connection = await _database.OpenConnectionAsync(CancellationToken.None))
-            await connection.ExecuteAsync("ALTER TABLE bus_devices DROP COLUMN channels; DROP TABLE topology_wires; ALTER TABLE bus_devices DROP COLUMN parameters; PRAGMA user_version = 4;");
+            await connection.ExecuteAsync("ALTER TABLE topology_nodes DROP COLUMN ports; ALTER TABLE bus_devices DROP COLUMN channels; DROP TABLE topology_wires; ALTER TABLE bus_devices DROP COLUMN parameters; PRAGMA user_version = 4;");
         SqliteDatabase.ClearPool(StorageOptions);
 
         var reopened = await SqliteDatabase.OpenAsync(StorageOptions, NullLogger.Instance, CancellationToken.None);

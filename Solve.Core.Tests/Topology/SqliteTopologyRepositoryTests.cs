@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Adapters.Persistence.Sqlite;
 using Solve.Adapters.Persistence.Topology;
 using Solve.Core.Domain.Common;
+using Solve.Core.Domain.Drivers;
 using Solve.Core.Domain.Topology;
 
 namespace Solve.Core.Tests.Topology;
@@ -284,8 +285,8 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
         await SaveAsync(Layout(1, 1, 1, 1, 1));
         await ExecuteDeferredAsync("""
             INSERT INTO topology_nodes VALUES
-                ('aaaaaaaa-0000-7000-8000-000000000001', 'aaaaaaaa-0000-7000-8000-000000000002', 2, 50, 'C50', NULL, 1, 't', 't'),
-                ('aaaaaaaa-0000-7000-8000-000000000002', 'aaaaaaaa-0000-7000-8000-000000000001', 3, 1, 'C50-L01', NULL, 1, 't', 't');
+                ('aaaaaaaa-0000-7000-8000-000000000001', 'aaaaaaaa-0000-7000-8000-000000000002', 2, 50, 'C50', NULL, 1, 't', 't', '[]'),
+                ('aaaaaaaa-0000-7000-8000-000000000002', 'aaaaaaaa-0000-7000-8000-000000000001', 3, 1, 'C50-L01', NULL, 1, 't', 't', '[]');
             """);
 
         var loaded = await _repository.LoadAsync(CancellationToken.None);
@@ -300,7 +301,7 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
         await SaveAsync(Layout(1, 1, 1, 1, 1));
         await ExecuteRawAsync("""
             INSERT INTO topology_nodes
-            SELECT 'bbbbbbbb-0000-7000-8000-000000000001', id, 6, 1, 'DEEP', NULL, 1, 't', 't'
+            SELECT 'bbbbbbbb-0000-7000-8000-000000000001', id, 6, 1, 'DEEP', NULL, 1, 't', 't', '[]'
               FROM topology_nodes WHERE address = 'C01-L01-S01-F01-P01';
             """);
 
@@ -316,8 +317,56 @@ public sealed class SqliteTopologyRepositoryTests : IAsyncLifetime
         await SaveAsync(Layout(1, 1, 1, 1, 1));
 
         var ex = await Assert.ThrowsAsync<SqliteException>(() => ExecuteRawAsync(
-            "INSERT INTO topology_nodes VALUES ('cccccccc-0000-7000-8000-000000000001', NULL, 1, 0, 'SYS2', 'X', 1, 't', 't');"));
+            "INSERT INTO topology_nodes VALUES ('cccccccc-0000-7000-8000-000000000001', NULL, 1, 0, 'SYS2', 'X', 1, 't', 't', '[]');"));
 
         Assert.Equal(19, ex.SqliteErrorCode); // SQLITE_CONSTRAINT
+    }
+
+    // ---------- 接点组 ----------
+
+    [Fact]
+    public async Task Ports_RoundTrip_IncludingRoot()
+    {
+        var topology = Layout(1, 1, 1, 1, 2);
+        topology = topology.WithNodePorts(topology.Root.Id, [new PortGroup(ChannelKind.PowerSupply, "VBAT", 1)]).Value;
+        var slot = topology.GetNode(TopologyAddress.Parse("C01-L01-S01")).Value;
+        topology = topology.WithNodePorts(slot.Id, [new PortGroup(ChannelKind.Measure, "V", 4), new PortGroup(ChannelKind.Switch, "", 1)]).Value;
+        await SaveAsync(topology);
+
+        var loaded = await LoadAsync();
+
+        Assert.Equal(topology.Root.Ports, loaded.Root.Ports);
+        Assert.Equal(slot.Id, loaded.GetNode(TopologyAddress.Parse("C01-L01-S01")).Value.Id);
+        Assert.Equal(topology.GetNode(slot.Id).Value.Ports, loaded.GetNode(slot.Id).Value.Ports);
+        Assert.Equal(6, loaded.GetNode(TopologyAddress.Parse("C01-L01-S01-F01-P02")).Value.RequiredPorts.Count);
+    }
+
+    [Fact]
+    public async Task PortsOnlyChange_RefreshesUpdatedAt()
+    {
+        var topology = Layout(1, 1, 1, 1, 1);
+        await SaveAsync(topology);
+        _time.Now += TimeSpan.FromMinutes(5);
+
+        await SaveAsync(topology.WithNodePorts(topology.Root.Id, [new PortGroup(ChannelKind.Measure, "V", 2)]).Value);
+
+        var updated = await ScalarRawAsync<string>("SELECT updated_at FROM topology_nodes WHERE parent_id IS NULL;");
+        Assert.NotEqual(await ScalarRawAsync<string>("SELECT created_at FROM topology_nodes WHERE parent_id IS NULL;"), updated);
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("[{\"kind\":3,\"name\":\"V\"}]")]
+    [InlineData("[{\"kind\":99,\"name\":\"V\",\"count\":2}]")]
+    [InlineData("[{\"kind\":3,\"name\":\"V\",\"count\":0}]")]
+    [InlineData("{}")]
+    public async Task CorruptPorts_AreRejected(string ports)
+    {
+        await SaveAsync(Layout(1, 1, 1, 1, 1));
+        await ExecuteRawAsync($"UPDATE topology_nodes SET ports = '{ports}' WHERE address = 'C01-L01';");
+
+        var loaded = await _repository.LoadAsync(CancellationToken.None);
+
+        Assert.Equal(TopologyErrors.StorageCorruptCode, loaded.Error.Code);
     }
 }

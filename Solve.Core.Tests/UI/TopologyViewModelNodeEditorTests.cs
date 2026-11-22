@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Solve.Core.Application.Topology;
+using Solve.Core.Domain.Drivers;
 using Solve.Core.Domain.Topology;
 using Solve.Core.Tests.Topology.TestSupport;
 using Solve.UI.ViewModels;
@@ -397,6 +398,56 @@ public sealed class TopologyViewModelNodeEditorTests
         Assert.Equal([1, 3], Assert.Single(_repository.Saves).GetNode(TopologyAddress.Of(1)).Value.Children.Select(c => c.Ordinal));
         Assert.Equal(stored.GetNode(TopologyAddress.Of(1)).Value.Id, vm.SelectedItem!.Node.Id);
         Assert.Equal("已删除 C01-L02", vm.SaveMessage);
+    }
+
+    // ==================== 接点 ====================
+
+    [Fact]
+    public async Task Ports_AddEditSave_AndProductsShowInheritedRequirement()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 1, 1, 1, 2));
+        var layer = Select(vm, 1, 1);
+        Assert.Equal("产品位接点", vm.PortsLabel);
+        Assert.False(vm.HasPortRows);
+
+        vm.AddPortCommand.Execute(null);
+        Assert.True(vm.HasNodeChanges);
+        var row = Assert.Single(vm.PortRows);
+        row.Kind = ChannelKindOption.All.Single(o => o.Kind == ChannelKind.Measure);
+        row.Name = " V ";
+        row.CountInput = 4;
+
+        await vm.SaveNodeCommand.ExecuteAsync();
+
+        var saved = Assert.Single(_repository.Saves);
+        Assert.Equal([new PortGroup(ChannelKind.Measure, "V", 4)], saved.GetNode(layer.Node.Id).Value.Ports);
+        Assert.Equal("已保存", vm.SaveMessage);
+        Assert.False(vm.HasNodeChanges);
+
+        // 产品位：标题是"接点"，列出从层位继承的要求
+        Select(vm, 1, 1, 1, 1, 2);
+        Assert.Equal("接点", vm.PortsLabel);
+        Assert.Equal(["C01-L01：采集 V × 4"], vm.InheritedPorts);
+        Assert.False(vm.HasPortRows);
+    }
+
+    [Fact]
+    public async Task Ports_InvalidRow_IsReported_AndRevertRestores()
+    {
+        var vm = await AttachedAsync(FakeTopologyRepository.Layout(1, 1, 1, 1, 1));
+        Select(vm, 1);
+
+        vm.AddPortCommand.Execute(null);
+        vm.PortRows[0].CountInput = 3; // 多个接点必须有名称（前缀）
+        await vm.SaveNodeCommand.ExecuteAsync();
+
+        Assert.True(vm.IsSaveError);
+        Assert.Contains("必须填写名称", vm.SaveMessage);
+        Assert.Empty(_repository.Saves);
+
+        vm.RevertNodeCommand.Execute(null);
+        Assert.False(vm.HasPortRows);
+        Assert.False(vm.HasNodeChanges);
     }
 
     [Fact]

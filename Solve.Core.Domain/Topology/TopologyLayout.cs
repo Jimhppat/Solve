@@ -82,7 +82,7 @@ public sealed record TopologyLayout(
 
         var cabinets = BuildLevel(TopologyAddress.System, Counts().ToArray(), depth: 0, current);
         var rootId = current?.Root.Id ?? TopologyNodeId.New();
-        return Result<TopologyDefinition>.Success(new TopologyDefinition(rootId, systemName, cabinets));
+        return Result<TopologyDefinition>.Success(new TopologyDefinition(rootId, systemName, cabinets) { Ports = current?.Root.Ports ?? [] });
     }
 
     /// <summary>
@@ -106,7 +106,7 @@ public sealed record TopologyLayout(
             var children = BuildLevel(address, counts, depth + 1, current);
 
             nodes[i] = current is not null && current.TryGetNode(address, out var existing)
-                ? new TopologyNodeDefinition(existing.Id, ordinal, children) { Name = existing.Name, Enabled = existing.IsEnabled }
+                ? new TopologyNodeDefinition(existing.Id, ordinal, children) { Name = existing.Name, Enabled = existing.IsEnabled, Ports = existing.Ports }
                 : new TopologyNodeDefinition(TopologyNodeId.New(), ordinal, children);
         }
 
