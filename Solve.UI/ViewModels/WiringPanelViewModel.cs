@@ -821,11 +821,17 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        Action<WireRowViewModel>? locate = LocateChannelRequested is null ? null : row => LocateChannelRequested?.Invoke(row.Wire.Channel);
         Rows = inspector.Inspect(node.Id)
-            .Select(s => new WireRowViewModel(s, Edit, Remove, ListCommands(s.Wire), RequestCommand, () => CanCommand))
+            .Select(s => new WireRowViewModel(s, Edit, Remove, ListCommands(s.Wire), RequestCommand, () => CanCommand, locate))
             .ToList();
         RebuildPorts();
     }
+
+    /// <summary>
+    /// 接线行点了"定位通道"（所在页面有硬件列表时订阅，没有订阅时不显示该按钮）。在 UI 线程上触发
+    /// </summary>
+    public event Action<ChannelRef>? LocateChannelRequested;
 
     /// <summary>
     /// 产品位的接点核对：每个接点已接（来自哪个位置）或未接。不是产品位、没有接点要求时为空

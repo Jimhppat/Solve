@@ -408,10 +408,12 @@ public sealed class WiringServiceTests : IAsyncLifetime
         page.AttachTopology(_topology);
         page.AttachWiring(_inspector);
 
-        // 只列出启用的通道：模块标题 + 2 路
-        var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        // 默认选中第一条总线、第一个模块；只列出启用的通道
+        Assert.Equal("继电器 · 地址 1", page.SelectedModule!.Text);
+        Assert.Equal("已接 0 / 2", page.SelectedModule.UsageText);
+        var channels = page.Hardware.ToList();
         Assert.Equal(["继电器 1", "压合"], channels.Select(c => c.NameText));
-        Assert.IsType<Solve.UI.ViewModels.MappingModuleViewModel>(page.Hardware[0]);
+        Assert.All(channels, c => Assert.Equal(("未接", true), (c.UseText, c.IsFree)));
 
         // 系统根不能接线
         Assert.Equal(TopologyLevel.System, page.SelectedItem!.Node.Level);
@@ -425,18 +427,125 @@ public sealed class WiringServiceTests : IAsyncLifetime
 
         var wire = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S01-F01").Id));
         Assert.Equal((new ChannelRef(relay.Id, "relay", 2), "压合"), (wire.Channel, wire.Purpose));
-        var mapped = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.NameText == "压合");
-        Assert.True(mapped.IsMapped);
+        var mapped = page.Hardware.Single(c => c.NameText == "压合");
+        Assert.Equal(("已接", true, true), (mapped.UseText, mapped.IsUsed, mapped.IsHere));
         Assert.StartsWith("治具位 C01-L01-S01-F01", mapped.MappedText);
+        Assert.Equal("已接 1 / 2", page.SelectedModule!.UsageText);
 
-        // 只看未映射；定位回到映射的位置
-        page.UnmappedOnly = true;
-        Assert.Equal(["继电器 1"], page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Select(c => c.NameText));
-        page.UnmappedOnly = false;
+        // 筛选"未接"；定位回到映射的位置（选别的位置后不再是"本位置"）
+        page.ChannelFilter = Solve.UI.ViewModels.ChannelFilterOption.All.Single(f => f.Text == "未接");
+        Assert.Equal(["继电器 1"], page.Hardware.Select(c => c.NameText));
+        page.ChannelFilter = Solve.UI.ViewModels.ChannelFilterOption.All[0];
         page.SelectedItem = page.Roots[0];
-        page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.NameText == "压合").LocateCommand.Execute(null);
+        Assert.False(page.Hardware.Single(c => c.NameText == "压合").IsHere);
+        page.Hardware.Single(c => c.NameText == "压合").LocateCommand.Execute(null);
         Assert.Equal(Node("C01-L01-S01-F01").Id, page.SelectedItem!.Node.Id);
         page.Dispose();
+    }
+
+    /// <summary>
+    /// 硬件多时按"总线 → 模块"逐级选择：一次只列一个模块的通道，勾选跨模块保留；共用的通道标"共用 ×N"；
+    /// 中间接线的"定位通道"切到它的模块并选中
+    /// </summary>
+    [Fact]
+    public async Task MappingPage_BusThenModule_KeepsChecksAcrossModules_AndRevealsChannelFromWiring()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var daq = await AddModuleAsync(Daq, "采集卡", 2);
+        var shared = new ChannelRef(daq.Id, "input", 3);
+        await WireAsync("C01-L01", shared);
+        await WireAsync("C01-L02", shared);
+
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        page.IsDraftMode = true;
+
+        // 一条总线、两个模块；模块按名称或地址搜索
+        var bus = Assert.Single(page.Buses);
+        Assert.EndsWith("（2 个模块）", bus.Text);
+        Assert.Equal(2, page.Modules.Count);
+        page.ModuleSearch = "地址 2";
+        Assert.Equal("采集卡 · 地址 2", Assert.Single(page.Modules).Text);
+        page.ModuleSearch = string.Empty;
+
+        // 只列出选中模块的通道；共用的通道标出次数
+        page.SelectedModule = page.Modules.Single(m => m.Id == daq.Id);
+        Assert.All(page.Hardware, c => Assert.Equal(daq.Id, c.Channel.Device));
+        var sharedRow = page.Hardware.Single(c => c.Channel == shared);
+        Assert.Equal(("共用 ×2", true), (sharedRow.UseText, sharedRow.IsShared));
+        page.ChannelFilter = Solve.UI.ViewModels.ChannelFilterOption.All.Single(f => f.Text == "共用");
+        Assert.Equal([shared], page.Hardware.Select(c => c.Channel));
+        page.ChannelFilter = Solve.UI.ViewModels.ChannelFilterOption.All[0];
+
+        // 跨模块勾选：切换模块后勾选还在，计数包含看不到的
+        page.Hardware.Single(c => c.Channel == new ChannelRef(daq.Id, "input", 1)).IsChecked = true;
+        page.SelectedModule = page.Modules.Single(m => m.Id == relay.Id);
+        page.Hardware[0].IsChecked = true;
+        Assert.Equal("已选 2 路", page.CheckedCountText);
+        Assert.Equal("已选 2 路通道", page.Draft.ChannelCountText);
+
+        // 切回采集卡记住上次看的模块；清空勾选包括看不到的
+        page.SelectedModule = page.Modules.Single(m => m.Id == daq.Id);
+        page.ClearChannelsCommand.Execute(null);
+        Assert.DoesNotContain(page.AllChannels, c => c.IsChecked);
+
+        // 中间接线的"定位通道"：切到采集卡并选中那一路
+        page.IsDraftMode = false;
+        page.SelectedModule = page.Modules.Single(m => m.Id == relay.Id);
+        page.SelectedItem = page.Roots[0].Children[0].Children[1];
+        var wireRow = Assert.Single(page.Wiring.Rows);
+        Assert.True(wireRow.CanLocateChannel);
+        wireRow.LocateChannelCommand.Execute(null);
+        Assert.Equal(daq.Id, page.SelectedModule!.Id);
+        Assert.Equal(shared, page.SelectedChannel!.Channel);
+        Assert.True(page.SelectedChannel.IsHere);
+        page.Dispose();
+    }
+
+    [Fact]
+    public async Task MappingPage_ColumnWidths_AreClamped_SavedAndRestored()
+    {
+        var store = new MemorySettingsStore();
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachLayoutSettings(store);
+        await WaitUntilAsync(() => store.Reads > 0);
+        Assert.Equal((Solve.UI.ViewModels.HardwareMappingViewModel.DefaultTreeWidth, Solve.UI.ViewModels.HardwareMappingViewModel.DefaultHardwareWidth),
+            (page.TreeWidth, page.HardwareWidth));
+
+        page.SetColumnWidths(100, 999);
+        Assert.Equal((Solve.UI.ViewModels.HardwareMappingViewModel.MinTreeWidth, Solve.UI.ViewModels.HardwareMappingViewModel.MaxHardwareWidth),
+            (page.TreeWidth, page.HardwareWidth));
+        await WaitUntilAsync(() => store.Value == "220,560");
+
+        var reopened = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        reopened.AttachLayoutSettings(store);
+        await WaitUntilAsync(() => reopened.TreeWidth == 220);
+        Assert.Equal(560, reopened.HardwareWidth);
+        page.Dispose();
+        reopened.Dispose();
+    }
+
+    private sealed class MemorySettingsStore : Solve.Core.Application.Settings.Ports.IAppSettingsStore
+    {
+        private volatile string? _value;
+        private int _reads;
+
+        public string? Value => _value;
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public Task<Solve.Core.Domain.Common.Result<string?>> GetAsync(string key, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _reads);
+            return Task.FromResult(Solve.Core.Domain.Common.Result<string?>.Success(_value));
+        }
+
+        public Task<Solve.Core.Domain.Common.Result> SetAsync(string key, string value, CancellationToken cancellationToken)
+        {
+            _value = value;
+            return Task.FromResult(Solve.Core.Domain.Common.Result.Success());
+        }
     }
 
     // ---------- 映射草稿 ----------
@@ -494,7 +603,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.Equal(4, draft.SelectedPositionCount);
 
         // ② 取通道：继电器第 2、4 路 + 采集卡第 1 路（跨模块、跳着选），共 3 路
-        var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        var channels = page.AllChannels;
         Assert.All(channels, c => Assert.True(c.ShowCheckBox));
         channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 2)).IsChecked = true;
         channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 4)).IsChecked = true;
@@ -542,7 +651,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         draft.SelectAllPositionsCommand.Execute(null);
 
         // 继电器排在前面、3 路采集在后：采集先配同功能的接点，继电器不被丢掉，填进剩下的第一个空接点（不按功能拦截）
-        var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        var channels = page.AllChannels;
         channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 1)).IsChecked = true;
         foreach (var index in new[] { 1, 2, 3 })
             channels.Single(c => c.Channel == new ChannelRef(daq.Id, "input", index)).IsChecked = true;
@@ -564,7 +673,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         var p02 = _wiring.Current.GetPortCoverage(Node("C01-L01-S01-F01-P02").Id);
         Assert.All(p02, p => Assert.True(p.IsConnected));
         Assert.Equal(ChannelKind.Switch, p02[1].Wire!.Value.Wire.Kind);
-        Assert.DoesNotContain(page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>(), c => c.IsChecked);
+        Assert.DoesNotContain(page.AllChannels, c => c.IsChecked);
 
         // "缺少采集"筛选：P01、P02 接完了，不再列出；其余 2 个产品位还缺
         draft.Filter = Solve.UI.ViewModels.PositionFilterOption.All.Single(o => o.Missing == ChannelKind.Measure);
@@ -593,7 +702,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         var draft = page.Draft;
 
         // 已映射的通道照样能勾选；层位已有同功能同用途的接线，不再拦截
-        var row = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.Channel == channel);
+        var row = page.AllChannels.Single(c => c.Channel == channel);
         Assert.True(row.ShowCheckBox);
         Assert.EndsWith("等 2 个位置", row.MappedText);
         row.IsChecked = true;
@@ -630,7 +739,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         page.AttachTopology(_topology);
         page.AttachWiring(_inspector);
         Solve.UI.ViewModels.MappingChannelViewModel Row()
-            => page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.Channel == channel);
+            => page.AllChannels.Single(c => c.Channel == channel);
 
         page.SelectedItem = page.Roots[0].Children[0].Children[0];
         Assert.False(Row().MapCommand.CanExecute(null));

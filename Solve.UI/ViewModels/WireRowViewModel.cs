@@ -45,14 +45,18 @@ public sealed class WireRowViewModel : ViewModelBase
     /// <param name="commands">这路接线上可以从界面下发的命令</param>
     /// <param name="onCommand">点了某条命令（由面板解析、过联锁、必要时请操作员确认）</param>
     /// <param name="canCommand">当前能否下发命令（面板忙时禁用，防止重入）</param>
+    /// <param name="onLocateChannel">"定位通道"：在硬件列表里显示这路接线的通道；为 null 时不显示该按钮</param>
     public WireRowViewModel(
         WireStatus status,
         Action<WireRowViewModel> onEdit,
         Action<WireRowViewModel> onRemove,
         IReadOnlyList<DeviceCommandOption> commands,
         Action<WireRowViewModel, DeviceCommandOption> onCommand,
-        Func<bool> canCommand)
+        Func<bool> canCommand,
+        Action<WireRowViewModel>? onLocateChannel = null)
     {
+        CanLocateChannel = onLocateChannel is not null;
+        LocateChannelCommand = new RelayCommand(() => onLocateChannel?.Invoke(this), () => CanLocateChannel);
         ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(onEdit);
         ArgumentNullException.ThrowIfNull(onRemove);
@@ -143,6 +147,13 @@ public sealed class WireRowViewModel : ViewModelBase
     public RelayCommand EditCommand { get; }
 
     public RelayCommand RemoveCommand { get; }
+
+    /// <summary>
+    /// 在硬件列表里显示这路接线的通道（上级继承的接线也可以）
+    /// </summary>
+    public RelayCommand LocateChannelCommand { get; }
+
+    public bool CanLocateChannel { get; }
 
     /// <summary>
     /// 可以下发的命令按钮，如"打开输出"、"关闭输出"
