@@ -8,7 +8,9 @@
       - 输出目录整体重建：先删除再复制，删掉的依赖不会残留在包里。
       - SDK 由主程序提供（项目引用 Private="false"），不会被复制进包。
       - 输出目录里写一个只含 "*" 的 .gitignore：生成物不进版本库；扫描时 '.' 开头的文件不属于驱动包，不影响指纹。
-      - 每次重新编译程序集都会变，指纹随之改变，需要在驱动库中重新信任（信任按指纹记忆，这是有意的）。
+      - 驱动只由 Devicelibrary/Devicelibrary.slnx 编译，内核解决方案不包含驱动项目，编译内核不会重新生成驱动包。
+      - 源码没改时重新编译，驱动包逐字节相同、指纹不变（见 Directory.Build.props）；改了驱动源码，
+        或 SDK 增删了类型 / 成员后重新编译，指纹才会变，需要在驱动库中重新信任（信任按指纹记忆，这是有意的）。
   -->
 
   <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)/package.json')">

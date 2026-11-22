@@ -30,6 +30,8 @@
 
 ```
 Devicelibrary/
+├─ Devicelibrary.slnx             ← 驱动库解决方案：全部驱动项目与测试（内核解决方案 Solve.slnx 不包含驱动）
+├─ Directory.Build.props          ← 公共编译设置：源码没改时重新编译，驱动包逐字节相同（不要修改）
 ├─ Directory.Build.targets        ← 公共构建规则：驱动项目编译后自动输出驱动包（不要修改）
 ├─ README.md                      ← 本文
 ├─ Chroma/                        ← 厂家目录（源码）
@@ -117,16 +119,18 @@ Devicelibrary/
 
 **④ 建测试项目** `Devicelibrary/Acme/Acme.Drivers.Tests/`，照抄 `Chroma.Drivers.Tests.csproj`：引用驱动项目与 SDK（测试进程需要自己引用一份 SDK）。
 
-**⑤ 加入解决方案** `Solve.slnx` 的 `/drivers/` 文件夹：
+**⑤ 加入驱动库解决方案** `Devicelibrary/Devicelibrary.slnx`，一个厂家一个文件夹：
 
 ```xml
-<Folder Name="/drivers/">
-  <Project Path="Devicelibrary/Acme/Acme.Drivers/Acme.Drivers.csproj" />
-  <Project Path="Devicelibrary/Acme/Acme.Drivers.Tests/Acme.Drivers.Tests.csproj" />
+<Folder Name="/Acme/">
+  <Project Path="Acme/Acme.Drivers/Acme.Drivers.csproj" />
+  <Project Path="Acme/Acme.Drivers.Tests/Acme.Drivers.Tests.csproj" />
 </Folder>
 ```
 
-**⑥ 编译**：编译成功时输出 `驱动包 acme.drivers 已输出到 …\Devicelibrary\acme.drivers`。
+不要加入内核解决方案 `Solve.slnx`；内核的任何项目（包括测试项目）也不要引用驱动项目，只管构建顺序的引用也不行。这样编译内核时不会编译驱动，驱动包只在改了驱动之后才重新生成，驱动库不会在源码没变时要求重新信任。
+
+**⑥ 编译**：`dotnet build "Devicelibrary/Devicelibrary.slnx"`（或在 IDE 里打开这个解决方案编译），成功时输出 `驱动包 acme.drivers 已输出到 …\Devicelibrary\acme.drivers`。
 
 ---
 
@@ -398,12 +402,13 @@ internal sealed class Da750Session : IDeviceSession, ISafeStateProvider
 
 用一个测试辅助类代替内核推进交互（参考 `ExchangeRunner`）：发送 → 模拟设备应答 → 按块调用 `Match` → `OnFrame`。
 
-本仓库内的驱动包另有内核侧的整链路回归 `Solve.Core.Tests/Composition/DriverPackageSimulationTests`：用 `Devicelibrary/<包标识>/` 下编译好的驱动包，在仿真模式的组合根里走一遍"信任 → 挂模块 → 接线 → 连接总线 → 下发命令 → 安全停止"，核对读数随命令变化、安全停止后归零。新增驱动包时在这里加一个用例，并在 `Solve.Core.Tests.csproj` 里给驱动项目加一条只管构建顺序的引用（`ReferenceOutputAssembly="false" Private="false"`）。
+本仓库内的驱动包另有内核侧的整链路回归 `Solve.Core.Tests/Composition/DriverPackageSimulationTests`：用 `Devicelibrary/<包标识>/` 下编译好的驱动包，在仿真模式的组合根里走一遍"信任 → 挂模块 → 接线 → 连接总线 → 下发命令 → 安全停止"，核对读数随命令变化、安全停止后归零。新增驱动包时在这里加一个用例。这个测试与主程序一样只读取已经编译好的驱动包，不会触发驱动编译：先编译驱动库，再运行内核测试；找不到驱动包时测试失败并提示，不会跳过。
 
-运行：
+运行单个驱动包的测试 / 驱动库的全部测试：
 
 ```powershell
 dotnet test "Devicelibrary/Acme/Acme.Drivers.Tests/Acme.Drivers.Tests.csproj"
+dotnet test "Devicelibrary/Devicelibrary.slnx"
 ```
 
 ---
@@ -431,20 +436,22 @@ SDK 1.4 把仿真设备由"强烈建议"改为"必须"：契约类型没有变�
 
 ### 8.1 开发调试流程
 
-1. **编译驱动项目**（或整个解决方案）。驱动项目编译完成后，`Directory.Build.targets` 自动把入口程序集、包内依赖与清单复制到 `Devicelibrary/<包标识>/`。
-   > **只运行主程序不会编译驱动项目**：主程序不引用任何驱动。改了驱动代码后，先编译驱动项目或整个解决方案（`dotnet build Solve.slnx`），再运行主程序。
+1. **编译驱动库**：`dotnet build "Devicelibrary/Devicelibrary.slnx"`（或在 IDE 里打开这个解决方案编译）。驱动项目编译完成后，`Directory.Build.targets` 自动把入口程序集、包内依赖与清单复制到 `Devicelibrary/<包标识>/`。
+   > **编译内核不会编译驱动**：内核解决方案 `Solve.slnx` 不包含驱动项目，内核的任何项目也不引用驱动。改了驱动代码后，先编译驱动库，再运行主程序。
+
+   > **驱动只在本仓库目录里编译，不要加 `--artifacts-path`**：dll 里记录着 obj 目录下 pdb 的绝对路径，换输出目录编出的驱动包字节不同，需要重新信任。
 2. 打开主程序 → 模块配置 → **驱动库** → 点 **扫描**。
 3. 选中驱动包，确认名称、版本、作者、指纹后点 **信任并载入**。驱动立即出现在模块配置的驱动表中，不需要重启。
-4. 每次重新编译，程序集字节都会变，指纹随之改变，驱动包回到"内容有变化"，需要重新信任（信任按指纹记忆，这是有意的）。
+4. 源码没改时重新编译，驱动包逐字节相同，指纹不变（见 `Directory.Build.props`）。改了驱动源码、SDK 增删了类型 / 成员，或切换了 Debug / Release 后重新编译，指纹才会变，驱动包回到"内容有变化"，需要重新信任（信任按指纹记忆，这是有意的）。
 5. 已载入的旧版本代码无法在运行中卸载：信任新版本后显示"重启后生效"，重启主程序才会换成新版本。
 
 ### 8.2 扫描结果的状态
 
 | 状态 | 含义 | 处理 |
 |---|---|---|
-| 未编译 | 驱动库里有这个驱动项目的源码，但没有它编译出的驱动包 | 编译该项目或整个解决方案后重新扫描 |
+| 未编译 | 驱动库里有这个驱动项目的源码，但没有它编译出的驱动包 | 编译驱动库解决方案后重新扫描 |
 | 新发现 | 首次出现的驱动包，未执行任何代码 | 核对后信任并载入，或忽略此版本 |
-| 内容有变化 | 曾经信任过，文件指纹已变（重新编译、被替换） | 核对后重新信任 |
+| 内容有变化 | 曾经信任过，文件指纹已变（改了源码或 SDK 后重新编译、被替换） | 核对后重新信任 |
 | 已载入 | 已信任并载入，驱动在驱动表中 | — |
 | 重启后生效 | 已信任新版本，本次运行仍使用已载入的旧版本 | 重启主程序 |
 | 已撤销信任 / 已忽略 | 操作员的选择 | 可随时重新信任 |
@@ -480,5 +487,5 @@ SDK 1.4 把仿真设备由"强烈建议"改为"必须"：契约类型没有变�
 - [ ] 每个驱动都实现了 `IDeviceSimulatorProvider`（SDK 1.4 起必须）：轮询、全部命令与安全状态都能应答，读数随命令变化，仿真身份可与实机区分
 - [ ] 在仿真模式下实际跑过一遍：信任 → 挂模块 → 连接总线 → 模块上线 → 下发命令读数变化 → 急停后输出关闭
 - [ ] 测试覆盖第 6 节全部类别，`dotnet test` 通过
-- [ ] 已加入 `Solve.slnx` 的 `/drivers/`；改了代码已按第 7 节更新版本号
+- [ ] 已加入 `Devicelibrary/Devicelibrary.slnx`（不加入 `Solve.slnx`，内核项目不引用驱动项目）；改了代码已按第 7 节更新版本号
 - [ ] 编译后驱动库扫描显示"新发现"或"内容有变化"，信任后状态为"已载入"

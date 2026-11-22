@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+      驱动库根目录的公共编译设置（对 Devicelibrary 下的全部项目生效）。
+      驱动库按文件指纹信任驱动包：同一份源码编出的驱动包必须逐字节相同，否则每次提交后都要重新信任。
+      .NET SDK 默认把提交号写进程序集的版本信息（InformationalVersion）和调试信息（SourceLink），
+      而 dll 里记录着调试信息的标识，所以两处都要关掉。
+
+      - 只对驱动生效：内核程序集保留提交号，现场可以追溯部署的是哪个提交。
+      - SDK 自己也不写提交号（见 Solve.Device.Sdk.csproj）：驱动编译时引用的是 SDK 的引用程序集。
+      - dll 里记录着 obj 目录下 pdb 的绝对路径：驱动只在本仓库目录里编译，不要加 artifacts 输出目录，
+        换输出目录编出的驱动包字节不同。
+  -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+
+</Project>

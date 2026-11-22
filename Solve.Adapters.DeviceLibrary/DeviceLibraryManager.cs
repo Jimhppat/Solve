@@ -501,8 +501,8 @@ public sealed class DeviceLibraryManager : IDeviceLibrary
 
         return new DriverPackageInfo(manifest.Id, source.RelativeDirectory, manifest.Name, manifest.Version, manifest.Author,
             string.Empty, DriverPackageStatus.NotBuilt,
-            $"这是驱动源码，驱动库中还没有它编译出的驱动包。编译 {source.ProjectFile}（或整个解决方案）后，" +
-            $"驱动包会自动输出到驱动库下的 {manifest.Id} 目录，再点「扫描」即可信任载入。只运行主程序不会编译驱动项目。",
+            $"这是驱动源码，驱动库中还没有它编译出的驱动包。编译 {source.ProjectFile}（或驱动库解决方案 Devicelibrary.slnx）后，" +
+            $"驱动包会自动输出到驱动库下的 {manifest.Id} 目录，再点「扫描」即可信任载入。编译或运行主程序都不会编译驱动项目。",
             Entries(manifest))
         {
             IsSource = true,

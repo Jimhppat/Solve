@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/sdk/">
+    <Project Path="../Solve.Device.Sdk/Solve.Device.Sdk.csproj" />
+  </Folder>
+  <Folder Name="/Chroma/">
+    <Project Path="Chroma/Chroma.Drivers/Chroma.Drivers.csproj" />
+    <Project Path="Chroma/Chroma.Drivers.Tests/Chroma.Drivers.Tests.csproj" />
+  </Folder>
+  <Folder Name="/GJ/">
+    <Project Path="GJ/GJ.Drivers/GJ.Drivers.csproj" />
+    <Project Path="GJ/GJ.Drivers.Tests/GJ.Drivers.Tests.csproj" />
+  </Folder>
+</Solution>
