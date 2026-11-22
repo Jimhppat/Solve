@@ -55,7 +55,64 @@
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
         <Style Selector="ListBox.hardware > ListBoxItem">
-            <Setter Property="Padding" Value="0" />
+            <Setter Property="Padding" Value="0,0,0,6" />
+        </Style>
+        <Style Selector="GridSplitter.column">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="GridSplitter.column:pointerover">
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+        </Style>
+
+        <!-- 通道的使用状态：颜色 + 文字标签（不只靠颜色区分） -->
+        <Style Selector="Border.use">
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{DynamicResource SemiColorFill0}" />
+        </Style>
+        <Style Selector="Border.use > TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorText1}" />
+        </Style>
+        <Style Selector="Border.use.used">
+            <Setter Property="Background" Value="{DynamicResource SemiColorSuccessLight}" />
+        </Style>
+        <Style Selector="Border.use.used > TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorSuccess}" />
+        </Style>
+        <Style Selector="Border.use.shared">
+            <Setter Property="Background" Value="{DynamicResource SemiColorWarningLight}" />
+        </Style>
+        <Style Selector="Border.use.shared > TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorWarning}" />
+        </Style>
+        <Style Selector="Border.use.here">
+            <Setter Property="Background" Value="{DynamicResource SemiColorPrimaryLight}" />
+        </Style>
+        <Style Selector="Border.use.here > TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SemiColorPrimary}" />
+        </Style>
+
+        <!-- 一路通道一张卡；接在当前选中位置上的加主色描边 -->
+        <Style Selector="Border.channel">
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="10,6" />
+        </Style>
+        <Style Selector="Border.channel.here">
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" />
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="Padding" Value="9,5" />
+        </Style>
+
+        <!-- 通道筛选：一排分段按钮 -->
+        <Style Selector="ListBox.filters > ListBoxItem">
+            <Setter Property="Padding" Value="12,3" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusSmall}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
         </Style>
     </UserControl.Styles>
 
@@ -77,7 +134,20 @@
             <TextBlock Text="{Binding EmptyText}" Foreground="{DynamicResource SemiColorText1}" />
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,520,1.2*" ColumnSpacing="20" IsVisible="{Binding !ShowEmpty}">
+        <!-- 中间接线区占满剩余宽度；两侧固定宽度，拖动分隔条调整（范围见视图模型，拖完记住） -->
+        <Grid x:Name="Columns" Grid.Row="1" IsVisible="{Binding !ShowEmpty}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="280" MinWidth="220" MaxWidth="420" />
+                <ColumnDefinition Width="20" />
+                <ColumnDefinition Width="*" MinWidth="420" />
+                <ColumnDefinition Width="20" />
+                <ColumnDefinition Width="400" MinWidth="340" MaxWidth="560" />
+            </Grid.ColumnDefinitions>
+
+            <GridSplitter Grid.Column="1" Classes="column" ResizeDirection="Columns" DragCompleted="OnSplitterDragCompleted"
+                          AutomationProperties.Name="调整位置栏宽度" />
+            <GridSplitter Grid.Column="3" Classes="column" ResizeDirection="Columns" DragCompleted="OnSplitterDragCompleted"
+                          AutomationProperties.Name="调整硬件栏宽度" />
 
             <!-- 左：位置树 -->
             <Border Grid.Column="0" Classes="panel" Padding="20,16">
@@ -113,7 +183,7 @@
             </Border>
 
             <!-- 中（映射草稿）：① 在树上选中的范围内按层级勾选位置 → ② 在右边勾选通道 → ③ 组装成配对，逐行校验、调整 → 确认 -->
-            <Border Grid.Column="1" Classes="panel" Padding="20,16" IsVisible="{Binding IsDraftMode}">
+            <Border Grid.Column="2" Classes="panel" Padding="20,16" IsVisible="{Binding IsDraftMode}">
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12" DataContext="{Binding Draft}" x:DataType="vm:MappingDraftViewModel">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <PathIcon Data="{DynamicResource SemiIconBranch}" Width="14" Height="14"
@@ -210,7 +280,7 @@
             </Border>
 
             <!-- 中（按位置查看）：选中位置的接线（上级继承的在前）；批量接线、修改、拆除、命令 -->
-            <Border Grid.Column="1" Classes="panel" Padding="20,16" IsVisible="{Binding IsWiringMode}">
+            <Border Grid.Column="2" Classes="panel" Padding="20,16" IsVisible="{Binding IsWiringMode}">
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <PathIcon Data="{DynamicResource SemiIconBranch}" Width="14" Height="14"
@@ -224,16 +294,16 @@
                 </Grid>
             </Border>
 
-            <!-- 右：总线上可映射的硬件通道。选中位置后点"关联"即把这路通道接到该位置；已映射的点"定位"跳到它的位置 -->
-            <Border Grid.Column="2" Classes="panel" Padding="20,16">
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="12">
+            <!-- 右：硬件通道。先选总线，再选模块，只列出这个模块的通道（硬件多时不会平铺成几百行）。
+                 选中位置后点"关联"即把这路通道接到该位置；已接的点"定位"跳到它的位置 -->
+            <Border Grid.Column="4" Classes="panel" Padding="20,16">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
                     <DockPanel>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
-                            <Button Content="勾选可见" Padding="10,2" IsVisible="{Binding IsDraftMode}"
-                                    Command="{Binding SelectVisibleChannelsCommand}" />
-                            <Button Content="清空勾选" Padding="10,2" IsVisible="{Binding IsDraftMode}"
-                                    Command="{Binding ClearChannelsCommand}" />
-                            <CheckBox Content="只看未映射" IsChecked="{Binding UnmappedOnly}" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsDraftMode}">
+                            <TextBlock Text="{Binding CheckedCountText}" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SemiColorText1}" />
+                            <Button Content="勾选可见" Padding="10,2" Command="{Binding SelectVisibleChannelsCommand}" />
+                            <Button Content="清空勾选" Padding="10,2" Command="{Binding ClearChannelsCommand}" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <PathIcon Data="{DynamicResource SemiIconLink}" Width="14" Height="14"
@@ -243,51 +313,96 @@
                     </DockPanel>
                     <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
 
-                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                    <TextBlock Grid.Row="2" Text="没有可映射的通道：请先在总线监控的模块配置里添加模块并启用通道"
+                               TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText1}"
+                               IsVisible="{Binding HasNoHardware}" />
+
+                    <!-- ① 总线 -->
+                    <ComboBox Grid.Row="2" HorizontalAlignment="Stretch" AutomationProperties.Name="总线"
+                              IsVisible="{Binding !HasNoHardware}"
+                              ItemsSource="{Binding Buses}" SelectedItem="{Binding SelectedBus}" />
+
+                    <!-- ② 模块：可按名称或地址搜索，每行带已接数 -->
+                    <TextBox Grid.Row="3" AutomationProperties.Name="搜索模块" PlaceholderText="搜索模块名或地址"
+                             IsVisible="{Binding !HasNoHardware}" Text="{Binding ModuleSearch}" />
+                    <ListBox Grid.Row="4" ItemsSource="{Binding Modules}" SelectedItem="{Binding SelectedModule}"
+                             IsVisible="{Binding !HasNoHardware}" MaxHeight="200" Background="Transparent"
+                             BorderBrush="{DynamicResource SemiColorBorder}" BorderThickness="1"
+                             AutomationProperties.Name="模块">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MappingModuleOption">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding UsageText}" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SemiColorText1}" />
+                                    <TextBlock Text="{Binding Text}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding Text}" Foreground="{DynamicResource SemiColorText0}" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- ③ 通道筛选：全部 / 未接 / 已接 / 共用 -->
+                    <ListBox Grid.Row="5" Classes="filters" ItemsSource="{Binding ChannelFilters}" SelectedItem="{Binding ChannelFilter}"
+                             IsVisible="{Binding HasSelectedModule}" Background="Transparent" AutomationProperties.Name="通道筛选">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ChannelFilterOption">
+                                <TextBlock Text="{Binding Text}" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <Grid Grid.Row="6" ColumnDefinitions="Auto,*" ColumnSpacing="12" IsVisible="{Binding !HasNoHardware}">
                         <TextBlock Grid.Column="0" Text="关联用途" VerticalAlignment="Center"
                                    Foreground="{DynamicResource SemiColorText1}" />
                         <TextBox Grid.Column="1" AutomationProperties.Name="关联用途" PlaceholderText="如 VBAT"
                                  MaxLength="{Binding MaxPurposeLength}" Text="{Binding PurposeInput}" />
                     </Grid>
 
-                    <TextBlock Grid.Row="3" Classes="message" Classes.error="{Binding IsError}"
+                    <TextBlock Grid.Row="7" Classes="message" Classes.error="{Binding IsError}"
                                IsVisible="{Binding HasMessage}" Text="{Binding Message}" />
 
-                    <TextBlock Grid.Row="4" Text="没有可映射的通道：请先在总线监控的模块配置里添加模块并启用通道"
-                               TextWrapping="Wrap" Foreground="{DynamicResource SemiColorText1}"
-                               IsVisible="{Binding HasNoHardware}" />
+                    <TextBlock Grid.Row="8" Text="这个模块上没有符合筛选的通道" Foreground="{DynamicResource SemiColorText1}"
+                               IsVisible="{Binding ShowNoMatch}" />
 
-                    <ListBox Grid.Row="4" Classes="hardware" ItemsSource="{Binding Hardware}" IsVisible="{Binding HasHardware}"
-                             Background="Transparent">
-                        <ListBox.DataTemplates>
-                            <DataTemplate DataType="vm:MappingModuleViewModel">
-                                <TextBlock Text="{Binding Header}" FontWeight="SemiBold" Margin="4,14,4,6"
-                                           Foreground="{DynamicResource SemiColorText0}" />
+                    <!-- ④ 通道：状态标签（未接 / 已接 / 共用 ×N）+ 接在当前位置的加描边和"本位置" -->
+                    <ListBox Grid.Row="8" Classes="hardware" ItemsSource="{Binding Hardware}" SelectedItem="{Binding SelectedChannel}"
+                             IsVisible="{Binding HasHardware}" Background="Transparent" AutomationProperties.Name="通道">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MappingChannelViewModel">
+                                <Border Classes="channel" Classes.here="{Binding IsHere}">
+                                    <DockPanel>
+                                        <!-- 映射草稿模式下通道前面有勾选框（取通道；已接的也能再接到别的位置） -->
+                                        <CheckBox DockPanel.Dock="Left" Margin="0,0,8,0" IsVisible="{Binding ShowCheckBox}"
+                                                  IsChecked="{Binding IsChecked}" AutomationProperties.Name="选择通道" />
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" Margin="8,0,0,0">
+                                            <Button Content="关联" Padding="10,2" Classes="Primary" Command="{Binding MapCommand}" />
+                                            <Button Content="定位" Padding="10,2" IsVisible="{Binding IsMapped}" Command="{Binding LocateCommand}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="4">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{Binding NameText}" VerticalAlignment="Center" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource SemiColorText0}" />
+                                                <TextBlock Text="{Binding KindText}" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource SemiColorText1}" />
+                                                <Border Classes="use" Classes.used="{Binding IsUsed}" Classes.shared="{Binding IsShared}">
+                                                    <TextBlock Text="{Binding UseText}" />
+                                                </Border>
+                                                <Border Classes="use here" IsVisible="{Binding IsHere}">
+                                                    <TextBlock Text="本位置" />
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding MappedText}" IsVisible="{Binding IsMapped}" TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding MappedText}" Foreground="{DynamicResource SemiColorText1}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
                             </DataTemplate>
-                            <DataTemplate DataType="vm:MappingChannelViewModel">
-                                <!-- 映射草稿模式下通道前面有勾选框（取通道；已映射的也能再接到别的位置） -->
-                                <DockPanel Margin="16,6,4,6">
-                                <CheckBox DockPanel.Dock="Left" Margin="0,0,8,0" IsVisible="{Binding ShowCheckBox}"
-                                          IsChecked="{Binding IsChecked}" AutomationProperties.Name="选择通道" />
-                                <Grid ColumnDefinitions="1.2*,56,1.6*,Auto" ColumnSpacing="12">
-                                    <TextBlock Grid.Column="0" Text="{Binding NameText}" VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding NameText}"
-                                               Foreground="{DynamicResource SemiColorText0}" />
-                                    <TextBlock Grid.Column="1" Text="{Binding KindText}" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource SemiColorText1}" />
-                                    <TextBlock Grid.Column="2" Text="{Binding MappedText}" VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding MappedText}"
-                                               Foreground="{DynamicResource SemiColorText1}" />
-                                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
-                                        <Button Content="关联" Padding="10,2" Classes="Primary"
-                                                Command="{Binding MapCommand}" />
-                                        <Button Content="定位" Padding="10,2"
-                                                IsVisible="{Binding IsMapped}" Command="{Binding LocateCommand}" />
-                                    </StackPanel>
-                                </Grid>
-                                </DockPanel>
-                            </DataTemplate>
-                        </ListBox.DataTemplates>
+                        </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
             </Border>

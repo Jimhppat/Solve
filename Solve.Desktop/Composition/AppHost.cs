@@ -21,6 +21,7 @@ using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Devices.Runtime;
 using Solve.Core.Application.Devices.Simulation;
 using Solve.Core.Application.Logging;
+using Solve.Core.Application.Settings.Ports;
 using Solve.Core.Application.Topology;
 using Solve.Core.Application.Twin;
 using Solve.Core.Application.Wiring;
@@ -67,6 +68,7 @@ public sealed class AppHost : IAsyncDisposable
     private SimulatedDeviceDispatcher? _simulation;
     private TopologyService? _topology;
     private TwinStateStore? _twin;
+    private SqliteAppSettingsStore? _appSettings;
     private WiringService? _wiring;
     private WiringInspector? _wiringInspector;
     private DeviceCommandService? _commands;
@@ -207,6 +209,20 @@ public sealed class AppHost : IAsyncDisposable
             lock (_gate)
             {
                 return _deviceLibraryLocation;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 应用级键值设置（界面偏好，如硬件映射页的栏宽）；启动完成前或配置库不可用时为 null
+    /// </summary>
+    public IAppSettingsStore? AppSettings
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _appSettings;
             }
         }
     }
@@ -444,6 +460,12 @@ public sealed class AppHost : IAsyncDisposable
             }
 
             var settings = new SqliteAppSettingsStore(database.Value, _loggerFactory.CreateLogger<SqliteAppSettingsStore>());
+            lock (_gate)
+            {
+                if (!_disposed)
+                    _appSettings = settings;
+            }
+
             var stored = await settings.GetAsync(TransportModePolicy.HardwareEnabledKey, cancellationToken).ConfigureAwait(false);
             mode = TransportModePolicy.Decide(Options.HardwareRequested, stored);
             LogMode(mode);

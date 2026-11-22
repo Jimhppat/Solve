@@ -12,7 +12,13 @@ namespace Solve.Core.Application.Wiring;
 /// </summary>
 /// <param name="BusName">所在总线的名称（界面显示）</param>
 /// <param name="Channels">模块实际可用的通道组（驱动的通道能力 + 模块的通道配置），只含有启用通道的组</param>
-public sealed record WiringModule(BusId BusId, string BusName, DeviceDescriptor Device, IReadOnlyList<ChannelGroup> Channels);
+public sealed record WiringModule(BusId BusId, string BusName, DeviceDescriptor Device, IReadOnlyList<ChannelGroup> Channels)
+{
+    /// <summary>
+    /// 总线的物理链路（界面上区分同名总线），如串口"COM3"、TCP"192.168.1.20:502"；未知类型为 null
+    /// </summary>
+    public string? BusLink { get; init; }
+}
 
 /// <summary>
 /// 一次接线变更的预览：保存时据 <see cref="Base"/> 判断预览是否过期

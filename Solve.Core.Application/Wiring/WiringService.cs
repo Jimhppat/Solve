@@ -157,13 +157,20 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
         var modules = new List<WiringModule>();
         foreach (var runtime in _buses.GetAllRuntimes().OrderBy(r => r.Descriptor.Name, StringComparer.CurrentCulture))
         {
+            var link = runtime.Descriptor switch
+            {
+                Domain.Buses.SerialBusDescriptor serial => serial.PortName,
+                Domain.Buses.TcpBusDescriptor tcp => $"{tcp.Host}:{tcp.Port}",
+                _ => null,
+            };
+
             foreach (var binding in _bindings.Get(runtime.Id))
             {
                 // 只列出有启用通道的模块：没用到的模块、全部停用的通道组不出现在接线表单里
                 if (ModuleChannelLookup.Resolve(_catalog, binding.Device) is { IsSuccess: true } channels
                     && channels.Value.Where(g => g.EnabledCount > 0).ToList() is { Count: > 0 } enabled)
                 {
-                    modules.Add(new WiringModule(runtime.Id, runtime.Descriptor.Name, binding.Device, enabled));
+                    modules.Add(new WiringModule(runtime.Id, runtime.Descriptor.Name, binding.Device, enabled) { BusLink = link });
                 }
             }
         }

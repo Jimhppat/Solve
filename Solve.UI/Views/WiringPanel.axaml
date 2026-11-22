@@ -94,9 +94,11 @@
                     <Border Classes="wire">
                         <StackPanel Spacing="4">
                             <DockPanel>
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" IsVisible="{Binding IsOwn}">
-                                    <Button Content="修改" Padding="8,2" Command="{Binding EditCommand}" />
-                                    <Button Content="拆除" Padding="8,2" Classes="Danger" Command="{Binding RemoveCommand}" />
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
+                                    <Button Content="定位通道" Padding="8,2" IsVisible="{Binding CanLocateChannel}"
+                                            Command="{Binding LocateChannelCommand}" />
+                                    <Button Content="修改" Padding="8,2" IsVisible="{Binding IsOwn}" Command="{Binding EditCommand}" />
+                                    <Button Content="拆除" Padding="8,2" Classes="Danger" IsVisible="{Binding IsOwn}" Command="{Binding RemoveCommand}" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock Text="{Binding KindText}" FontWeight="SemiBold" VerticalAlignment="Center"

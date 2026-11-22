@@ -63,6 +63,10 @@ public partial class App : Application
                 {
                     var report = await _host.Start().ConfigureAwait(false);
 
+                    // 界面偏好（硬件映射页的栏宽）存在配置库里
+                    if (_host.AppSettings is { } appSettings)
+                        await Dispatcher.UIThread.InvokeAsync(() => vm.HardwareMapping.AttachLayoutSettings(appSettings));
+
                     // 拓扑与总线互不依赖：配置库能打开就接入拓扑页（读取失败时页面显示原因并禁止保存）。须在 UI 线程上接入
                     if (_host.Topology is { } topology)
                         await Dispatcher.UIThread.InvokeAsync(() => vm.AttachTopology(topology));
