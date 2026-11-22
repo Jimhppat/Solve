@@ -12,7 +12,6 @@ public static class WiringErrors
     public const string NodeNotFoundCode = "Wiring.NodeNotFound";
     public const string SystemNodeCode = "Wiring.SystemNode";
     public const string ChannelInUseCode = "Wiring.ChannelInUse";
-    public const string PathConflictCode = "Wiring.PathConflict";
     public const string DeviceNotFoundCode = "Wiring.DeviceNotFound";
     public const string ChannelNotDeclaredCode = "Wiring.ChannelNotDeclared";
     public const string KindMismatchCode = "Wiring.KindMismatch";
@@ -46,11 +45,11 @@ public static class WiringErrors
 
     public static Error SystemNode() => new(SystemNodeCode, "系统根不能接线，请选择柜体、层位、槽位、治具位或产品位。");
 
+    /// <summary>
+    /// 同一路通道在同一个位置重复接线（一路通道可以接到多个位置，但同一位置只接一次）
+    /// </summary>
     public static Error ChannelInUse(IReadOnlyList<string> details)
-        => new(ChannelInUseCode, $"通道已接到其他位置：{List(details)}。一路通道只能接到一个位置；几个位置共用时请接在它们的上级。");
-
-    public static Error PathConflict(IReadOnlyList<string> details)
-        => new(PathConflictCode, $"同一位置路径上已有相同功能、相同用途的接线：{List(details)}。如确需多路，请为每一路填写不同的用途。");
+        => new(ChannelInUseCode, $"通道在这个位置已经接过：{List(details)}。");
 
     public static Error DeviceNotFound() => new(DeviceNotFoundCode, "模块已不存在，可能已被删除。");
 
@@ -75,7 +74,7 @@ public static class WiringErrors
 
     public static Error StorageFailed(string detail) => new(StorageFailedCode, $"接线存储失败：{detail}");
 
-    public static Error StorageConflict() => new(StorageConflictCode, "部分通道已被其他接线占用，或位置、模块已被删除，请刷新后重试。");
+    public static Error StorageConflict() => new(StorageConflictCode, "部分通道已在同一位置接过，或位置、模块已被删除，请刷新后重试。");
 
     public static Error StorageNotFound() => new(StorageNotFoundCode, "接线已不存在，可能已被删除。");
 

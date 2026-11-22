@@ -34,7 +34,7 @@ public sealed record WiringBatchRequest(
 }
 
 /// <summary>
-/// 把批量请求展开成逐条接线（纯计算，不访问存储）。通道占用与路径冲突由 <see cref="WiringMap.WithAdded"/> 校验。
+/// 把批量请求展开成逐条接线（纯计算，不访问存储）。落点与同一位置的重复接线由 <see cref="WiringMap.WithAdded"/> 校验。
 /// </summary>
 public static class WiringBatch
 {

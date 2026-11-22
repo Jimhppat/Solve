@@ -265,7 +265,7 @@
                                            Foreground="{DynamicResource SemiColorText0}" />
                             </DataTemplate>
                             <DataTemplate DataType="vm:MappingChannelViewModel">
-                                <!-- 映射草稿模式下未映射的通道前面有勾选框（取通道） -->
+                                <!-- 映射草稿模式下通道前面有勾选框（取通道；已映射的也能再接到别的位置） -->
                                 <DockPanel Margin="16,6,4,6">
                                 <CheckBox DockPanel.Dock="Left" Margin="0,0,8,0" IsVisible="{Binding ShowCheckBox}"
                                           IsChecked="{Binding IsChecked}" AutomationProperties.Name="选择通道" />
@@ -280,7 +280,7 @@
                                                Foreground="{DynamicResource SemiColorText1}" />
                                     <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
                                         <Button Content="关联" Padding="10,2" Classes="Primary"
-                                                IsVisible="{Binding IsUnmapped}" Command="{Binding MapCommand}" />
+                                                Command="{Binding MapCommand}" />
                                         <Button Content="定位" Padding="10,2"
                                                 IsVisible="{Binding IsMapped}" Command="{Binding LocateCommand}" />
                                     </StackPanel>
