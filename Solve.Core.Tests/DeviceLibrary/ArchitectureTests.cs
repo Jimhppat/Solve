@@ -98,6 +98,7 @@ public sealed class ArchitectureTests
             var references = assembly.GetReferencedAssemblies().Select(a => a.Name!).ToList();
             Assert.DoesNotContain(references, r => r.StartsWith("Sample.", StringComparison.Ordinal));
             Assert.DoesNotContain(references, r => r.StartsWith("Chroma.", StringComparison.Ordinal));
+            Assert.DoesNotContain(references, r => r.StartsWith("GJ.", StringComparison.Ordinal));
             Assert.DoesNotContain(references, r => r.StartsWith("Solve.Device.Protocols.", StringComparison.Ordinal));
         }
     }

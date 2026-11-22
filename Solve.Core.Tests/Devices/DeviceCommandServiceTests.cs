@@ -520,8 +520,44 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         Assert.Equal([SamplePowerDriver.OutputOnKey, SamplePowerDriver.OutputOffKey], service.ListCommands(powerWire).Select(c => c.Key));
 
         var relayWire = Assert.Single(_wiring.Current.GetByDevice(relay.Id));
-        Assert.Equal([TestRelayDriver.On, TestRelayDriver.Off, TestRelayDriver.Pulse, TestRelayDriver.SetDelay],
-            service.ListCommands(relayWire).Select(c => c.Key));
+        var relayCommands = service.ListCommands(relayWire);
+        Assert.Equal([TestRelayDriver.On, TestRelayDriver.Off, TestRelayDriver.Pulse, TestRelayDriver.SetDelay, TestRelayDriver.TimedOn],
+            relayCommands.Select(c => c.Key));
+
+        // 声明了必填参数的命令要先给出数值：接线面板据此暂不列出它
+        Assert.Equal([TestRelayDriver.TimedOn], relayCommands.Where(c => c.NeedsInput).Select(c => c.Key));
+        Assert.Equal(["seconds", "delay"], relayCommands.Single(c => c.Key == TestRelayDriver.TimedOn).Arguments.Select(a => a.Key));
+    }
+
+    [Fact]
+    public async Task DeclaredArguments_AreChecked_Defaulted_AndShownInConfirmation()
+    {
+        var (power, relay) = await WireDefaultAsync();
+        SetOnline(power, relay);
+        var service = Service(new DeviceCommandOptions { IsHardware = true });
+        var product = Node("C01-L01-S01-F01-P01");
+        DeviceCommandRequest TimedOn(Dictionary<string, double> arguments) => RelayCommand(product, TestRelayDriver.TimedOn) with { Arguments = arguments };
+
+        var missing = service.Prepare(TimedOn(new()));
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, missing.Error.Code);
+        Assert.Contains("缺少参数「时长」", missing.Error.Message);
+
+        var unknown = service.Prepare(TimedOn(new() { ["seconds"] = 2, ["volts"] = 5 }));
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, unknown.Error.Code);
+        Assert.Contains("没有参数 volts", unknown.Error.Message);
+
+        var outOfRange = service.Prepare(TimedOn(new() { ["seconds"] = 61 }));
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, outOfRange.Error.Code);
+        Assert.Contains("时长 61 s 超出范围 [0.1, 60] s", outOfRange.Error.Message);
+
+        // 可选参数补上默认值，交给驱动的是完整参数表；确认文案与日志都列出设定值
+        var plan = service.Prepare(TimedOn(new() { ["seconds"] = 2 })).Value;
+        Assert.Equal(new Dictionary<string, double> { ["seconds"] = 2, ["delay"] = 0 }, plan.Request.Arguments);
+        Assert.Contains("参数：时长 2 s、延迟 0 ms", plan.Describe());
+        Assert.Contains("参数 时长 2 s、延迟 0 ms", plan.ToString());
+
+        Assert.True((await service.ExecuteAsync(plan, confirmed: true, CancellationToken.None)).IsSuccess);
+        Assert.Equal(1, RelayFrames(TestRelayDriver.TimedOnCode));
     }
 
     // ==================== 执行失败 ====================
@@ -690,6 +726,8 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         public const string Pulse = "relay.pulse";
         public const string SetDelay = "relay.set-delay";
         public const string AllOff = "relay.all-off";
+        public const string TimedOn = "relay.timed-on";
+        public const byte TimedOnCode = 0x06;
         public const byte RequestHeader = 0xBB;
         public const byte ResponseHeader = 0xCC;
         public const byte OnCode = 0x01;
@@ -708,6 +746,15 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
                 new CommandInfo(Pulse, "高压脉冲", CommandSafety.Hazardous) { Group = Group },
                 new CommandInfo(SetDelay, "设置吸合延时", CommandSafety.Parameter) { Group = Group },
                 new CommandInfo(AllOff, "全部释放", CommandSafety.Output),
+                new CommandInfo(TimedOn, "定时吸合", CommandSafety.Output)
+                {
+                    Group = Group,
+                    Arguments =
+                    [
+                        new CommandArgumentInfo("seconds", "时长", "s", 0.1, 60),
+                        new CommandArgumentInfo("delay", "延迟", "ms", 0, 1000) { DefaultValue = 0 },
+                    ],
+                },
             ],
             Channels = [new ChannelGroupInfo(Group, "继电器", ChannelFunction.Switch, 4)],
         };
@@ -753,6 +800,7 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
                     Off => 0x02,
                     Pulse => PulseCode,
                     SetDelay => 0x05,
+                    TimedOn => TimedOnCode,
                     _ => 0,
                 };
                 return code == 0 || command.Channel is < 1 or > 4

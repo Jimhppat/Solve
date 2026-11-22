@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        GJ 驱动包：只引用 SDK，不引用任何内核程序集。
+        编译后由 Devicelibrary/Directory.Build.targets 输出到 Devicelibrary/gj.drivers/（dll + package.json）。
+        SDK 由主程序提供，不随驱动包复制（Private=false），避免包里出现第二份契约程序集。
+        用到 SDK 1.2 的命令参数声明（CommandInfo.Arguments），主程序的 SDK 不能低于 1.2。
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>14</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\..\Solve.Device.Sdk\Solve.Device.Sdk.csproj" Private="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="GJ.Drivers.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="package.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+{
+  "id": "gj.drivers",
+  "name": "GJ 驱动包",
+  "version": "0.1.0",
+  "author": "Solve",
+  "sdkVersion": 1,
+  "entryAssembly": "GJ.Drivers.dll",
+  "entryType": "GJ.Drivers.GJDriverPackage",
+  "drivers": [
+    { "id": "gj.da750-4-60a", "name": "GJ DA750-4-60A", "category": "PowerAndLoad", "manufacturer": "GJ", "model": "DA750-4-60A" }
+  ]
+}

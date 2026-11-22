@@ -621,8 +621,9 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
     private IReadOnlyList<DeviceCommandOption> ListCommands(Wire wire)
     {
-        // 写参数类命令需要输入设定值，SDK 尚未声明命令参数，界面暂不提供
-        return _commands?.ListCommands(wire).Where(c => c.Safety != CommandSafety.Parameter).ToList() ?? [];
+        // 接线面板还没有参数输入：写参数类命令、带必填参数的命令（如电子负载的恒流带载）暂不在这里提供，
+        // 否则点了只会因缺少参数被内核拒绝。只有默认参数的命令按默认值下发，确认文案里会列出参数值
+        return _commands?.ListCommands(wire).Where(c => c.Safety != CommandSafety.Parameter && !c.NeedsInput).ToList() ?? [];
     }
 
     private async Task AddAsync()
