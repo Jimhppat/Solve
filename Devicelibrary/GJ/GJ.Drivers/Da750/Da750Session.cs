@@ -12,8 +12,10 @@ namespace GJ.Drivers.Da750;
 /// <para>故障安全：会话创建时（启动、模块或总线配置变化后）镜像为"全部卸载"，所以此后第一条命令会把其他通道一并卸载——
 /// 宁可多卸载，也不凭猜测给其他通道拉载。写入失败（超时、设备报错）不更新镜像：设备是否已执行未知，
 /// 下一条命令会按镜像重新下发全部通道，使设备回到已知状态。</para>
+/// <para>安全状态（<see cref="ISafeStateProvider"/>）：总线安全跳闸时内核执行整机安全状态，CID 41 把 8 槽全部写成卸载；
+/// 操作员按位置执行单路安全停止时只卸载目标通道。</para>
 /// </remarks>
-internal sealed class Da750Session : IDeviceSession
+internal sealed class Da750Session : IDeviceSession, ISafeStateProvider
 {
     private readonly Da750Model _model;
     private readonly DriverInfo _info;
@@ -91,6 +93,44 @@ internal sealed class Da750Session : IDeviceSession
                 _applied = desired;
                 return new ExchangeStep.Completed([]);
             });
+    }
+
+    /// <summary>
+    /// 安全状态（CID 41，一问一答）。整机：8 槽都写 CC 慢速 0 A，不依赖镜像中的旧设定；
+    /// 单路：目标通道写卸载，其余各路按镜像（设备已确认的设定）原样重发——协议只能一帧写全部通道。
+    /// </summary>
+    /// <remarks>
+    /// 镜像中目标通道在开始时就改成卸载，不等设备应答：下发失败时设备状态未知，
+    /// 之后的命令也必须按"目标通道卸载"重发，绝不能把安全停止前的拉载设定重新写回设备。
+    /// </remarks>
+    public IExchange BeginSafeState(string? group, int channel)
+    {
+        Da750Setting[] desired;
+        string action;
+        if (group is null && channel == 0)
+        {
+            desired = Enumerable.Repeat(Da750Setting.Unloaded, _model.Channels).ToArray();
+            action = "全部卸载（安全状态）";
+        }
+        else if (string.Equals(group, Da750Driver.LoadGroupKey, StringComparison.Ordinal) && channel >= 1 && channel <= _model.Channels)
+        {
+            desired = _applied.ToArray();
+            desired[channel - 1] = Da750Setting.Unloaded;
+            action = $"通道 {channel} 卸载（安全状态）";
+        }
+        else
+        {
+            return Reject($"GJ {_model.Model} 没有通道 {group ?? "（整机）"} {channel}，无法执行安全停止。");
+        }
+
+        _applied = desired;
+        return new Ers272Exchange(
+            Da750Protocol.WriteSettingsRequest(_address, desired, _vonRaw),
+            _address,
+            infoLength: 0,
+            _strict,
+            action,
+            _ => new ExchangeStep.Completed([]));
     }
 
     private string? TryCc(CommandInfo declared, DeviceCommand command, Da750Mode mode, out Da750Setting setting)

@@ -298,6 +298,74 @@ public sealed class Chroma62000BTests
         Assert.Contains("没有生效", failed.Reason);
     }
 
+    // ---------- 安全状态（SDK 1.3） ----------
+
+    private ExchangeRunner.Run SafeState(IDeviceSession session, string? group = null, int channel = 0)
+        => ExchangeRunner.Execute(Assert.IsAssignableFrom<ISafeStateProvider>(session).BeginSafeState(group, channel), _device.Handle);
+
+    [Fact]
+    public void SafeState_OutputChannel_SameAsWholeModule()
+    {
+        _device.OutputOn = true;
+
+        var run = SafeState(NewSession(), Chroma62000BDriver.OutputChannelKey, 1);
+
+        Assert.Equal(["CONF:OUTP OFF\n", "CONF:OUTP?\n"], run.Commands);
+        Assert.False(_device.OutputOn);
+    }
+
+    [Theory]
+    [InlineData("output", 2)]
+    [InlineData("load", 1)]
+    [InlineData(null, 1)]
+    public void SafeState_UndeclaredTarget_IsConfigurationError_WithoutSending(string? group, int channel)
+    {
+        var run = SafeState(NewSession(), group, channel);
+
+        Assert.Equal(FailureKind.Configuration, Assert.IsType<ExchangeStep.Failed>(run.Final).Kind);
+        Assert.Empty(run.Sent);
+    }
+
+    [Fact]
+    public void SafeState_TurnsOutputOff_WithoutIdentity_ThenVerifies()
+    {
+        _device.OutputOn = true;
+
+        // 新会话（型号从未确认）也直接关输出：跳闸时不能让型号确认挡住关输出
+        var run = SafeState(NewSession(delayMs: "250"));
+
+        Assert.Equal(["CONF:OUTP OFF\n", "CONF:OUTP?\n"], run.Commands);
+        Assert.Equal("CONF:OUTP OFF\n"u8.ToArray(), run.Sent[0].Request.ToArray());
+        Assert.False(run.Sent[0].ExpectsResponse);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), run.Sent[0].DelayAfter);
+        Assert.IsType<ExchangeStep.Completed>(run.Final);
+        Assert.False(_device.OutputOn);
+    }
+
+    [Fact]
+    public void SafeState_NotTakingEffect_IsDeviceFault()
+    {
+        _device.OutputOn = true;
+        _device.IgnoreOutputCommands = true;
+
+        var failed = Assert.IsType<ExchangeStep.Failed>(SafeState(NewSession()).Final);
+
+        Assert.Equal(FailureKind.Device, failed.Kind);
+    }
+
+    [Fact]
+    public void SafeState_NextExchange_VerifiesIdentityAgain()
+    {
+        var session = NewSession();
+        Poll(session);
+        SafeState(session);
+
+        // 安全状态没有确认型号：复位重连后的第一次交互重新确认（跳闸期间设备可能被更换）
+        var run = Poll(session);
+
+        Assert.Equal("*IDN?\n", run.Commands[0]);
+    }
+
     [Fact]
     public void UnknownCommand_IsConfigurationError_WithoutSending()
     {

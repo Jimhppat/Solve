@@ -1,7 +1,7 @@
 {
   "id": "gj.drivers",
   "name": "GJ 驱动包",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Solve",
   "sdkVersion": 1,
   "entryAssembly": "GJ.Drivers.dll",

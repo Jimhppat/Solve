@@ -20,7 +20,8 @@ namespace Solve.Core.Application.Devices.Commands;
 /// 检查确认与有效期，按当前状态重新解析、再过一次联锁，目标没变才发出报文。任何一步不满足都拒绝（故障安全方向）。</para>
 /// <para>联锁：所有命令都要求选中位置与接线所在位置 <see cref="WiringInspector.CheckReady"/>（位置启用、产品位的接点接完、全部有效接线就绪）。
 /// 输出动作与高危命令另要求接线所在位置的子树内没有停用的位置——上级的一路电源会同时作用到维护屏蔽中的产品位。
-/// 内核不知道哪条命令是"关闭"方向，所以关闭输出同样受联锁约束；紧急情况走系统急停（全部总线安全跳闸）。</para>
+/// 内核不按命令判断"关闭"方向，所以普通的关闭输出 / 卸载命令同样受联锁约束；要在维护屏蔽下卸载，用安全停止
+/// （<see cref="SafeStopAsync"/>，经驱动的安全状态，免除停用位置联锁与确认），紧急情况走系统急停（全部总线安全跳闸）。</para>
 /// <para>执行：与轮询共用总线的通道锁，同一条总线上的报文串行；会话的 BeginCommand 也在锁内调用，保证同一会话的调用串行。
 /// 命令失败不自动重试：命令不一定可以重复执行（如脉冲、计数类动作），由操作员核对现场后决定。
 /// 驱动抛出异常按 SDK 约定视为通信状态未知，所在总线由总线运行时安全跳闸。</para>
@@ -128,6 +129,168 @@ public sealed class DeviceCommandService
             return Rejected(plan.Request, DeviceCommandErrors.BusUnavailable(BusErrors.NotRegistered(plan.Binding.Device.BusId)));
 
         return await RunAsync(plan, runtime.Value, confirmed, cancellationToken).ConfigureAwait(false);
+    }
+
+    // ==================== 安全停止（安全方向的专用操作） ====================
+
+    /// <summary>
+    /// 按位置把一路通道或整台模块带到安全状态（负载卸载、关闭输出）。经驱动的 <see cref="ISafeStateProvider"/> 执行，
+    /// 与总线急停用同一个驱动入口。
+    /// </summary>
+    /// <remarks>
+    /// <para>安全方向，所以免除停用位置联锁（选中位置与接线所在位置的就绪检查、子树停用检查）与操作员确认：
+    /// 维护屏蔽中的产品位恰恰需要能先卸载。照常检查：接线恰好一路、模块已绑定驱动且驱动提供安全停止、
+    /// 通道在驱动声明之内、总线已连接（未连接时报文发不出去，返回总线不可用）。</para>
+    /// <para>普通的卸载 / 关输出命令不受影响，仍按其安全等级经 <see cref="Prepare"/> / <see cref="ExecuteAsync"/> 受联锁约束。</para>
+    /// <para>一步完成、失败不自动重试；总时限 <see cref="DeviceCommandOptions.Timeout"/>，调用方取消时抛出 <see cref="OperationCanceledException"/>。
+    /// 每次下发、结果与拒绝都写结构化日志。</para>
+    /// </remarks>
+    public async Task<Result<DeviceSafeStopResult>> SafeStopAsync(DeviceSafeStopRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var resolved = ResolveSafeStop(request);
+        if (resolved.IsFailure)
+            return SafeStopRejected(request, resolved.Error);
+
+        var target = resolved.Value;
+        if (_buses.GetRuntime(target.Binding.Device.BusId) is not { IsSuccess: true } runtime)
+            return SafeStopRejected(request, DeviceCommandErrors.BusUnavailable(BusErrors.NotRegistered(target.Binding.Device.BusId)));
+
+        var position = target.Target.Address.ToString();
+        var name = $"安全停止（{target.TargetText}）";
+        var label = $"{position} {name} → {target.Binding.Device}";
+        _logger.LogWarning(
+            "设备安全停止下发 范围 {Scope} 位置 {Position} 接线 {Wire} 来源 {Source} 模块 {Module} 地址 {Address} 对象 {Target} 模式 {Mode} 免除停用位置联锁与确认",
+            request.Scope, position, target.Wire.KindText, target.Source.Address, target.ModuleText, target.Binding.Device.Address,
+            target.TargetText, _options.IsHardware ? "实机" : "仿真");
+
+        var started = _time.GetTimestamp();
+        using var timeout = new CancellationTokenSource(_options.Timeout, _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+
+        ExchangeOutcome outcome;
+        try
+        {
+            outcome = await _executor.ExecuteAsync(runtime.Value, () => target.Provider.BeginSafeState(target.Group, target.Channel), label, linked.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return SafeStopFinished(target, position, started, Result<DeviceSafeStopResult>.Failure(DeviceCommandErrors.Timeout(name, _options.Timeout)));
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("设备安全停止被取消 位置 {Position} 模块 {Module} 对象 {Target}：若报文已发出，结果未知，耗时 {ElapsedMs:0} ms",
+                position, target.ModuleText, target.TargetText, _time.GetElapsedTime(started).TotalMilliseconds);
+            throw;
+        }
+        catch (ObjectDisposedException) when (_buses.GetRuntime(runtime.Value.Id) is not { IsSuccess: true } still || !ReferenceEquals(still.Value, runtime.Value))
+        {
+            var removed = DeviceCommandErrors.BusUnavailable(BusErrors.NotRegistered(runtime.Value.Id));
+            return SafeStopFinished(target, position, started, Result<DeviceSafeStopResult>.Failure(removed));
+        }
+        catch (Exception ex)
+        {
+            // SDK 约定：驱动抛异常即通信状态未知。总线运行时已安全跳闸（随后对整条总线执行急停安全状态），这里只记录
+            _logger.LogCritical(ex, "设备安全停止 位置 {Position}：驱动 {Driver} 抛出异常，总线 {BusId} 已安全跳闸",
+                position, target.Binding.Device.Driver, runtime.Value.Id);
+            return SafeStopFinished(target, position, started,
+                Result<DeviceSafeStopResult>.Failure(DeviceCommandErrors.DriverFault(target.Binding.Device.Driver.ToString())));
+        }
+
+        var result = outcome switch
+        {
+            ExchangeOutcome.Succeeded => Result<DeviceSafeStopResult>.Success(
+                new DeviceSafeStopResult(position, target.ModuleText, target.TargetText, _time.GetElapsedTime(started))),
+            ExchangeOutcome.DeviceFailed { Kind: FailureKind.Configuration } failed =>
+                Result<DeviceSafeStopResult>.Failure(DeviceCommandErrors.Configuration(name, failed.Reason)),
+            ExchangeOutcome.DeviceFailed { Kind: FailureKind.Device } failed =>
+                Result<DeviceSafeStopResult>.Failure(DeviceCommandErrors.DeviceFault(name, failed.Reason)),
+            ExchangeOutcome.DeviceFailed failed =>
+                Result<DeviceSafeStopResult>.Failure(DeviceCommandErrors.Transient(name, failed.Reason)),
+            ExchangeOutcome.BusUnavailable unavailable =>
+                Result<DeviceSafeStopResult>.Failure(DeviceCommandErrors.BusUnavailable(unavailable.Error)),
+            _ => throw new InvalidOperationException($"未处理的交互结果 {outcome.GetType().Name}"),
+        };
+        return SafeStopFinished(target, position, started, result);
+    }
+
+    /// <summary>
+    /// 安全停止的目标：接线 → 模块会话 → （通道组，通道号）；整机时为 (null, 0)
+    /// </summary>
+    private readonly record struct SafeStopTarget(
+        TopologyNode Target,
+        TopologyNode Source,
+        Wire Wire,
+        DriverBinding Binding,
+        ISafeStateProvider Provider,
+        string? Group,
+        int Channel,
+        string ModuleText,
+        string TargetText);
+
+    private Result<SafeStopTarget> ResolveSafeStop(DeviceSafeStopRequest request)
+    {
+        if (request.Node.IsEmpty)
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest("没有指定位置。"));
+        if (!request.Kind.IsDefined())
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest($"通道功能未定义：{(int)request.Kind}。"));
+        if (!Enum.IsDefined(request.Scope))
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest($"安全停止范围未定义：{(int)request.Scope}。"));
+
+        // 不做 CheckReady 与子树停用检查：安全方向不受维护屏蔽阻挡
+        var found = FindWire(request.Node, request.Kind, request.Purpose);
+        if (found.IsFailure)
+            return Result<SafeStopTarget>.Failure(found.Error);
+
+        var (_, _, target, wire, source) = found.Value;
+        if (!_bindings.TryGet(wire.Channel.Device, out var binding)
+            || binding is not { Status: DriverBindingStatus.Ready, Session: { } session, Driver: { } driver })
+        {
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.Interlock(new Error("Wiring.NotReady", "接线的模块未就绪（驱动未载入或会话未建立）。")));
+        }
+
+        if (session is not ISafeStateProvider provider)
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.SafeStopUnsupported(driver.Name));
+
+        var group = driver.Channels.FirstOrDefault(g => string.Equals(g.Key, wire.Channel.Group, StringComparison.Ordinal));
+        if (group is null || wire.Channel.Index < 1 || wire.Channel.Index > group.Count)
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest($"{driver.Name}没有通道 {wire.Channel.Group} {wire.Channel.Index}。"));
+
+        var busName = _buses.GetRuntime(binding.Device.BusId) is { IsSuccess: true } runtime ? runtime.Value.Descriptor.Name : "未知总线";
+        var moduleText = $"{busName} · {binding.Device.Name}";
+        return Result<SafeStopTarget>.Success(request.Scope == SafeStopScope.Channel
+            ? new SafeStopTarget(target, source, wire, binding, provider, group.Key, wire.Channel.Index, moduleText, ChannelName(group, wire.Channel.Index))
+            : new SafeStopTarget(target, source, wire, binding, provider, null, 0, moduleText, "整台模块"));
+    }
+
+    private Result<DeviceSafeStopResult> SafeStopFinished(SafeStopTarget target, string position, long started, Result<DeviceSafeStopResult> result)
+    {
+        var elapsed = _time.GetElapsedTime(started).TotalMilliseconds;
+        if (result.IsSuccess)
+        {
+            _logger.LogWarning("设备安全停止完成 位置 {Position} 模块 {Module} 对象 {Target} 结果 {Outcome} 耗时 {ElapsedMs:0} ms",
+                position, target.ModuleText, target.TargetText, "成功", elapsed);
+        }
+        else
+        {
+            // 安全停止没成功：设备可能仍在输出或带载，必须让人看见
+            _logger.LogError("设备安全停止失败 位置 {Position} 模块 {Module} 对象 {Target} 结果 {Outcome} 原因 {Reason} 耗时 {ElapsedMs:0} ms",
+                position, target.ModuleText, target.TargetText, result.Error.Code, result.Error.Message, elapsed);
+        }
+
+        return result;
+    }
+
+    private Result<DeviceSafeStopResult> SafeStopRejected(DeviceSafeStopRequest request, Error error)
+    {
+        var position = _inspector.Wiring.Current.Topology is { } topology && topology.TryGetNode(request.Node, out var node)
+            ? node.Address.ToString()
+            : $"节点 {request.Node}";
+        _logger.LogWarning("设备安全停止拒绝 范围 {Scope} 位置 {Position} 功能 {Kind} 用途 {Purpose} 结果 {Outcome} 原因 {Reason}",
+            request.Scope, position, request.Kind, request.Purpose, error.Code, error.Message);
+        return Result<DeviceSafeStopResult>.Failure(error);
     }
 
     // ==================== 执行 ====================
@@ -257,22 +420,11 @@ public sealed class DeviceCommandService
         if (ValidateRequest(request) is { } invalid)
             return Result<DeviceCommandPlan>.Failure(invalid);
 
-        var map = _inspector.Wiring.Current;
-        if (map.Topology is not { } topology || !topology.TryGetNode(request.Node, out var target))
-            return Result<DeviceCommandPlan>.Failure(WiringErrors.NodeNotFound());
+        var found = FindWire(request.Node, request.Kind, request.Purpose);
+        if (found.IsFailure)
+            return Result<DeviceCommandPlan>.Failure(found.Error);
 
-        // 映射不拦截同一路径上的同功能同用途接线：命令必须恰好匹配一路，多于一路无法确定目标即拒绝
-        var purposeKey = Wire.NormalizeText(request.Purpose)?.ToUpperInvariant() ?? string.Empty;
-        var matches = map.GetEffective(target.Id)
-            .Where(e => e.Wire.Kind == request.Kind && e.Wire.PurposeKey == purposeKey)
-            .ToList();
-        var kindText = purposeKey.Length > 0 ? $"{request.Kind.DisplayName()} {Wire.NormalizeText(request.Purpose)}" : request.Kind.DisplayName();
-        if (matches.Count == 0)
-            return Result<DeviceCommandPlan>.Failure(DeviceCommandErrors.NotWired(target.Address.ToString(), kindText));
-        if (matches.Count > 1)
-            return Result<DeviceCommandPlan>.Failure(DeviceCommandErrors.InvalidRequest($"{target.Address} 有 {matches.Count} 路「{kindText}」接线，无法确定命令的目标。"));
-
-        var (wire, source) = (matches[0].Wire, matches[0].Source);
+        var (map, topology, target, wire, source) = found.Value;
 
         // 联锁：选中位置与接线所在位置都要就绪
         var ready = _inspector.CheckReady(target.Id);
@@ -361,6 +513,31 @@ public sealed class DeviceCommandService
             shared,
             _options.IsHardware,
             _time.GetUtcNow() + _options.ConfirmationLifetime));
+    }
+
+    private readonly record struct FoundWire(WiringMap Map, EquipmentTopology Topology, TopologyNode Target, Wire Wire, TopologyNode Source);
+
+    /// <summary>
+    /// 在位置的有效接线里找功能、用途都匹配的那一路；没有或多于一路都拒绝
+    /// </summary>
+    private Result<FoundWire> FindWire(TopologyNodeId nodeId, ChannelKind kind, string? purpose)
+    {
+        var map = _inspector.Wiring.Current;
+        if (map.Topology is not { } topology || !topology.TryGetNode(nodeId, out var target))
+            return Result<FoundWire>.Failure(WiringErrors.NodeNotFound());
+
+        // 映射不拦截同一路径上的同功能同用途接线：必须恰好匹配一路，多于一路无法确定目标即拒绝
+        var purposeKey = Wire.NormalizeText(purpose)?.ToUpperInvariant() ?? string.Empty;
+        var matches = map.GetEffective(target.Id)
+            .Where(e => e.Wire.Kind == kind && e.Wire.PurposeKey == purposeKey)
+            .ToList();
+        var kindText = purposeKey.Length > 0 ? $"{kind.DisplayName()} {Wire.NormalizeText(purpose)}" : kind.DisplayName();
+        if (matches.Count == 0)
+            return Result<FoundWire>.Failure(DeviceCommandErrors.NotWired(target.Address.ToString(), kindText));
+        if (matches.Count > 1)
+            return Result<FoundWire>.Failure(DeviceCommandErrors.InvalidRequest($"{target.Address} 有 {matches.Count} 路「{kindText}」接线，无法确定命令的目标。"));
+
+        return Result<FoundWire>.Success(new FoundWire(map, topology, target, matches[0].Wire, matches[0].Source));
     }
 
     private static Error? ValidateRequest(DeviceCommandRequest request)

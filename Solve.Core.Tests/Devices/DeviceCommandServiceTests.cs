@@ -829,6 +829,103 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         }
     }
 
+    // ==================== 安全停止（安全方向的专用操作） ====================
+
+    private int SafeFrames(byte channel)
+        => _transport.GetTxHistory().Count(f => f is [TestRelayDriver.RequestHeader, 2, TestRelayDriver.SafeCode, var c] && c == channel);
+
+    private async Task DisableAsync(string address)
+    {
+        var disable = _topology.PlanNodeEdit(Node(address).Id, new TopologyNodeEdit(null, false)).Value;
+        Assert.True((await _topology.SaveAsync(disable, CancellationToken.None)).IsSuccess);
+        await WaitUntilAsync(() => _wiring.Current.Topology?.GetNode(TopologyAddress.Parse(address)).Value.IsEnabled == false);
+    }
+
+    [Fact]
+    public async Task SafeStop_Channel_OnDisabledPosition_IsSent_WhileOrdinaryOffIsStillInterlocked()
+    {
+        // 模块未上线（等待轮询）、产品位处于维护屏蔽、实机模式：普通释放命令被联锁拒绝，安全停止照样下发且不需要确认
+        await WireDefaultAsync();
+        await DisableAsync("C01-L01-S01-F01-P01");
+        var service = Service(new DeviceCommandOptions { IsHardware = true });
+        var product = Node("C01-L01-S01-F01-P01");
+
+        var off = service.Prepare(RelayCommand(product, TestRelayDriver.Off));
+        Assert.Equal(DeviceCommandErrors.InterlockCode, off.Error.Code);
+
+        var stopped = await service.SafeStopAsync(new DeviceSafeStopRequest(product.Id, ChannelKind.Switch, "k1", SafeStopScope.Channel), CancellationToken.None);
+
+        Assert.True(stopped.IsSuccess, stopped.IsFailure ? stopped.Error.Message : null);
+        Assert.Equal("C01-L01-S01-F01-P01", stopped.Value.Position);
+        Assert.Equal("1# RS-485 · 继电器板", stopped.Value.ModuleText);
+        Assert.Equal("继电器 3", stopped.Value.TargetText);
+        Assert.Equal(1, SafeFrames(3));
+        Assert.Equal(0, RelayFrames(0x02));
+
+        var entries = _log.Entries.ToList();
+        Assert.Contains(entries, e => e.Level == LogLevel.Warning && e.Message.StartsWith("设备安全停止下发") && e.Message.Contains("C01-L01-S01-F01-P01") && e.Message.Contains("实机"));
+        Assert.Contains(entries, e => e.Message.StartsWith("设备安全停止完成") && e.Message.Contains("成功"));
+    }
+
+    [Fact]
+    public async Task SafeStop_Module_StopsWholeModule()
+    {
+        await WireDefaultAsync();
+        var service = Service();
+
+        var stopped = await service.SafeStopAsync(
+            new DeviceSafeStopRequest(Node("C01-L01-S01-F01-P01").Id, ChannelKind.Switch, "K1", SafeStopScope.Module), CancellationToken.None);
+
+        Assert.True(stopped.IsSuccess, stopped.IsFailure ? stopped.Error.Message : null);
+        Assert.Equal("整台模块", stopped.Value.TargetText);
+        Assert.Equal(1, SafeFrames(0));
+    }
+
+    [Fact]
+    public async Task SafeStop_DriverWithoutCapability_IsRejected_NothingSent()
+    {
+        await WireDefaultAsync();
+        var service = Service();
+        var before = _transport.GetTxHistory().Count;
+
+        var stopped = await service.SafeStopAsync(
+            new DeviceSafeStopRequest(Node("C01-L01-S01-F01-P01").Id, ChannelKind.PowerSupply, null, SafeStopScope.Channel), CancellationToken.None);
+
+        Assert.Equal(DeviceCommandErrors.SafeStopUnsupportedCode, stopped.Error.Code);
+        Assert.Equal(before, _transport.GetTxHistory().Count);
+        Assert.Contains(_log.Entries, e => e.Level == LogLevel.Warning && e.Message.StartsWith("设备安全停止拒绝"));
+    }
+
+    [Fact]
+    public async Task SafeStop_NotWired_OrUndefinedScope_IsRejected()
+    {
+        await WireDefaultAsync();
+        var service = Service();
+        var product = Node("C01-L01-S01-F01-P02");
+
+        var notWired = await service.SafeStopAsync(new DeviceSafeStopRequest(product.Id, ChannelKind.Switch, "K1", SafeStopScope.Channel), CancellationToken.None);
+        var badScope = await service.SafeStopAsync(new DeviceSafeStopRequest(product.Id, ChannelKind.Switch, "K1", (SafeStopScope)9), CancellationToken.None);
+
+        Assert.Equal(DeviceCommandErrors.NotWiredCode, notWired.Error.Code);
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, badScope.Error.Code);
+    }
+
+    [Fact]
+    public async Task SafeStop_BusDisconnected_ReportsBusUnavailable_NothingSent()
+    {
+        await WireDefaultAsync();
+        Assert.True((await _runtime.DisconnectAsync(CancellationToken.None)).IsSuccess);
+        var service = Service();
+        var before = _transport.GetTxHistory().Count;
+
+        var stopped = await service.SafeStopAsync(
+            new DeviceSafeStopRequest(Node("C01-L01-S01-F01-P01").Id, ChannelKind.Switch, "K1", SafeStopScope.Channel), CancellationToken.None);
+
+        Assert.Equal(DeviceCommandErrors.BusUnavailableCode, stopped.Error.Code);
+        Assert.Equal(before, _transport.GetTxHistory().Count);
+        Assert.Contains(_log.Entries, e => e.Level == LogLevel.Error && e.Message.StartsWith("设备安全停止失败"));
+    }
+
     // ==================== 测试替身 ====================
 
     /// <summary>
@@ -910,8 +1007,20 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             public void Dispose() => Interlocked.Decrement(ref driver._inside);
         }
 
-        private sealed class Session(TestRelayDriver driver, byte address) : IDeviceSession
+        public const byte SafeCode = 0x09;
+
+        private sealed class Session(TestRelayDriver driver, byte address) : IDeviceSession, ISafeStateProvider
         {
+            /// <summary>
+            /// 安全状态：功能码 09，通道号 0 表示全部释放
+            /// </summary>
+            public IExchange BeginSafeState(string? group, int channel)
+            {
+                using var _ = driver.Enter();
+                var valid = group is null ? channel == 0 : group == Group && channel is >= 1 and <= 4;
+                return valid ? new Exchange(driver, address, SafeCode, (byte)channel) : new Failed($"没有通道 {group} {channel}");
+            }
+
             public IExchange BeginPoll()
             {
                 using var _ = driver.Enter();

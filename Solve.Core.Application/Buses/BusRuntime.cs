@@ -25,6 +25,9 @@ namespace Solve.Core.Application.Buses;
 /// <item>离开 Connected 时立即取消 I/O 令牌，在途事务马上中止并返回 Bus.ChannelLocked。</item>
 /// <item>断开、安全跳闸、释放会取消会话令牌，打断监督任务正在进行的打开或退避等待。</item>
 /// <item>事务回调或监督循环中的未处理异常一律触发 SafetyTrip 锁存，需联锁许可后人工复位。</item>
+/// <item>从 Connected 跳闸时，监督任务在关闭物理通道之前先经 <see cref="IBusSafeStopHandler"/> 把设备带到安全状态
+/// （负载卸载、电源关输出）：锁存在先，其他事务从跳闸那一刻起就被拒绝；安全状态报文经特许通道在通道锁内发出，
+/// 总时限 <see cref="BusRuntimeOptions.SafeStopTimeout"/>，失败或超时只记严重日志，不阻止关闭通道。</item>
 /// </list>
 /// </remarks>
 public sealed class BusRuntime : IAsyncDisposable
@@ -38,6 +41,7 @@ public sealed class BusRuntime : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly BusRuntimeOptions _options;
     private readonly TimeProvider _time;
+    private readonly IBusSafeStopHandler? _safeStop;
 
     private readonly BusStateMachine _machine = new();
     private readonly Lock _stateGate = new();
@@ -66,6 +70,12 @@ public sealed class BusRuntime : IAsyncDisposable
     // I/O 令牌：进入 Connected 时新建，离开 Connected 时取消。中止在途事务。
     private CancellationTokenSource _io = CreateCanceledSource();
 
+    // 待执行的安全停止：从 Connected 安全跳闸时登记，由监督任务（退出后由释放流程）取走执行。受 _stateGate 保护
+    private TaskCompletionSource? _pendingSafeStop;
+
+    // 最近一次安全停止的完成通知；没有待执行的安全停止时为已完成。受 _stateGate 保护
+    private Task _safeStopSettled = Task.CompletedTask;
+
     private TaskCompletionSource _statePulse = NewPulse();
     private Task _supervisor = Task.CompletedTask;
     private int _disposed;
@@ -77,7 +87,8 @@ public sealed class BusRuntime : IAsyncDisposable
         IBusSafetyInterlock interlock,
         ILogger logger,
         BusRuntimeOptions options,
-        TimeProvider time)
+        TimeProvider time,
+        IBusSafeStopHandler? safeStop)
     {
         _descriptor = descriptor;
         _transport = transport;
@@ -86,6 +97,7 @@ public sealed class BusRuntime : IAsyncDisposable
         _logger = logger;
         _options = options;
         _time = time;
+        _safeStop = safeStop;
         _channel = new TransactionChannel(this);
         _events = new EventBroadcaster<BusStateChanged>(options.StateEventCapacity);
     }
@@ -93,13 +105,15 @@ public sealed class BusRuntime : IAsyncDisposable
     /// <summary>
     /// 校验配置、创建（未打开的）物理通道并启动监督任务。初始状态为 Disconnected，不会自动连接。
     /// </summary>
+    /// <param name="safeStopHandler">安全跳闸时、关闭通道前把设备带到安全状态；为 null 时跳闸只关闭通道</param>
     public static Result<BusRuntime> Create(
         BusDescriptor descriptor,
         IBusTransportFactory transportFactory,
         IBusSafetyInterlock interlock,
         ILogger logger,
         BusRuntimeOptions? options = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IBusSafeStopHandler? safeStopHandler = null)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         ArgumentNullException.ThrowIfNull(transportFactory);
@@ -118,7 +132,7 @@ public sealed class BusRuntime : IAsyncDisposable
             return Result<BusRuntime>.Failure(transport.Error);
 
         var runtime = new BusRuntime(
-            descriptor, transport.Value, transportFactory, interlock, logger, options, timeProvider ?? TimeProvider.System);
+            descriptor, transport.Value, transportFactory, interlock, logger, options, timeProvider ?? TimeProvider.System, safeStopHandler);
         runtime._supervisor = Task.Run(runtime.SuperviseAsync);
         return Result<BusRuntime>.Success(runtime);
     }
@@ -209,8 +223,9 @@ public sealed class BusRuntime : IAsyncDisposable
     }
 
     /// <summary>
-    /// 安全跳闸：任何状态下立即锁存 SafeStop、锁定通道、中止在途事务并关闭物理通道。
-    /// 可从任意线程调用，释放后调用为空操作。
+    /// 安全跳闸：任何状态下立即锁存 SafeStop、锁定通道、中止在途事务；随后由监督任务先下发设备安全状态
+    /// （仅从 Connected 跳闸时，见 <see cref="SafeStopSettled"/>），再关闭物理通道。
+    /// 可从任意线程调用（含事务回调内），不等待任何 I/O；释放后调用为空操作。
     /// </summary>
     public Result SafetyTrip(string reason)
     {
@@ -220,6 +235,21 @@ public sealed class BusRuntime : IAsyncDisposable
         var fired = Fire(BusTrigger.SafetyTrip, BusErrors.SafetyTripped(reason));
         CancelSession();
         return ToResult(fired);
+    }
+
+    /// <summary>
+    /// 最近一次安全跳闸的设备安全状态下发结束（成功、失败或超时都算结束）时完成，从不失败；
+    /// 没有待下发的安全状态时为已完成。用于急停后在有限时间内等待设备卸载、再退出进程。
+    /// </summary>
+    public Task SafeStopSettled
+    {
+        get
+        {
+            lock (_stateGate)
+            {
+                return _safeStopSettled;
+            }
+        }
     }
 
     /// <summary>
@@ -414,14 +444,19 @@ public sealed class BusRuntime : IAsyncDisposable
         session.Cancel();
         io.Cancel();
 
+        // 监督任务可能正在下发设备安全状态（自身限时 SafeStopTimeout），等待上限相应放宽
+        var supervisorTimeout = _options.ShutdownTimeout + _options.SafeStopTimeout;
         try
         {
-            await _supervisor.WaitAsync(_options.ShutdownTimeout).ConfigureAwait(false);
+            await _supervisor.WaitAsync(supervisorTimeout).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
-            _logger.LogError("Bus {BusId} 监督任务未在 {Timeout} 内退出，强制关闭物理通道", Id, _options.ShutdownTimeout);
+            _logger.LogError("Bus {BusId} 监督任务未在 {Timeout} 内退出，强制关闭物理通道", Id, supervisorTimeout);
         }
+
+        // 跳闸紧接着释放（如急停后退出程序）时监督任务可能没来得及执行：关闭通道前补做，不能让设备保持带载
+        await RunPendingSafeStopAsync().ConfigureAwait(false);
 
         // 监督任务已退出：尚未执行的重建请求不会再被处理，释放其新通道并通知等待方
         PendingRebuild? orphan;
@@ -459,6 +494,9 @@ public sealed class BusRuntime : IAsyncDisposable
 
         while (!lifetime.IsCancellationRequested)
         {
+            // 安全停止优先于重建与常规状态处理：必须在关闭物理通道之前执行
+            await RunPendingSafeStopAsync().ConfigureAwait(false);
+
             BusState state;
             CancellationToken session;
             PendingRebuild? rebuild;
@@ -533,6 +571,9 @@ public sealed class BusRuntime : IAsyncDisposable
                 Fire(BusTrigger.SafetyTrip, BusErrors.UnhandledException(ex));
                 CancelSession();
 
+                // 不等冷却：设备安全状态越早下发越好
+                await RunPendingSafeStopAsync().ConfigureAwait(false);
+
                 try
                 {
                     await Task.Delay(_options.FaultCooldown, _time, lifetime).ConfigureAwait(false);
@@ -544,6 +585,103 @@ public sealed class BusRuntime : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    /// 取走并执行待下发的设备安全状态（至多执行一次）。在通道锁内经特许通道调用 <see cref="IBusSafeStopHandler"/>，
+    /// 总时限 <see cref="BusRuntimeOptions.SafeStopTimeout"/>（含等锁）；任何失败只记严重日志，从不抛出。
+    /// </summary>
+    /// <remarks>
+    /// 不受生命周期与会话令牌影响：跳闸与释放都会取消它们，而安全状态恰恰要在这时发出。
+    /// 跳闸已取消在途事务的 I/O 令牌，在途事务会很快让出通道锁，等锁通常不会拖满时限。
+    /// </remarks>
+    private async Task RunPendingSafeStopAsync()
+    {
+        TaskCompletionSource? request;
+        lock (_stateGate)
+        {
+            request = _pendingSafeStop;
+            _pendingSafeStop = null;
+        }
+
+        if (request is null)
+            return;
+
+        try
+        {
+            await SafeStopDevicesAsync(_safeStop!).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Bus {BusId} 下发设备安全状态时出现未处理异常，照常关闭物理通道", Id);
+        }
+        finally
+        {
+            request.TrySetResult();
+        }
+    }
+
+    private async Task SafeStopDevicesAsync(IBusSafeStopHandler handler)
+    {
+        var timeout = _options.SafeStopTimeout;
+        var started = _time.GetTimestamp();
+
+        // 安全时限按墙钟计，不随注入的 TimeProvider 停走
+        using var deadline = new CancellationTokenSource(timeout);
+
+        try
+        {
+            await _channelLock.WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogCritical("Bus {BusId} 安全跳闸：{Timeout} 内在途事务未让出通道锁，未能向设备下发安全状态，设备可能仍在输出或带载",
+                Id, timeout);
+            return;
+        }
+
+        try
+        {
+            var descriptor = Descriptor;
+            _logger.LogWarning("Bus {BusId} 安全跳闸：关闭物理通道前向设备下发安全状态（时限 {Timeout}）", Id, timeout);
+
+            _channel.BeginPrivileged(deadline.Token);
+            Task? run = null;
+            try
+            {
+                run = handler.RunAsync(Id, descriptor, _channel, deadline.Token);
+
+                // WaitAsync 兜底：处理程序即便不响应取消，也不能把跳闸拖过时限
+                await run.WaitAsync(deadline.Token).ConfigureAwait(false);
+                _logger.LogWarning("Bus {BusId} 设备安全状态下发结束，耗时 {ElapsedMs:0} ms",
+                    Id, _time.GetElapsedTime(started).TotalMilliseconds);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                _logger.LogCritical("Bus {BusId} 设备安全状态下发超过时限 {Timeout}，未完成的设备放弃，照常关闭物理通道", Id, timeout);
+            }
+            finally
+            {
+                // 结束后特许通道失效：仍未退出的处理程序再碰通道会抛异常，不会在通道关闭后或别的事务里收发
+                _channel.End();
+                if (run is { IsCompleted: false })
+                    ObserveLateFailure(run);
+            }
+        }
+        finally
+        {
+            _channelLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 超时后仍在运行的安全停止处理程序：结束时若出错只记录，避免成为未观察的任务异常
+    /// </summary>
+    private void ObserveLateFailure(Task run)
+        => run.ContinueWith(
+            t => _logger.LogError(t.Exception, "Bus {BusId} 超时放弃的安全停止处理程序随后以异常结束", Id),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private async Task OpenOnceAsync(CancellationToken session)
     {
@@ -735,6 +873,13 @@ public sealed class BusRuntime : IAsyncDisposable
                     else if (transition.From != BusState.Connected && transition.To == BusState.Connected)
                         _io = new CancellationTokenSource();
 
+                    // 只有从 Connected 跳闸时物理通道一定还开着、设备可能正在带载；其他状态下通道已关或正在重建，发不出去
+                    if (transition is { From: BusState.Connected, To: BusState.SafeStop } && _safeStop is not null && _pendingSafeStop is null)
+                    {
+                        _pendingSafeStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        _safeStopSettled = _pendingSafeStop.Task;
+                    }
+
                     onAccepted?.Invoke();
 
                     changed = new BusStateChanged(Id, transition, _time.GetUtcNow(), cause);
@@ -876,6 +1021,9 @@ public sealed class BusRuntime : IAsyncDisposable
         private CancellationToken _tx;
         private int _active;
 
+        // 特许模式：安全停止期间总线已锁存 SafeStop，仍允许读写；只由持有通道锁的安全停止流程开启
+        private int _privileged;
+
         public BusId BusId => owner.Id;
 
         public void Begin(CancellationToken caller, CancellationToken io, CancellationToken tx)
@@ -886,7 +1034,23 @@ public sealed class BusRuntime : IAsyncDisposable
             Volatile.Write(ref _active, 1);
         }
 
-        public void End() => Volatile.Write(ref _active, 0);
+        /// <summary>
+        /// 开始一次安全停止：没有调用方令牌与 I/O 令牌（跳闸时已取消），只受安全停止的总时限约束
+        /// </summary>
+        public void BeginPrivileged(CancellationToken deadline)
+        {
+            _caller = CancellationToken.None;
+            _io = CancellationToken.None;
+            _tx = deadline;
+            Volatile.Write(ref _privileged, 1);
+            Volatile.Write(ref _active, 1);
+        }
+
+        public void End()
+        {
+            Volatile.Write(ref _active, 0);
+            Volatile.Write(ref _privileged, 0);
+        }
 
         public async ValueTask<Result<int>> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
@@ -968,6 +1132,9 @@ public sealed class BusRuntime : IAsyncDisposable
             if (Volatile.Read(ref _active) == 0)
                 throw new InvalidOperationException("IBusChannel 只能在 ExecuteAsync 的事务回调内使用。");
 
+            if (Volatile.Read(ref _privileged) == 1)
+                return null;
+
             // 事务中途总线已离开 Connected（例如心跳丢失），后续操作不得再触碰物理通道
             var state = owner.State;
             return BusStateMachine.AllowsIo(state) ? null : BusErrors.ChannelLocked(state);
@@ -992,7 +1159,11 @@ public sealed class BusRuntime : IAsyncDisposable
                 return BusErrors.ChannelLocked(owner.State);
 
             if (_tx.IsCancellationRequested)
-                return BusErrors.Timeout("事务", owner._options.TransactionTimeout);
+            {
+                return Volatile.Read(ref _privileged) == 1
+                    ? BusErrors.Timeout("安全停止", owner._options.SafeStopTimeout)
+                    : BusErrors.Timeout("事务", owner._options.TransactionTimeout);
+            }
 
             if (cancellationToken.IsCancellationRequested)
                 return null;
