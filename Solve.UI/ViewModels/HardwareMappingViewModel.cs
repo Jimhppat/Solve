@@ -48,7 +48,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
     public HardwareMappingViewModel()
     {
-        Draft = new MappingDraftViewModel(CheckedChannels, () => _purposeInput);
+        Draft = new MappingDraftViewModel(CheckedChannels, () => _purposeInput, OnDraftMapped);
         SelectVisibleChannelsCommand = new RelayCommand(() => SetVisibleChannels(true));
         ClearChannelsCommand = new RelayCommand(() => SetVisibleChannels(false));
     }
@@ -285,7 +285,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
     private async Task MapAsync(MappingChannelViewModel row)
     {
-        if (_inspector is not { } inspector || _selectedItem?.Node is not { Level: not TopologyLevel.System } node || _busy || row.IsMapped)
+        if (_inspector is not { } inspector || _selectedItem?.Node is not { Level: not TopologyLevel.System } node || _busy || row.IsMappedAt(node.Id))
             return;
 
         var channel = row.Channel;
@@ -356,18 +356,21 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             {
                 foreach (var index in group.Enabled())
                 {
+                    // 一路通道可以接到多个位置：已映射的通道照样能再关联、能勾选进映射草稿
                     var channel = new ChannelRef(module.Device.Id, group.Key, index);
-                    TopologyNode? mapped = null;
-                    if (map.TryGetByChannel(channel, out var wire) && map.Topology is { } topology && topology.TryGetNode(wire.Node, out var node))
-                        mapped = node;
-                    else
-                        available.Add(channel);
+                    available.Add(channel);
+                    var mapped = new List<(TopologyNode Node, Wire Wire)>();
+                    foreach (var wire in map.GetByChannel(channel))
+                    {
+                        if (map.Topology is { } topology && topology.TryGetNode(wire.Node, out var node))
+                            mapped.Add((node, wire));
+                    }
 
-                    if (_unmappedOnly && mapped is not null)
+                    if (_unmappedOnly && mapped.Count > 0)
                         continue;
 
-                    channels.Add(new MappingChannelViewModel(channel, moduleText, group.ChannelName(index), group.Kind.DisplayName(), mapped, wire,
-                        MapAsync, Locate, () => CanMapHere, OnChannelCheckedChanged)
+                    channels.Add(new MappingChannelViewModel(channel, moduleText, group.ChannelName(index), group.Kind.DisplayName(), mapped,
+                        MapAsync, Locate, CanMapTo, OnChannelCheckedChanged)
                     {
                         IsSelectable = _isDraftMode,
                         Kind = group.Kind,
@@ -382,7 +385,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             rows.AddRange(channels);
         }
 
-        // 已映射或已不存在的通道不再算勾选（映射草稿确认后，接上的通道自动取消勾选）
+        // 已不存在的通道不再算勾选（映射草稿确认后接上的通道由 OnDraftMapped 取消勾选）
         _checkedChannels.IntersectWith(available);
         foreach (var row in rows.OfType<MappingChannelViewModel>())
             row.SetChecked(_checkedChannels.Contains(row.Channel));
@@ -393,10 +396,27 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 映射草稿用的通道：硬件列表中勾选的、尚未映射的通道，按列表顺序
+    /// 映射草稿用的通道：硬件列表中勾选的通道（已映射的也可以，一路通道可以接到多个位置），按列表顺序
     /// </summary>
     private IReadOnlyList<MappingChannelViewModel> CheckedChannels()
-        => _hardware.OfType<MappingChannelViewModel>().Where(r => r.IsChecked && !r.IsMapped).ToList();
+        => _hardware.OfType<MappingChannelViewModel>().Where(r => r.IsChecked).ToList();
+
+    /// <summary>
+    /// 映射草稿确认后：接上的通道取消勾选，免得下一次组装又用到它们
+    /// </summary>
+    private void OnDraftMapped(IReadOnlyCollection<ChannelRef> channels)
+    {
+        _checkedChannels.ExceptWith(channels);
+        foreach (var row in _hardware.OfType<MappingChannelViewModel>().Where(r => channels.Contains(r.Channel)))
+            row.SetChecked(false);
+        Draft.OnExternalChanged();
+    }
+
+    /// <summary>
+    /// 这路通道能关联到当前位置：选中了可接线的位置，且这路通道还没接在这个位置上
+    /// </summary>
+    private bool CanMapTo(MappingChannelViewModel row)
+        => CanMapHere && _selectedItem?.Node is { } node && !row.IsMappedAt(node.Id);
 
     private void OnChannelCheckedChanged(MappingChannelViewModel row)
     {
@@ -409,7 +429,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
     private void SetVisibleChannels(bool value)
     {
-        foreach (var row in _hardware.OfType<MappingChannelViewModel>().Where(r => !r.IsMapped))
+        foreach (var row in _hardware.OfType<MappingChannelViewModel>())
         {
             row.SetChecked(value);
             if (value)
@@ -475,27 +495,29 @@ public sealed class MappingModuleViewModel(string header) : MappingRowViewModel
 }
 
 /// <summary>
-/// 一路通道：名称（别名）、功能、映射到的位置；未映射时可关联到当前位置，已映射时可定位到那个位置
+/// 一路通道：名称（别名）、功能、映射到的位置。一路通道可以接到多个位置：随时可关联到当前位置（当前位置已接过除外），
+/// 已映射时可定位到第一个位置
 /// </summary>
 public sealed class MappingChannelViewModel : MappingRowViewModel
 {
-    private readonly Func<bool> _canMapHere;
     private readonly Action<MappingChannelViewModel> _onCheckedChanged;
+    private readonly IReadOnlyList<TopologyNodeId> _mappedNodes;
     private bool _isChecked;
     private bool _isSelectable;
 
     /// <param name="moduleText">"总线 · 模块"，映射草稿里显示</param>
+    /// <param name="mapped">这路通道接到的位置（按接线顺序）及接线</param>
+    /// <param name="canMapTo">能否关联到当前位置</param>
     /// <param name="onCheckedChanged">勾选变化（映射草稿取通道）</param>
     public MappingChannelViewModel(
         ChannelRef channel,
         string moduleText,
         string name,
         string kindText,
-        TopologyNode? mapped,
-        Wire? wire,
+        IReadOnlyList<(TopologyNode Node, Wire Wire)> mapped,
         Func<MappingChannelViewModel, Task> onMap,
         Action<MappingChannelViewModel> onLocate,
-        Func<bool> canMapHere,
+        Func<MappingChannelViewModel, bool> canMapTo,
         Action<MappingChannelViewModel> onCheckedChanged)
     {
         Channel = channel;
@@ -503,27 +525,33 @@ public sealed class MappingChannelViewModel : MappingRowViewModel
         _onCheckedChanged = onCheckedChanged;
         NameText = name;
         KindText = kindText;
-        MappedNode = mapped?.Id;
-        _canMapHere = canMapHere;
-        MappedText = mapped is null
-            ? "未映射"
-            : $"{mapped.Level.DisplayName()} {mapped.Address}{(mapped.Name is { } n ? $"（{n}）" : string.Empty)}" +
-              $"{(wire?.Purpose is { } purpose ? $" · {purpose}" : string.Empty)}";
-        MapCommand = new AsyncRelayCommand(() => onMap(this), () => !IsMapped && _canMapHere());
+        _mappedNodes = mapped.Select(m => m.Node.Id).ToList();
+        MappedNode = _mappedNodes.Count > 0 ? _mappedNodes[0] : null;
+        MappedText = mapped.Count == 0 ? "未映射" : Describe(mapped[0].Node, mapped[0].Wire) + (mapped.Count > 1 ? $" 等 {mapped.Count} 个位置" : string.Empty);
+        MapCommand = new AsyncRelayCommand(() => onMap(this), () => canMapTo(this));
         LocateCommand = new RelayCommand(() => onLocate(this), () => IsMapped);
     }
+
+    private static string Describe(TopologyNode node, Wire wire)
+        => $"{node.Level.DisplayName()} {node.Address}{(node.Name is { } n ? $"（{n}）" : string.Empty)}" +
+           $"{(wire.Purpose is { } purpose ? $" · {purpose}" : string.Empty)}";
+
+    /// <summary>
+    /// 这路通道已接在 <paramref name="node"/> 上
+    /// </summary>
+    public bool IsMappedAt(TopologyNodeId node) => _mappedNodes.Contains(node);
 
     public ChannelRef Channel { get; }
 
     /// <summary>
-    /// 通道功能：映射草稿按接点配对时只配同功能的接点
+    /// 通道功能：映射草稿按接点配对时优先配同功能的接点
     /// </summary>
     public ChannelKind? Kind { get; init; }
 
     public string ModuleText { get; }
 
     /// <summary>
-    /// 映射草稿模式下未映射的通道可以勾选
+    /// 映射草稿模式下通道可以勾选
     /// </summary>
     public bool IsSelectable
     {
@@ -535,7 +563,7 @@ public sealed class MappingChannelViewModel : MappingRowViewModel
         }
     }
 
-    public bool ShowCheckBox => _isSelectable && !IsMapped;
+    public bool ShowCheckBox => _isSelectable;
 
     public bool IsChecked
     {
@@ -560,11 +588,12 @@ public sealed class MappingChannelViewModel : MappingRowViewModel
 
     public string KindText { get; }
 
+    /// <summary>
+    /// 接到的第一个位置（"定位"跳到这里）；未映射为 null
+    /// </summary>
     public TopologyNodeId? MappedNode { get; }
 
     public bool IsMapped => MappedNode is not null;
-
-    public bool IsUnmapped => !IsMapped;
 
     public string MappedText { get; }
 

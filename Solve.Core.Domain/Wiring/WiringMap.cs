@@ -26,9 +26,8 @@ public readonly record struct PortCoverage(RequiredPort Required, EffectiveWire?
 /// <para>规则（结构性，与驱动无关）：</para>
 /// <list type="bullet">
 /// <item>落点必须在当前拓扑中，且不是系统根。</item>
-/// <item>通道独占：一路通道只能接到一个位置（一根线只到一个地方）；几个位置共用一路时接在它们的上级。</item>
-/// <item>路径唯一：同一条位置路径（祖先 ↔ 后代，含同一位置）上，同一功能 + 同一用途只能有一路。
-/// 否则产品会同时从上级和自身得到两路供电 / 负载，或采集点含糊不清。</item>
+/// <item>同一路通道在同一个位置只接一次。一路通道可以接到多个位置（共用），同一路径上也可以有多路相同功能、相同用途的接线：
+/// 映射不做防呆拦截。按（功能，用途）下发命令时如果匹配到多路，由命令服务拒绝（无法确定目标）。</item>
 /// </list>
 /// <para>通道是否在驱动中声明、功能是否与声明一致，需要查驱动目录，由应用服务在调用前校验。</para>
 /// <para>不可变：通信、业务、UI 线程可无锁并发读取；变更即生成新实例整体替换。</para>
@@ -38,7 +37,7 @@ public sealed class WiringMap
     private static readonly IReadOnlyList<Wire> NoWires = [];
 
     private readonly Dictionary<TopologyNodeId, Wire[]> _byNode;
-    private readonly Dictionary<ChannelRef, Wire> _byChannel;
+    private readonly Dictionary<ChannelRef, Wire[]> _byChannel;
     private readonly Dictionary<WireId, Wire> _byId;
 
     private WiringMap(EquipmentTopology? topology, List<Wire> attached, List<Wire> detached)
@@ -61,7 +60,7 @@ public sealed class WiringMap
 
         All = attached;
         _byId = attached.ToDictionary(w => w.Id);
-        _byChannel = attached.ToDictionary(w => w.Channel);
+        _byChannel = attached.GroupBy(w => w.Channel).ToDictionary(g => g.Key, g => g.ToArray());
         _byNode = attached.GroupBy(w => w.Node).ToDictionary(g => g.Key, g => g.ToArray());
     }
 
@@ -78,14 +77,14 @@ public sealed class WiringMap
     public IReadOnlyList<Wire> All { get; }
 
     /// <summary>
-    /// 无法落位的接线：位置已不在拓扑中、落在系统根，或与先读到的接线争用同一路通道。不参与任何查询，供日志与诊断。
+    /// 无法落位的接线：位置已不在拓扑中、落在系统根，或与先读到的接线在同一位置重复接同一路通道。不参与任何查询，供日志与诊断。
     /// </summary>
     public IReadOnlyList<Wire> Detached { get; }
 
     public int Count => All.Count;
 
     /// <summary>
-    /// 按拓扑定位一组接线（如从存储读回）。不校验路径唯一：读回的数据按原样显示，规则只拦新的修改。
+    /// 按拓扑定位一组接线（如从存储读回）
     /// </summary>
     public static WiringMap Create(EquipmentTopology? topology, IEnumerable<Wire> wires)
     {
@@ -93,14 +92,14 @@ public sealed class WiringMap
 
         var attached = new List<Wire>();
         var detached = new List<Wire>();
-        var channels = new HashSet<ChannelRef>();
+        var placedChannels = new HashSet<(TopologyNodeId, ChannelRef)>();
         foreach (var wire in wires)
         {
             ArgumentNullException.ThrowIfNull(wire);
             var placed = topology is not null
                 && topology.TryGetNode(wire.Node, out var node)
                 && node.Level != TopologyLevel.System
-                && channels.Add(wire.Channel);
+                && placedChannels.Add((wire.Node, wire.Channel));
             (placed ? attached : detached).Add(wire);
         }
 
@@ -109,7 +108,10 @@ public sealed class WiringMap
 
     public bool TryGet(WireId id, [NotNullWhen(true)] out Wire? wire) => _byId.TryGetValue(id, out wire);
 
-    public bool TryGetByChannel(ChannelRef channel, [NotNullWhen(true)] out Wire? wire) => _byChannel.TryGetValue(channel, out wire);
+    /// <summary>
+    /// 接在这路通道上的全部接线（一路通道可以接到多个位置）；没接为空
+    /// </summary>
+    public IReadOnlyList<Wire> GetByChannel(ChannelRef channel) => _byChannel.TryGetValue(channel, out var wires) ? wires : NoWires;
 
     /// <summary>
     /// 直接接在该位置上的接线
@@ -149,27 +151,36 @@ public sealed class WiringMap
             return [];
         }
 
+        // 两轮配对，每路接线只满足一个接点：先按（功能，用途）配；剩下的接点再只按用途配还没用过的接线
+        // （映射不按功能拦截，接点名对上即视为接上，功能不同时界面上照样显示接线的实际功能）
         var effective = GetEffective(nodeId);
         var result = new PortCoverage[node.RequiredPorts.Count];
+        var used = new bool[effective.Count];
+        for (var i = 0; i < result.Length; i++)
+            result[i] = new PortCoverage(node.RequiredPorts[i], Take(i, sameKind: true));
         for (var i = 0; i < result.Length; i++)
         {
-            var required = node.RequiredPorts[i];
-
-            // 路径唯一规则保证同一（功能，用途）在一条路径上最多一路，取第一路即可
-            EffectiveWire? match = null;
-            foreach (var wire in effective)
-            {
-                if (required.Port.Matches(wire.Wire.Kind, wire.Wire.PurposeKey))
-                {
-                    match = wire;
-                    break;
-                }
-            }
-
-            result[i] = new PortCoverage(required, match);
+            if (!result[i].IsConnected)
+                result[i] = result[i] with { Wire = Take(i, sameKind: false) };
         }
 
         return result;
+
+        EffectiveWire? Take(int port, bool sameKind)
+        {
+            var required = node.RequiredPorts[port].Port;
+            for (var w = 0; w < effective.Count; w++)
+            {
+                var wire = effective[w].Wire;
+                if (!used[w] && wire.PurposeKey == required.PurposeKey && (!sameKind || wire.Kind == required.Kind))
+                {
+                    used[w] = true;
+                    return effective[w];
+                }
+            }
+
+            return null;
+        }
     }
 
     /// <summary>
@@ -205,7 +216,7 @@ public sealed class WiringMap
     }
 
     /// <summary>
-    /// 新增一批接线：逐条校验落点、通道独占与路径唯一（含批内彼此之间），全部通过才返回新快照。
+    /// 新增一批接线：逐条校验落点、字段与"同一位置不重复接同一路通道"（含批内彼此之间），全部通过才返回新快照。
     /// </summary>
     /// <param name="describe">把通道写成人读的文字（如"电源-01 输出"），用于冲突说明；不提供时用组标识与通道号</param>
     public Result<WiringMap> WithAdded(IReadOnlyList<Wire> added, Func<ChannelRef, string>? describe = null)
@@ -222,24 +233,21 @@ public sealed class WiringMap
         if (fieldErrors.Count > 0)
             return Result<WiringMap>.Failure(WiringErrors.InvalidWire(fieldErrors));
 
-        // 逐行的冲突说明合成一条：先报通道占用，再报路径冲突
-        var channelConflicts = problems.Where(p => p?.Code == WiringErrors.ChannelInUseCode).Select(p => p!.Message).ToList();
-        if (channelConflicts.Count > 0)
-            return Result<WiringMap>.Failure(WiringErrors.ChannelInUse(channelConflicts));
-        var pathConflicts = problems.Where(p => p?.Code == WiringErrors.PathConflictCode).Select(p => p!.Message).ToList();
-        if (pathConflicts.Count > 0)
-            return Result<WiringMap>.Failure(WiringErrors.PathConflict(pathConflicts));
+        // 逐行的重复说明合成一条
+        var duplicates = problems.Where(p => p?.Code == WiringErrors.ChannelInUseCode).Select(p => p!.Message).ToList();
+        if (duplicates.Count > 0)
+            return Result<WiringMap>.Failure(WiringErrors.ChannelInUse(duplicates));
 
         return Result<WiringMap>.Success(new WiringMap(topology, [.. All, .. added], [.. Detached]));
     }
 
     /// <summary>
     /// 逐条校验一批待新增的接线（不改变快照），返回与 <paramref name="added"/> 一一对应的问题，没有问题为 null。
-    /// 批内按顺序判定：先出现的一条占用通道 / 路径，后面与它冲突的那条报错。用于映射草稿逐行标出问题。
+    /// 批内按顺序判定：先出现的一条先接上，后面在同一位置重复接同一路通道的那条报错。用于映射草稿逐行标出问题。
     /// </summary>
     /// <remarks>
     /// 各行问题的 Code：Wiring.NodeNotFound、Wiring.SystemNode、Wiring.InvalidWire（字段），
-    /// Wiring.ChannelInUse、Wiring.PathConflict（Message 是这一行的冲突说明，不是汇总文字）。
+    /// Wiring.ChannelInUse（同一位置重复接同一路通道；Message 是这一行的说明，不是汇总文字）。
     /// </remarks>
     public IReadOnlyList<Error?> Check(IReadOnlyList<Wire> added, Func<ChannelRef, string>? describe = null)
     {
@@ -253,14 +261,7 @@ public sealed class WiringMap
             return problems;
         }
 
-        var byChannel = new Dictionary<ChannelRef, (Wire Wire, TopologyNode Node)>();
-        foreach (var wire in All)
-        {
-            if (topology.TryGetNode(wire.Node, out var node))
-                byChannel[wire.Channel] = (wire, node);
-        }
-
-        var byKey = BuildKeyIndex(topology, All);
+        var placed = All.Select(w => (w.Node, w.Channel)).ToHashSet();
         for (var i = 0; i < added.Count; i++)
         {
             var wire = added[i] ?? throw new ArgumentException("接线不能为 null。", nameof(added));
@@ -282,33 +283,21 @@ public sealed class WiringMap
                 continue;
             }
 
-            if (byChannel.TryGetValue(wire.Channel, out var holder))
-            {
-                problems[i] = new Error(WiringErrors.ChannelInUseCode, $"{describe(wire.Channel)} 已接到 {holder.Node.Address}");
-                continue;
-            }
-
-            if (FindPathConflict(byKey, wire, node) is { } other)
-            {
-                problems[i] = new Error(WiringErrors.PathConflictCode, $"{node.Address} 与 {other.Node.Address} 都有「{wire.KindText}」");
-                continue;
-            }
-
-            byChannel[wire.Channel] = (wire, node);
-            AddToKeyIndex(byKey, wire, node);
+            if (!placed.Add((wire.Node, wire.Channel)))
+                problems[i] = new Error(WiringErrors.ChannelInUseCode, $"{describe(wire.Channel)} 已接在 {node.Address}");
         }
 
         return problems;
     }
 
     /// <summary>
-    /// 修改接线的用途与线号（落点与通道不变）。改用途可能与同一路径上的其他接线冲突，同样校验。
+    /// 修改接线的用途与线号（落点与通道不变）
     /// </summary>
     public Result<WiringMap> WithUpdated(WireId id, string? purpose, string? label)
     {
         if (Topology is not { } topology)
             return Result<WiringMap>.Failure(WiringErrors.NoTopology());
-        if (!_byId.TryGetValue(id, out var existing) || !topology.TryGetNode(existing.Node, out var node))
+        if (!_byId.TryGetValue(id, out var existing) || !topology.TryGetNode(existing.Node, out _))
             return Result<WiringMap>.Failure(WiringErrors.WireNotFound());
 
         var updated = existing with { Purpose = Wire.NormalizeText(purpose), Label = Wire.NormalizeText(label) };
@@ -317,9 +306,6 @@ public sealed class WiringMap
             return Result<WiringMap>.Failure(WiringErrors.InvalidWire(errors));
 
         var others = All.Where(w => w.Id != id).ToList();
-        if (FindPathConflict(BuildKeyIndex(topology, others), updated, node) is { } other)
-            return Result<WiringMap>.Failure(WiringErrors.PathConflict([$"{node.Address} 与 {other.Node.Address} 都有「{updated.KindText}」"]));
-
         others.Add(updated);
         return Result<WiringMap>.Success(new WiringMap(topology, others, [.. Detached]));
     }
@@ -332,73 +318,5 @@ public sealed class WiringMap
         ArgumentNullException.ThrowIfNull(ids);
         var removed = ids.ToHashSet();
         return new WiringMap(Topology, All.Where(w => !removed.Contains(w.Id)).ToList(), [.. Detached]);
-    }
-
-    // ==================== 路径唯一 ====================
-
-    private static PathIndex BuildKeyIndex(EquipmentTopology topology, IEnumerable<Wire> wires)
-    {
-        var index = new PathIndex();
-        foreach (var wire in wires)
-        {
-            if (topology.TryGetNode(wire.Node, out var node))
-                index.Add(wire, node);
-        }
-
-        return index;
-    }
-
-    private static void AddToKeyIndex(PathIndex index, Wire wire, TopologyNode node) => index.Add(wire, node);
-
-    private static (Wire Wire, TopologyNode Node)? FindPathConflict(PathIndex index, Wire wire, TopologyNode node)
-        => index.FindConflict(wire, node);
-
-    /// <summary>
-    /// 按（功能，用途）分组的路径索引。查一个位置是否与已有接线在同一路径上只需 O(层数)：
-    /// 记下每条接线的落点，以及落点的每个上级"下面有接线"。批量接线上万路时不会退化成两两比较。
-    /// </summary>
-    private sealed class PathIndex
-    {
-        private readonly Dictionary<(ChannelKind, string), Dictionary<TopologyAddress, (Wire, TopologyNode)>> _wiredAt = [];
-        private readonly Dictionary<(ChannelKind, string), Dictionary<TopologyAddress, (Wire, TopologyNode)>> _wiredBelow = [];
-
-        public void Add(Wire wire, TopologyNode node)
-        {
-            var key = (wire.Kind, wire.PurposeKey);
-            Get(_wiredAt, key).TryAdd(node.Address, (wire, node));
-
-            var below = Get(_wiredBelow, key);
-            for (var level = TopologyLevel.Cabinet; level < node.Level; level++)
-                below.TryAdd(node.Address.AncestorAt(level), (wire, node));
-        }
-
-        /// <summary>
-        /// 同一功能、同一用途的接线中，落点与 <paramref name="node"/> 在同一条路径上（自身或上级有，或下级有）的一条
-        /// </summary>
-        public (Wire Wire, TopologyNode Node)? FindConflict(Wire wire, TopologyNode node)
-        {
-            var key = (wire.Kind, wire.PurposeKey);
-            if (_wiredAt.TryGetValue(key, out var wiredAt))
-            {
-                for (var level = TopologyLevel.Cabinet; level <= node.Level; level++)
-                {
-                    if (wiredAt.TryGetValue(node.Address.AncestorAt(level), out var found))
-                        return found;
-                }
-            }
-
-            return _wiredBelow.TryGetValue(key, out var below) && below.TryGetValue(node.Address, out var under)
-                ? under
-                : null;
-        }
-
-        private static Dictionary<TopologyAddress, (Wire, TopologyNode)> Get(
-            Dictionary<(ChannelKind, string), Dictionary<TopologyAddress, (Wire, TopologyNode)>> map,
-            (ChannelKind, string) key)
-        {
-            if (!map.TryGetValue(key, out var inner))
-                map[key] = inner = [];
-            return inner;
-        }
     }
 }

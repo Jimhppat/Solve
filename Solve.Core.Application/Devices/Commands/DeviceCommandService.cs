@@ -238,7 +238,7 @@ public sealed class DeviceCommandService
 
     /// <summary>
     /// 确认时与执行时解析到的是同一个目标：同一路接线、同一个落点、同一个会话（模块与驱动未被重新绑定）、
-    /// 同一条命令声明与通道、相同的受影响范围
+    /// 同一条命令声明与通道、相同的受影响范围（含共用这路通道的位置）
     /// </summary>
     private static bool SameTarget(DeviceCommandPlan confirmed, DeviceCommandPlan current)
         => confirmed.Wire.Id == current.Wire.Id
@@ -247,6 +247,7 @@ public sealed class DeviceCommandService
            && confirmed.Command == current.Command
            && confirmed.Channel == current.Channel
            && confirmed.AffectedProducts == current.AffectedProducts
+           && confirmed.SharedWith.Select(n => n.Id).SequenceEqual(current.SharedWith.Select(n => n.Id))
            && confirmed.RequiresConfirmation == current.RequiresConfirmation;
 
     // ==================== 解析与联锁 ====================
@@ -260,7 +261,7 @@ public sealed class DeviceCommandService
         if (map.Topology is not { } topology || !topology.TryGetNode(request.Node, out var target))
             return Result<DeviceCommandPlan>.Failure(WiringErrors.NodeNotFound());
 
-        // 同一路径上同功能同用途只能有一路（接线规则保证），这里仍按"恰好一路"校验，多于一路即拒绝
+        // 映射不拦截同一路径上的同功能同用途接线：命令必须恰好匹配一路，多于一路无法确定目标即拒绝
         var purposeKey = Wire.NormalizeText(request.Purpose)?.ToUpperInvariant() ?? string.Empty;
         var matches = map.GetEffective(target.Id)
             .Where(e => e.Wire.Kind == request.Kind && e.Wire.PurposeKey == purposeKey)
@@ -317,6 +318,26 @@ public sealed class DeviceCommandService
                 command.Name, $"{source.Level.DisplayName()} {source.Address}", $"{disabled.Level.DisplayName()} {disabled.Address}"));
         }
 
+        // 一路通道可以接到多个位置：命令同样作用到共用这路通道的其他位置，输出类命令对它们做同样的停用联锁
+        var shared = new List<TopologyNode>();
+        foreach (var other in map.GetByChannel(wire.Channel))
+        {
+            if (other.Id != wire.Id && topology.TryGetNode(other.Node, out var node))
+                shared.Add(node);
+        }
+
+        if (command.Safety is CommandSafety.Output or CommandSafety.Hazardous)
+        {
+            foreach (var node in shared)
+            {
+                if ((node.IsEffectivelyEnabled ? FindDisabledBelow(topology, node) : node) is { } sharedDisabled)
+                {
+                    return Result<DeviceCommandPlan>.Failure(DeviceCommandErrors.SubtreeDisabled(
+                        command.Name, $"共用通道「{channelText}」", $"{sharedDisabled.Level.DisplayName()} {sharedDisabled.Address}"));
+                }
+            }
+        }
+
         var affected = source.Level == TopologyLevel.Product ? 1 : topology.GetDescendants(source.Address, TopologyLevel.Product).Count;
         var busName = _buses.GetRuntime(binding.Device.BusId) is { IsSuccess: true } runtime ? runtime.Value.Descriptor.Name : "未知总线";
         var frozen = request with { Arguments = request.Arguments.ToFrozenDictionary(StringComparer.Ordinal) };
@@ -333,6 +354,7 @@ public sealed class DeviceCommandService
             $"{busName} · {binding.Device.Name}",
             channelText,
             affected,
+            shared,
             _options.IsHardware,
             _time.GetUtcNow() + _options.ConfirmationLifetime));
     }

@@ -9,11 +9,11 @@ using Solve.Core.Domain.Wiring;
 namespace Solve.Adapters.Persistence.Wiring;
 
 /// <summary>
-/// 基于 topology_wires 表（结构版本 v6）的接线仓储。
+/// 基于 topology_wires 表（结构版本 v6，v9 改为按位置唯一）的接线仓储。
 /// </summary>
 /// <remarks>
 /// 每次操作使用独立连接（连接池复用句柄），无共享可变状态，可被多线程并发调用。
-/// 通道独占由唯一索引保证：并发接同一路通道时只有一个成功，不依赖先查后写。
+/// "同一位置不重复接同一路通道"由唯一索引保证：并发重复时只有一个成功，不依赖先查后写。
 /// </remarks>
 public sealed class SqliteWiringRepository : IWiringRepository
 {
@@ -120,7 +120,7 @@ public sealed class SqliteWiringRepository : IWiringRepository
         }
         catch (SqliteException ex) when (IsConstraint(ex, SqliteConstraintUnique) || IsConstraint(ex, SqliteConstraintForeignKey))
         {
-            _logger.LogWarning("新增 {Count} 条接线被约束拒绝（通道已占用，或位置、模块已不存在）：SQLite {Code}/{ExtendedCode}",
+            _logger.LogWarning("新增 {Count} 条接线被约束拒绝（同一位置重复接同一路通道，或位置、模块已不存在）：SQLite {Code}/{ExtendedCode}",
                 wires.Count, ex.SqliteErrorCode, ex.SqliteExtendedErrorCode);
             return Result.Failure(WiringErrors.StorageConflict());
         }

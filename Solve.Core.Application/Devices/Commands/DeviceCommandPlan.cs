@@ -89,9 +89,11 @@ public sealed class DeviceCommandPlan
         string moduleText,
         string channelText,
         int affectedProducts,
+        IReadOnlyList<TopologyNode> sharedWith,
         bool isHardware,
         DateTimeOffset expiresAt)
     {
+        SharedWith = sharedWith;
         Owner = owner;
         Request = request;
         Target = target;
@@ -154,6 +156,11 @@ public sealed class DeviceCommandPlan
     /// </summary>
     public int AffectedProducts { get; }
 
+    /// <summary>
+    /// 同一路通道还接在的其他位置（一路通道可以接到多个位置）：命令同样作用到它们
+    /// </summary>
+    public IReadOnlyList<TopologyNode> SharedWith { get; }
+
     public bool IsHardware { get; }
 
     /// <summary>
@@ -179,7 +186,8 @@ public sealed class DeviceCommandPlan
     /// </summary>
     public string Describe()
     {
-        var lines = new List<string>(6)
+        const int listed = 3;
+        var lines = new List<string>(7)
         {
             $"「{CommandName}」（{Safety.DisplayName()}）",
             $"位置：{Target.Level.DisplayName()} {Target.Address}",
@@ -188,8 +196,14 @@ public sealed class DeviceCommandPlan
                 : $"接线：{Wire.KindText}，来自{Source.Level.DisplayName()} {Source.Address}",
             $"通道：{ModuleText}  {ChannelText}",
             $"影响：{ScopeText}",
-            $"模式：{(IsHardware ? "实机" : "仿真")}",
         };
+        if (SharedWith.Count > 0)
+        {
+            lines.Add($"共用：这路通道还接在 {string.Join("、", SharedWith.Take(listed).Select(n => $"{n.Level.DisplayName()} {n.Address}"))}" +
+                      $"{(SharedWith.Count > listed ? $" 等 {SharedWith.Count} 个位置" : string.Empty)}，会同时动作");
+        }
+
+        lines.Add($"模式：{(IsHardware ? "实机" : "仿真")}");
         return string.Join(Environment.NewLine, lines);
     }
 

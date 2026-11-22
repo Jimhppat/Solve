@@ -173,6 +173,18 @@ public sealed class SqliteDatabase
         """
         ALTER TABLE topology_nodes ADD COLUMN ports TEXT NOT NULL DEFAULT '[]';
         """,
+
+        // v9：取消通道独占，一路通道可以接到多个位置（共用）；同一位置仍不能重复接同一路通道。
+        // 只换索引、不动既有数据：原唯一索引保证的数据天然满足新约束。按模块的普通索引保留级联删除时的查找效率。
+        """
+        DROP INDEX ux_topology_wires_channel;
+
+        CREATE UNIQUE INDEX ux_topology_wires_node_channel
+            ON topology_wires (node_id, device_id, channel_group, channel_index);
+
+        CREATE INDEX ix_topology_wires_device
+            ON topology_wires (device_id, channel_group, channel_index);
+        """,
     ];
 
     public static int LatestSchemaVersion => Migrations.Length;

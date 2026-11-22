@@ -338,6 +338,39 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
             service.Prepare(PowerCommand(Node("C01-L01-S02-F01-P02"), SamplePowerDriver.OutputOnKey)).Error.Code);
     }
 
+    /// <summary>
+    /// 映射不做防呆后：一路通道共用到多个位置时，确认文案写明会同时动作的位置，共用的位置停用时输出类命令被拒绝；
+    /// 同一路径上同功能同用途多于一路时，命令无法确定目标而拒绝
+    /// </summary>
+    [Fact]
+    public async Task SharedChannel_IsDescribed_DisabledSharerBlocksOutput_AndAmbiguousTargetIsRejected()
+    {
+        var (power, relay) = await WireDefaultAsync();
+        SetOnline(power, relay);
+        var service = Service();
+        var product = Node("C01-L01-S01-F01-P01");
+        await WireAsync("C01-L02-S01-F01-P01", new ChannelRef(relay.Id, TestRelayDriver.Group, 3), purpose: "K1");
+
+        var plan = service.Prepare(RelayCommand(product, TestRelayDriver.On));
+        Assert.True(plan.IsSuccess, plan.IsFailure ? plan.Error.Message : null);
+        Assert.Equal([Node("C01-L02-S01-F01-P01").Id], plan.Value.SharedWith.Select(n => n.Id));
+        Assert.Contains("共用：这路通道还接在 产品位 C01-L02-S01-F01-P01，会同时动作", plan.Value.Describe());
+
+        var disable = _topology.PlanNodeEdit(Node("C01-L02-S01-F01-P01").Id, new TopologyNodeEdit(null, false)).Value;
+        Assert.True((await _topology.SaveAsync(disable, CancellationToken.None)).IsSuccess);
+        await WaitUntilAsync(() => _wiring.Current.Topology?.GetNode(TopologyAddress.Parse("C01-L02-S01-F01-P01")).Value.IsEnabled == false);
+
+        var blocked = service.Prepare(RelayCommand(Node("C01-L01-S01-F01-P01"), TestRelayDriver.On));
+        Assert.Equal(DeviceCommandErrors.SubtreeDisabledCode, blocked.Error.Code);
+        Assert.Contains("C01-L02-S01-F01-P01", blocked.Error.Message);
+
+        // 层位上再接一路同为"切换 K1"：P01 上匹配到 2 路，拒绝
+        await WireAsync("C01-L01", new ChannelRef(relay.Id, TestRelayDriver.Group, 4), purpose: "K1");
+        var ambiguous = service.Prepare(RelayCommand(Node("C01-L01-S01-F01-P01"), TestRelayDriver.Off));
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, ambiguous.Error.Code);
+        Assert.Contains("2 路", ambiguous.Error.Message);
+    }
+
     [Fact]
     public async Task Interlock_IsCheckedAgainAtExecution()
     {

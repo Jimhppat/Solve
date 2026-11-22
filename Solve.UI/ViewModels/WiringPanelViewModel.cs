@@ -240,7 +240,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             if (!SetProperty(ref _selectedGroup, value))
                 return;
 
-            // 默认第一路空闲通道；全部已接时停在 1，保存时由服务报出占用情况
+            // 默认第一路还没接线的通道；全部已接时停在 1（一路通道可以接到多个位置）
             _channelInput = FirstFreeChannel() ?? (value is null ? null : 1);
             OnPropertyChanged(nameof(ChannelInput));
             OnPropertyChanged(nameof(ChannelMax));
@@ -864,17 +864,26 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         }
 
         var rows = inspector.Wiring.Current.GetPortCoverage(node.Id)
-            .Select(p => new PortStatusRow(
-                p.Required.Port.DisplayText,
-                p.Wire is { } wire
-                    ? wire.Source.Id == node.Id ? "已接" : $"已接（接在 {wire.Source.Address}）"
-                    : "未接",
-                p.IsConnected))
+            .Select(p => new PortStatusRow(p.Required.Port.DisplayText, StateText(p), p.IsConnected))
             .ToList();
 
         // 内容没变时不替换列表：定时刷新不让界面闪动
         if (!rows.SequenceEqual(_portRows))
             PortRows = rows;
+
+        // "已接"，接线来自上级或功能与接点不同时写明（映射不按功能拦截，接点名对上即算接上）
+        string StateText(PortCoverage coverage)
+        {
+            if (coverage.Wire is not { } wire)
+                return "未接";
+
+            var notes = new List<string>(2);
+            if (wire.Wire.Kind != coverage.Required.Port.Kind)
+                notes.Add($"功能为{Solve.Core.Domain.Drivers.ChannelKinds.DisplayName(wire.Wire.Kind)}");
+            if (wire.Source.Id != node.Id)
+                notes.Add($"接在 {wire.Source.Address}");
+            return notes.Count == 0 ? "已接" : $"已接（{string.Join("，", notes)}）";
+        }
     }
 
     /// <summary>
@@ -915,7 +924,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         // 只在模块上启用的通道里找：停用的端子没有接线，不能接
         foreach (var index in group.Group.Enabled())
         {
-            if (!map.TryGetByChannel(new ChannelRef(module.Module.Device.Id, group.Group.Key, index), out _))
+            if (map.GetByChannel(new ChannelRef(module.Module.Device.Id, group.Group.Key, index)).Count == 0)
                 return index;
         }
 

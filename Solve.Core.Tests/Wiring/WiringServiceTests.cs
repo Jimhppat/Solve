@@ -198,18 +198,22 @@ public sealed class WiringServiceTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// 两个预览抢同一路通道：后保存的被唯一索引拦下，不会两处都接上
+    /// 存储层：一路通道可以接到多个位置；同一位置重复接同一路通道被唯一索引拦下（并发时也不会接两次）
     /// </summary>
     [Fact]
-    public async Task ConcurrentClaim_OfSameChannel_IsStoppedByStorage()
+    public async Task SameChannel_SharedAcrossPositions_ButNotTwiceAtOnePosition_InStorage()
     {
         var daq = await AddModuleAsync(Daq, "采集卡", 1);
         var channel = new ChannelRef(daq.Id, "input", 1);
         var wire = new Wire(WireId.New(), Node("C01-L01-S01-F01-P01").Id, channel, ChannelKind.Measure);
         Assert.True((await _wiringRepository.AddRangeAsync([wire], CancellationToken.None)).IsSuccess);
 
-        var duplicate = wire with { Id = WireId.New(), Node = Node("C01-L01-S01-F01-P02").Id };
+        var shared = wire with { Id = WireId.New(), Node = Node("C01-L01-S01-F01-P02").Id };
+        Assert.True((await _wiringRepository.AddRangeAsync([shared], CancellationToken.None)).IsSuccess);
+
+        var duplicate = wire with { Id = WireId.New() };
         Assert.Equal(WiringErrors.StorageConflictCode, (await _wiringRepository.AddRangeAsync([duplicate], CancellationToken.None)).Error.Code);
+        Assert.Equal(2, (await _wiringRepository.LoadAllAsync(CancellationToken.None)).Value.Count);
     }
 
     [Fact]
@@ -445,27 +449,29 @@ public sealed class WiringServiceTests : IAsyncLifetime
         await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [1, 2, 3])]));
         await WireAsync("C01-L02-S01-F01-P01", new ChannelRef(daq.Id, "input", 8));
 
-        // 跨模块、跳着选；第 3 行用了停用的通道，第 4 行抢已接的通道
+        // 跨模块、跳着选；第 3 行用了停用的通道，第 4 行在同一位置重复接已接的通道；第 5 行把已接的通道再接到别的位置（共用，允许）
         WiringDraftRow[] rows =
         [
             new(Node("C01-L01-S01-F01-P01").Id, new ChannelRef(relay.Id, "relay", 3)) { Purpose = "压合" },
             new(Node("C01-L01-S01-F01-P02").Id, new ChannelRef(daq.Id, "input", 5)),
             new(Node("C01-L01-S02-F01-P01").Id, new ChannelRef(relay.Id, "relay", 4)),
+            new(Node("C01-L02-S01-F01-P01").Id, new ChannelRef(daq.Id, "input", 8)),
             new(Node("C01-L01-S02-F01-P02").Id, new ChannelRef(daq.Id, "input", 8)),
         ];
 
         var preview = _wiring.PlanAssign(rows).Value;
 
-        Assert.Equal([true, true, false, false], preview.Rows.Select(r => r.IsValid));
+        Assert.Equal([true, true, false, false, true], preview.Rows.Select(r => r.IsValid));
         Assert.Contains("没有启用", preview.Rows[2].Problem);
         Assert.Contains("C01-L02-S01-F01-P01", preview.Rows[3].Problem);
         Assert.Null(preview.Plan);
         Assert.Equal(2, preview.ProblemCount);
 
-        var fixedPreview = _wiring.PlanAssign(rows[..2]).Value;
+        var fixedPreview = _wiring.PlanAssign([.. rows[..2], rows[4]]).Value;
         Assert.True((await _wiring.ApplyAsync(fixedPreview.Plan!, CancellationToken.None)).IsSuccess);
         Assert.Equal("压合", _wiring.Current.GetOwn(Node("C01-L01-S01-F01-P01").Id).Single().Purpose);
-        Assert.Equal(3, _wiring.Current.Count);
+        Assert.Equal(4, _wiring.Current.Count);
+        Assert.Equal(2, _wiring.Current.GetByChannel(new ChannelRef(daq.Id, "input", 8)).Count);
     }
 
     [Fact]
@@ -518,7 +524,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task MappingDraft_PairsChannelsWithOpenPorts_UsingPortNamesAsPurpose()
+    public async Task MappingDraft_PairsChannelsWithOpenPorts_SameKindFirst_ThenAnyKind()
     {
         // 层位 C01-L01 声明"每个产品位要采集 V × 2"；它下面 4 个产品位共 8 个接点
         var ports = new[] { new PortGroup(ChannelKind.Measure, "V", 2) };
@@ -535,59 +541,106 @@ public sealed class WiringServiceTests : IAsyncLifetime
         var draft = page.Draft;
         draft.SelectAllPositionsCommand.Execute(null);
 
-        // 3 路采集 + 1 路继电器：继电器没有同功能的空接点，不参与
+        // 继电器排在前面、3 路采集在后：采集先配同功能的接点，继电器不被丢掉，填进剩下的第一个空接点（不按功能拦截）
         var channels = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().ToList();
+        channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 1)).IsChecked = true;
         foreach (var index in new[] { 1, 2, 3 })
             channels.Single(c => c.Channel == new ChannelRef(daq.Id, "input", index)).IsChecked = true;
-        channels.Single(c => c.Channel == new ChannelRef(relay.Id, "relay", 1)).IsChecked = true;
 
         await draft.AssembleCommand.ExecuteAsync();
 
         Assert.Equal(
-            [("C01-L01-S01-F01-P01", "V1", 1), ("C01-L01-S01-F01-P01", "V2", 2), ("C01-L01-S01-F01-P02", "V1", 3)],
-            draft.Rows.Select(r => (r.Position.Address.ToString(), r.Purpose, r.Channel.Channel.Index)));
-        Assert.Contains("还有 5 个接点没有分配通道", draft.Message);
-        Assert.Contains("1 路通道没有同功能的空接点", draft.Message);
+            [("C01-L01-S01-F01-P01", "V1", "input", 1), ("C01-L01-S01-F01-P01", "V2", "input", 2),
+             ("C01-L01-S01-F01-P02", "V1", "input", 3), ("C01-L01-S01-F01-P02", "V2", "relay", 1)],
+            draft.Rows.Select(r => (r.Position.Address.ToString(), r.Purpose, r.Channel.Channel.Group, r.Channel.Channel.Index)));
+        Assert.Contains("还有 4 个接点没有分配通道", draft.Message);
+        Assert.DoesNotContain("未使用", draft.Message);
 
         await WaitUntilAsync(() => draft.ConfirmCommand.CanExecute(null));
         await draft.ConfirmCommand.ExecuteAsync();
 
+        // 接点名对上即算接上，功能不同的照样算；接上的通道自动取消勾选
         Assert.All(_wiring.Current.GetPortCoverage(Node("C01-L01-S01-F01-P01").Id), p => Assert.True(p.IsConnected));
-        Assert.Single(_wiring.Current.GetPortCoverage(Node("C01-L01-S01-F01-P02").Id), p => p.IsConnected);
+        var p02 = _wiring.Current.GetPortCoverage(Node("C01-L01-S01-F01-P02").Id);
+        Assert.All(p02, p => Assert.True(p.IsConnected));
+        Assert.Equal(ChannelKind.Switch, p02[1].Wire!.Value.Wire.Kind);
+        Assert.DoesNotContain(page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>(), c => c.IsChecked);
 
-        // "缺少采集"筛选：P01 接完了，不再列出；其余 3 个产品位还缺
+        // "缺少采集"筛选：P01、P02 接完了，不再列出；其余 2 个产品位还缺
         draft.Filter = Solve.UI.ViewModels.PositionFilterOption.All.Single(o => o.Missing == ChannelKind.Measure);
-        Assert.Equal(["C01-L01-S01-F01-P02", "C01-L01-S02-F01-P01", "C01-L01-S02-F01-P02"],
+        Assert.Equal(["C01-L01-S02-F01-P01", "C01-L01-S02-F01-P02"],
             draft.Positions.Select(p => p.Node.Address.ToString()));
+
+        // 接线面板写明功能不同
+        page.SelectedItem = page.Roots[0].Children[0].Children[0].Children[0].Children[0].Children[1];
+        Assert.Equal("已接（功能为切换）", page.Wiring.PortRows[1].StateText);
         page.Dispose();
     }
 
     [Fact]
-    public async Task MappingDraft_ConflictingRow_BlocksConfirm()
+    public async Task MappingDraft_SharedChannel_IsAllowed_DuplicateAtSamePosition_BlocksConfirm()
     {
         var relay = await AddModuleAsync(Relay, "继电器", 1);
-        await WireAsync("C01-L01", new ChannelRef(relay.Id, "relay", 1), purpose: "电源");
+        var channel = new ChannelRef(relay.Id, "relay", 1);
+        await WireAsync("C01-L01", channel, purpose: "电源");
+        await WireAsync("C01-L01-S01-F01-P01", channel);
 
         var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
         page.AttachTopology(_topology);
         page.AttachWiring(_inspector);
         page.IsDraftMode = true;
         page.SelectedItem = page.Roots[0].Children[0].Children[0];
-        page.Draft.Positions[0].IsChecked = true;
+        var draft = page.Draft;
+
+        // 已映射的通道照样能勾选；层位已有同功能同用途的接线，不再拦截
+        var row = page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.Channel == channel);
+        Assert.True(row.ShowCheckBox);
+        Assert.EndsWith("等 2 个位置", row.MappedText);
+        row.IsChecked = true;
         page.PurposeInput = "电源";
-        page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().First(c => !c.IsMapped).IsChecked = true;
 
-        // 层位已有"切换 电源"，其下产品位再接同功能同用途：这一行标出路径冲突，不能确认
-        await page.Draft.AssembleCommand.ExecuteAsync();
+        // P01 上已经接过这路通道：这一行标出重复，不能确认
+        draft.Positions[0].IsChecked = true;
+        await draft.AssembleCommand.ExecuteAsync();
+        Assert.True(Assert.Single(draft.Rows).HasProblem);
+        Assert.False(draft.ConfirmCommand.CanExecute(null));
 
-        var row = Assert.Single(page.Draft.Rows);
-        Assert.True(row.HasProblem);
-        Assert.False(page.Draft.ConfirmCommand.CanExecute(null));
+        // 换到 P02：同一路通道共用到第三个位置
+        draft.Positions[0].IsChecked = false;
+        draft.Positions[1].IsChecked = true;
+        await draft.AssembleCommand.ExecuteAsync();
+        await WaitUntilAsync(() => draft.ConfirmCommand.CanExecute(null));
+        await draft.ConfirmCommand.ExecuteAsync();
 
-        // 改成别的用途后通过
-        row.Purpose = "压合";
-        await WaitUntilAsync(() => page.Draft.ConfirmCommand.CanExecute(null));
-        Assert.False(row.HasProblem);
+        Assert.Equal(3, _wiring.Current.GetByChannel(channel).Count);
+        page.Dispose();
+    }
+
+    /// <summary>
+    /// 硬件列表的"关联"：已映射的通道还能关联到别的位置，当前位置已接过时不能再关联
+    /// </summary>
+    [Fact]
+    public async Task MapButton_AllowsSharedChannel_ButNotTwiceAtSamePosition()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var channel = new ChannelRef(relay.Id, "relay", 1);
+        await WireAsync("C01-L01", channel);
+
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        Solve.UI.ViewModels.MappingChannelViewModel Row()
+            => page.Hardware.OfType<Solve.UI.ViewModels.MappingChannelViewModel>().Single(c => c.Channel == channel);
+
+        page.SelectedItem = page.Roots[0].Children[0].Children[0];
+        Assert.False(Row().MapCommand.CanExecute(null));
+
+        page.SelectedItem = page.Roots[0].Children[0].Children[1];
+        Assert.True(Row().MapCommand.CanExecute(null));
+        await Row().MapCommand.ExecuteAsync();
+
+        Assert.Equal(2, _wiring.Current.GetByChannel(channel).Count);
+        Assert.False(Row().MapCommand.CanExecute(null));
         page.Dispose();
     }
 

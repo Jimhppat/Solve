@@ -134,8 +134,8 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
             var map = Current;
             if (map.Topology is not null && map.Detached.Count > 0)
             {
-                // 外键保证落点存在，这里出现说明库被手工改过或同一路通道重复：不参与运行，留痕供人工修复
-                _logger.LogError("有 {Count} 条接线无法落位（位置不存在、落在系统根或通道重复），已忽略：{Wires}",
+                // 外键保证落点存在，这里出现说明库被手工改过或同一位置重复接同一路通道：不参与运行，留痕供人工修复
+                _logger.LogError("有 {Count} 条接线无法落位（位置不存在、落在系统根或同一位置通道重复），已忽略：{Wires}",
                     map.Detached.Count, string.Join("，", map.Detached.Take(WiringErrors.MaxListed)));
             }
 

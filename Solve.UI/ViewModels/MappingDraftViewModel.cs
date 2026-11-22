@@ -135,8 +135,9 @@ public sealed class DraftRowViewModel : ViewModelBase
 /// 逐行校验、可调整 → 确认后一次写入。
 /// </summary>
 /// <remarks>
-/// <para>组装规则：勾选的位置声明了接点且还有没接的时，按接点配对——每路勾选的通道（按硬件列表顺序）取第一个同功能、还没配上的接点，
-/// 用途填接点名；否则勾选的位置按位置编码排序，与勾选的通道一一对应。两种方式都明确提示没配上的数量。</para>
+/// <para>组装规则：勾选的位置声明了接点且还有没接的时，按接点配对——每路勾选的通道（按硬件列表顺序）优先取同功能的空接点，
+/// 没有同功能的就按顺序填进剩下的空接点（不按功能拦截），用途填接点名；否则勾选的位置按位置编码排序，与勾选的通道一一对应。
+/// 两种方式都明确提示没配上的数量。已映射的通道也可以勾选：一路通道可以接到多个位置。</para>
 /// <para>草稿只在内存里，确认前不写库；任何一行有问题都不能确认（整批要么全接上、要么一条不写）。
 /// 建立映射只是写配置，不会让任何输出动作。</para>
 /// <para>只能在 UI 线程上使用；校验与写库在线程池上完成。</para>
@@ -145,6 +146,7 @@ public sealed class MappingDraftViewModel : ViewModelBase
 {
     private readonly Func<IReadOnlyList<MappingChannelViewModel>> _checkedChannels;
     private readonly Func<string> _defaultPurpose;
+    private readonly Action<IReadOnlyCollection<ChannelRef>>? _onMapped;
     private WiringInspector? _inspector;
     private TopologyNode? _scope;
     private EquipmentTopology? _topology;
@@ -160,10 +162,13 @@ public sealed class MappingDraftViewModel : ViewModelBase
 
     /// <param name="checkedChannels">硬件通道列表中当前勾选的通道（按列表顺序）</param>
     /// <param name="defaultPurpose">组装时各行的默认用途（页面上的"关联用途"）</param>
-    public MappingDraftViewModel(Func<IReadOnlyList<MappingChannelViewModel>> checkedChannels, Func<string> defaultPurpose)
+    /// <param name="onMapped">确认写入后通知接上的通道（硬件列表据此取消勾选）</param>
+    public MappingDraftViewModel(Func<IReadOnlyList<MappingChannelViewModel>> checkedChannels, Func<string> defaultPurpose,
+        Action<IReadOnlyCollection<ChannelRef>>? onMapped = null)
     {
         _checkedChannels = checkedChannels;
         _defaultPurpose = defaultPurpose;
+        _onMapped = onMapped;
         SelectAllPositionsCommand = new RelayCommand(() => SetAllPositions(true));
         ClearPositionsCommand = new RelayCommand(() => SetAllPositions(false));
         AssembleCommand = new AsyncRelayCommand(AssembleAsync, () => !_busy && SelectedPositionCount > 0 && _checkedChannels().Count > 0);
@@ -363,24 +368,26 @@ public sealed class MappingDraftViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 按接点配对：勾选的通道按列表顺序，各取第一个同功能、还没配上的接点；行按位置、接点顺序排列，用途填接点名
+    /// 按接点配对（不按功能拦截）：先让每路勾选的通道（按列表顺序）取第一个同功能、还没配上的接点；
+    /// 剩下的通道再按顺序填进剩下的空接点。行按位置、接点顺序排列，用途填接点名
     /// </summary>
     private async Task AssembleByPortsAsync(List<(TopologyNode Node, Port Port)> openPorts, IReadOnlyList<MappingChannelViewModel> channels)
     {
         var assigned = new MappingChannelViewModel?[openPorts.Count];
-        var unmatched = 0;
+        var leftover = new List<MappingChannelViewModel>();
         foreach (var channel in channels)
         {
-            var slot = -1;
-            for (var i = 0; i < openPorts.Count; i++)
-            {
-                if (assigned[i] is null && openPorts[i].Port.Kind == channel.Kind)
-                {
-                    slot = i;
-                    break;
-                }
-            }
+            var slot = FirstOpen(port => port.Kind == channel.Kind);
+            if (slot < 0)
+                leftover.Add(channel);
+            else
+                assigned[slot] = channel;
+        }
 
+        var unmatched = 0;
+        foreach (var channel in leftover)
+        {
+            var slot = FirstOpen(static _ => true);
             if (slot < 0)
                 unmatched++;
             else
@@ -401,8 +408,19 @@ public sealed class MappingDraftViewModel : ViewModelBase
         if (empty > 0)
             notes.Add($"还有 {empty} 个接点没有分配通道。");
         if (unmatched > 0)
-            notes.Add($"{unmatched} 路通道没有同功能的空接点，未使用。");
+            notes.Add($"多出的 {unmatched} 路通道没有空接点，未使用。");
         await ValidateAsync(notes.Count == 0 ? null : string.Join("", notes));
+
+        int FirstOpen(Func<Port, bool> accepts)
+        {
+            for (var i = 0; i < openPorts.Count; i++)
+            {
+                if (assigned[i] is null && accepts(openPorts[i].Port))
+                    return i;
+            }
+
+            return -1;
+        }
     }
 
     private async Task ConfirmAsync()
@@ -415,10 +433,10 @@ public sealed class MappingDraftViewModel : ViewModelBase
         {
             Result result;
             int added;
+            var rows = SnapshotRows();
             try
             {
-                // 确认时按当前接线与拓扑重新校验：组装之后别处可能已接了同一路通道
-                var rows = SnapshotRows();
+                // 确认时按当前接线与拓扑重新校验：组装之后位置可能已被删除，或同一位置已接了同一路通道
                 var preview = await Task.Run(() => inspector.Wiring.PlanAssign(rows));
                 if (preview.IsFailure)
                 {
@@ -454,6 +472,7 @@ public sealed class MappingDraftViewModel : ViewModelBase
             _preview = null;
             OnPropertyChanged(nameof(HasRows));
             ShowMessage($"已映射 {added} 路");
+            _onMapped?.Invoke(rows.Select(r => r.Channel).ToHashSet());
         }
         finally
         {
