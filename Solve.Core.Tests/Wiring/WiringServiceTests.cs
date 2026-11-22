@@ -444,6 +444,145 @@ public sealed class WiringServiceTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// 整模块拖到中间：选中可接线的位置才高亮、才放得下；放下后出预览，默认配到通道能分完的最近一级，
+    /// 可改成本位置或其他层级；确认才写库；同一位置已接过的通道逐行标出，不能确认
+    /// </summary>
+    [Fact]
+    public async Task MappingPage_DragModule_PreviewsByLevel_AndConfirmsOnlyWhenAllRowsValid()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        var module = page.SelectedModule!;
+        var drop = page.ModuleDrop;
+
+        // 系统根上放不下：不高亮，松开等同取消，状态不残留
+        Assert.True(page.BeginDrag(module));
+        Assert.True(module.IsDragging);
+        page.UpdateDrag(10, 10, overTarget: true);
+        Assert.False(page.IsDropTargetActive);
+        await page.CompleteDragAsync(overTarget: true);
+        Assert.False(page.IsDragging);
+        Assert.False(module.IsDragging);
+        Assert.False(drop.IsOpen);
+
+        // 层位 C01-L01：拖进接线区高亮、拖出恢复；拖拽中不重入
+        page.SelectedItem = page.Roots[0].Children[0].Children[0];
+        Assert.True(page.BeginDrag(module));
+        Assert.False(page.BeginDrag(module));
+        Assert.Equal("继电器 · 地址 1 · 4 路", page.DragText);
+        page.UpdateDrag(10, 10, overTarget: true);
+        Assert.True(page.IsDropTargetActive);
+        page.UpdateDrag(10, 10, overTarget: false);
+        Assert.False(page.IsDropTargetActive);
+        page.UpdateDrag(10, 10, overTarget: true);
+        await page.CompleteDragAsync(overTarget: true);
+        Assert.False(page.IsDropTargetActive);
+        Assert.Null(page.DragText);
+
+        Assert.True(drop.IsOpen);
+        Assert.Equal("继电器 · 地址 1 → 层位 C01-L01", drop.TitleText);
+        Assert.Equal(["本位置", "全部槽位（2 个）", "全部治具位（2 个）", "全部产品位（4 个）"], drop.LevelOptions.Select(o => o.ToString()));
+
+        // 默认：4 路通道能分完的最近一级是产品位，按位置编码顺序一路一个
+        Assert.Equal(TopologyLevel.Product, drop.SelectedLevel!.Level);
+        Assert.Equal(
+            ["C01-L01-S01-F01-P01 ← 继电器 1", "C01-L01-S01-F01-P02 ← 继电器 2", "C01-L01-S02-F01-P01 ← 继电器 3", "C01-L01-S02-F01-P02 ← 继电器 4"],
+            drop.Rows.Select(r => $"{r.PositionText} ← {r.ChannelText}"));
+        await WaitUntilAsync(() => drop.ConfirmCommand.CanExecute(null));
+
+        // 槽位只有 2 个：配 2 路，写明多出的通道
+        drop.SelectedLevel = drop.LevelOptions[1];
+        Assert.Equal(["C01-L01-S01", "C01-L01-S02"], drop.Rows.Select(r => r.PositionText));
+        await WaitUntilAsync(() => drop.Message?.Contains("模块还有 2 路通道不接") == true);
+
+        // 本位置：4 路都接到层位上
+        drop.SelectedLevel = drop.LevelOptions[0];
+        Assert.Equal(4, drop.Rows.Count);
+        Assert.All(drop.Rows, r => Assert.Equal("C01-L01", r.PositionText));
+
+        // 选回产品位确认：带上关联用途写库，预览收起，结果显示在右边
+        drop.SelectedLevel = drop.LevelOptions[3];
+        page.PurposeInput = "K";
+        await WaitUntilAsync(() => drop.ConfirmCommand.CanExecute(null));
+        await drop.ConfirmCommand.ExecuteAsync();
+        Assert.False(drop.IsOpen);
+        Assert.Equal("已接线 4 路：继电器 · 地址 1 → 层位 C01-L01", page.Message);
+        Assert.Equal(4, _wiring.Current.Count);
+        var third = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S02-F01-P01").Id));
+        Assert.Equal((new ChannelRef(relay.Id, "relay", 3), "K"), (third.Channel, third.Purpose));
+        Assert.Equal("已接 4 / 4", page.SelectedModule!.UsageText);
+
+        // 再放一次：同一位置已接同一路通道，逐行标出，不能确认；换了位置预览作废
+        Assert.True(page.BeginDrag(page.SelectedModule));
+        await page.CompleteDragAsync(overTarget: true);
+        await WaitUntilAsync(() => drop.Message?.Contains("4 行有问题") == true);
+        Assert.True(drop.IsError);
+        Assert.All(drop.Rows, r => Assert.True(r.HasProblem));
+        Assert.False(drop.ConfirmCommand.CanExecute(null));
+        page.SelectedItem = page.Roots[0];
+        Assert.False(drop.IsOpen);
+        Assert.Equal(4, _wiring.Current.Count);
+        page.Dispose();
+    }
+
+    /// <summary>
+    /// 单路通道拖到中间等同"关联"；拖到区外松开或按 Esc 什么都不改；已接在这里的不重复接；草稿模式下不能拖
+    /// </summary>
+    [Fact]
+    public async Task MappingPage_DragChannel_MapsLikeButton_AndCancelChangesNothing()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器", 1);
+        var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
+        page.AttachTopology(_topology);
+        page.AttachWiring(_inspector);
+        page.SelectedItem = page.Roots[0].Children[0].Children[0].Children[1];
+        Assert.Equal("槽位 C01-L01-S02", page.SelectedTitle);
+        var channel = page.Hardware[1];
+        Assert.Equal("继电器 2", channel.NameText);
+
+        // 区外松开：取消
+        Assert.True(page.BeginDrag(channel));
+        Assert.True(channel.IsDragging);
+        page.UpdateDrag(5, 5, overTarget: false);
+        await page.CompleteDragAsync(overTarget: false);
+        Assert.False(channel.IsDragging);
+        Assert.False(page.IsDragging);
+        Assert.Equal(0, _wiring.Current.Count);
+
+        // Esc（取消）：高亮与预览一并清掉
+        Assert.True(page.BeginDrag(channel));
+        page.UpdateDrag(5, 5, overTarget: true);
+        Assert.True(page.IsDropTargetActive);
+        page.CancelDrag();
+        Assert.False(page.IsDropTargetActive);
+        Assert.Null(page.DragText);
+        Assert.Equal(0, _wiring.Current.Count);
+
+        // 放进接线区：与点"关联"相同，带上关联用途，中间立即列出
+        page.PurposeInput = "压合";
+        Assert.True(page.BeginDrag(channel));
+        await page.CompleteDragAsync(overTarget: true);
+        var wire = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S02").Id));
+        Assert.Equal((new ChannelRef(relay.Id, "relay", 2), "压合"), (wire.Channel, wire.Purpose));
+        Assert.Single(page.Wiring.Rows);
+        Assert.True(page.Hardware.Single(c => c.Channel == wire.Channel).IsHere);
+
+        // 同一路再放到同一位置：提示已接，不重复
+        Assert.True(page.BeginDrag(page.Hardware.Single(c => c.Channel == wire.Channel)));
+        await page.CompleteDragAsync(overTarget: true);
+        Assert.True(page.IsError);
+        Assert.Equal("继电器 2 已接在 C01-L01-S02", page.Message);
+        Assert.Equal(1, _wiring.Current.Count);
+
+        // 草稿模式下中间不是放置区
+        page.IsDraftMode = true;
+        Assert.False(page.BeginDrag(page.Hardware[0]));
+        page.Dispose();
+    }
+
+    /// <summary>
     /// 硬件多时按"总线 → 模块"逐级选择：一次只列一个模块的通道，勾选跨模块保留；共用的通道标"共用 ×N"；
     /// 中间接线的"定位通道"切到它的模块并选中
     /// </summary>

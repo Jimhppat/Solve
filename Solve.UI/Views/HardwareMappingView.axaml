@@ -106,6 +106,33 @@
             <Setter Property="Padding" Value="9,5" />
         </Style>
 
+        <!-- 拖拽：中间接线区可以放下时描边高亮；被拖的模块行 / 通道卡在原处半透明；预览跟随指针 -->
+        <Style Selector="Border.dropArea">
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.dropArea.dropTarget">
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" />
+            <Setter Property="Background" Value="{DynamicResource SemiColorPrimaryLight}" />
+        </Style>
+        <Style Selector=":is(Control).dragging">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+        <Style Selector="Border.ghost">
+            <Setter Property="Background" Value="{DynamicResource SemiColorPrimary}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Opacity" Value="0.92" />
+            <Setter Property="BoxShadow" Value="{DynamicResource ConsolePanelShadow}" />
+        </Style>
+        <Style Selector="Border.dropPreview">
+            <Setter Property="Background" Value="{DynamicResource SemiColorBackground0}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SemiColorPrimary}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{DynamicResource SemiBorderRadiusMedium}" />
+            <Setter Property="Padding" Value="12,10" />
+        </Style>
+
         <!-- 通道筛选：一排分段按钮 -->
         <Style Selector="ListBox.filters > ListBoxItem">
             <Setter Property="Padding" Value="12,3" />
@@ -279,8 +306,10 @@
                 </Grid>
             </Border>
 
-            <!-- 中（按位置查看）：选中位置自己的接线（不列上级的）；批量接线、修改、拆除、命令 -->
-            <Border Grid.Column="2" Classes="panel" Padding="20,16" IsVisible="{Binding IsWiringMode}">
+            <!-- 中（按位置查看）：选中位置自己的接线（不列上级的）；批量接线、修改、拆除、命令。
+                 也是拖拽的放置区：右边拖来一路通道即关联到这里，拖来整个模块先出接线预览（边框占 2，内边距相应减 2） -->
+            <Border x:Name="WiringArea" Grid.Column="2" Classes="panel dropArea" Classes.dropTarget="{Binding IsDropTargetActive}"
+                    Padding="18,14" IsVisible="{Binding IsWiringMode}">
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <PathIcon Data="{DynamicResource SemiIconBranch}" Width="14" Height="14"
@@ -289,14 +318,57 @@
                     </StackPanel>
                     <Border Grid.Row="1" Height="1" Background="{DynamicResource SemiColorBorder}" />
                     <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                        <views:WiringPanel DataContext="{Binding Wiring}" Margin="0,0,12,0" />
+                        <StackPanel Spacing="12" Margin="0,0,12,0">
+
+                            <!-- 整模块接线预览：选层级（本位置 = 全部通道接到这里；下级 = 按顺序一路一个位置），逐行校验，确认才写库 -->
+                            <Border Classes="dropPreview" DataContext="{Binding ModuleDrop}" x:DataType="vm:ModuleDropViewModel"
+                                    IsVisible="{Binding IsOpen}">
+                                <StackPanel Spacing="10" IsEnabled="{Binding !IsBusy}">
+                                    <TextBlock Text="{Binding TitleText}" FontWeight="SemiBold" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource SemiColorText0}" />
+                                    <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
+                                        <TextBlock Grid.Column="0" Text="接线范围" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource SemiColorText1}" />
+                                        <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" AutomationProperties.Name="接线范围"
+                                                  ItemsSource="{Binding LevelOptions}" SelectedItem="{Binding SelectedLevel}" />
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding Rows}" IsVisible="{Binding HasRows}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:ModuleDropRow">
+                                                <StackPanel Spacing="2" Margin="0,2">
+                                                    <Grid ColumnDefinitions="*,Auto,*" ColumnSpacing="8">
+                                                        <TextBlock Grid.Column="0" Text="{Binding PositionText}" FontFamily="Consolas, monospace"
+                                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                                        <TextBlock Grid.Column="1" Text="←" Foreground="{DynamicResource SemiColorText1}" />
+                                                        <TextBlock Grid.Column="2" Text="{Binding ChannelText}"
+                                                                   Foreground="{DynamicResource SemiColorText0}" />
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Problem}" IsVisible="{Binding HasProblem}" TextWrapping="Wrap"
+                                                               Foreground="{DynamicResource SemiColorDanger}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Classes="message" Classes.error="{Binding IsError}" IsVisible="{Binding HasMessage}"
+                                               Text="{Binding Message}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                        <Button Content="取消" Command="{Binding CancelCommand}" />
+                                        <Button Classes="Primary" Theme="{DynamicResource SolidButton}" Content="确认接线" MinWidth="72"
+                                                Command="{Binding ConfirmCommand}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <views:WiringPanel DataContext="{Binding Wiring}" />
+                        </StackPanel>
                     </ScrollViewer>
                 </Grid>
             </Border>
 
             <!-- 右：硬件通道。先选总线，再选模块，只列出这个模块的通道（硬件多时不会平铺成几百行）。
-                 选中位置后点"关联"即把这路通道接到该位置；已接的点"定位"跳到它的位置 -->
-            <Border Grid.Column="4" Classes="panel" Padding="20,16">
+                 选中位置后点"关联"（或把通道卡拖到中间）即把这路通道接到该位置；整个模块拖到中间可一次接多路；
+                 已接的点"定位"跳到它的位置 -->
+            <Border x:Name="HardwarePanel" Grid.Column="4" Classes="panel" Padding="20,16">
                 <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsDraftMode}">
@@ -331,7 +403,8 @@
                              AutomationProperties.Name="模块">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:MappingModuleOption">
-                                <DockPanel>
+                                <!-- 按住拖到中间：整模块接线；只点一下仍是选中模块 -->
+                                <DockPanel Background="Transparent" Classes.dragging="{Binding IsDragging}" Cursor="Hand">
                                     <TextBlock DockPanel.Dock="Right" Text="{Binding UsageText}" VerticalAlignment="Center"
                                                Foreground="{DynamicResource SemiColorText1}" />
                                     <TextBlock Text="{Binding Text}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
@@ -374,7 +447,8 @@
                              IsVisible="{Binding HasHardware}" Background="Transparent" AutomationProperties.Name="通道">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:MappingChannelViewModel">
-                                <Border Classes="channel" Classes.here="{Binding IsHere}">
+                                <Border Classes="channel" Classes.here="{Binding IsHere}" Classes.dragging="{Binding IsDragging}"
+                                        Background="Transparent">
                                     <DockPanel>
                                         <!-- 映射草稿模式下通道前面有勾选框（取通道；已接的也能再接到别的位置） -->
                                         <CheckBox DockPanel.Dock="Left" Margin="0,0,8,0" IsVisible="{Binding ShowCheckBox}"
@@ -407,5 +481,13 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <!-- 拖拽预览层：盖在整页之上、不接收指针（否则会挡住放置区的判定），位置由视图模型驱动。
+             层本身始终参与布局（指针坐标按它换算），只有预览随拖拽显示 -->
+        <Canvas x:Name="DragLayer" Grid.Row="0" Grid.RowSpan="2" IsHitTestVisible="False" ClipToBounds="False">
+            <Border Classes="ghost" IsVisible="{Binding IsDragging}" Canvas.Left="{Binding DragX}" Canvas.Top="{Binding DragY}">
+                <TextBlock Text="{Binding DragText}" Foreground="White" FontWeight="SemiBold" />
+            </Border>
+        </Canvas>
     </Grid>
 </UserControl>
