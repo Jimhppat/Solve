@@ -160,7 +160,7 @@ public sealed class DeviceCommandPlan
     public string ModuleText { get; }
 
     /// <summary>
-    /// 通道名，如"输出"、"继电器 3"
+    /// 通道名，如"输出 CH1"、"继电器 CH3"
     /// </summary>
     public string ChannelText { get; }
 

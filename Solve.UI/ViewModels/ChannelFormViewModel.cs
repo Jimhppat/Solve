@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Linq;
 using Solve.Core.Domain.Common;
 using Solve.Core.Domain.Devices;
@@ -286,7 +285,7 @@ public sealed class ChannelGroupFormViewModel : ViewModelBase
         {
             var enabled = setting?.Enabled is not { } list || list.Contains(index);
             var alias = setting is not null && setting.Aliases.TryGetValue(index, out var saved) ? saved : string.Empty;
-            Channels.Add(new ChannelRowViewModel(index, enabled, alias, DefaultName(index, count)));
+            Channels.Add(new ChannelRowViewModel(index, enabled, alias, DefaultName(index)));
         }
 
         RefreshPlaceholders();
@@ -295,13 +294,13 @@ public sealed class ChannelGroupFormViewModel : ViewModelBase
     private void RefreshPlaceholders()
     {
         foreach (var row in Channels)
-            row.Placeholder = DefaultName(row.Index, Channels.Count);
+            row.Placeholder = DefaultName(row.Index);
     }
 
-    private string DefaultName(int index, int count)
+    private string DefaultName(int index)
     {
-        var name = _name.Trim().Length > 0 ? _name.Trim() : "通道";
-        return count == 1 ? name : string.Create(CultureInfo.InvariantCulture, $"{name} {index}");
+        // 与接线、映射页的默认名同一规则（ChannelGroup.DefaultName），这里预览的就是别名留空时的显示
+        return ChannelGroup.DefaultName(_name.Trim().Length > 0 ? _name.Trim() : "通道", index);
     }
 
     private void SetAll(bool enabled)
@@ -312,7 +311,7 @@ public sealed class ChannelGroupFormViewModel : ViewModelBase
 }
 
 /// <summary>
-/// 一路通道：是否启用（停用的端子不出现在接线表单里）、别名（留空用默认名，如"继电器 3"）
+/// 一路通道：是否启用（停用的端子不出现在接线表单里）、别名（留空用默认名，如"继电器 CH3"）
 /// </summary>
 public sealed class ChannelRowViewModel(int index, bool isEnabled, string alias, string placeholder) : ViewModelBase
 {
@@ -322,7 +321,7 @@ public sealed class ChannelRowViewModel(int index, bool isEnabled, string alias,
 
     public int Index { get; } = index;
 
-    public string IndexText => Index.ToString(CultureInfo.InvariantCulture);
+    public string IndexText => ChannelGroup.Code(Index);
 
     public bool IsEnabled
     {

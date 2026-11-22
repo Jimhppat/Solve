@@ -38,7 +38,7 @@ public enum ChannelFunction
 }
 
 /// <summary>
-/// 一组功能相同、编号连续的通道，如"输出 1–4"、"继电器 1–16"。设备上一个可以单独接线的端子就是一路通道，
+/// 一组功能相同、编号连续的通道，如"输出 CH1–CH4"、"继电器 CH1–CH16"。设备上一个可以单独接线的端子就是一路通道，
 /// 用（组 <see cref="Key"/>，通道号 1..<see cref="Count"/>）定位。
 /// </summary>
 /// <remarks>
@@ -47,7 +47,7 @@ public enum ChannelFunction
 /// 新版本驱动可以追加组或增大数量，不得删除组或减少数量，否则已有接线会失效。</para>
 /// </remarks>
 /// <param name="Key">驱动内唯一的稳定标识，格式同点位 Key，如 "output"</param>
-/// <param name="Name">界面显示名，如"输出"；界面显示为"输出 3"</param>
+/// <param name="Name">界面显示名，如"输出"；界面显示为"输出 CH3"（通道号即 CH 编号，从 1 开始，与设备面板丝印一致）</param>
 /// <param name="Function">这组通道的功能</param>
 /// <param name="Count">通道数量，1–<see cref="MaxCount"/></param>
 public sealed record ChannelGroupInfo(string Key, string Name, ChannelFunction Function, int Count)

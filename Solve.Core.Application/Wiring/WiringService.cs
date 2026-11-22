@@ -187,10 +187,10 @@ public sealed class WiringService : IWiringService, IDeviceWiring, IAsyncDisposa
                 : null;
             return group is not null
                 ? $"{binding.Device.Name} {group.ChannelName(channel.Index)}"
-                : $"{binding.Device.Name} {channel.Group} {channel.Index}";
+                : $"{binding.Device.Name} {ChannelGroup.DefaultName(channel.Group, channel.Index)}";
         }
 
-        return $"已删除的模块 {channel.Group} {channel.Index}";
+        return $"已删除的模块 {ChannelGroup.DefaultName(channel.Group, channel.Index)}";
     }
 
     // ==================== 预览 ====================

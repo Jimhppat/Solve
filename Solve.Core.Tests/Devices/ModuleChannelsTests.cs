@@ -26,7 +26,7 @@ public sealed class ModuleChannelsTests
 
         Assert.Equal(16, group.EnabledCount);
         Assert.True(group.IsEnabled(16));
-        Assert.Equal("继电器 3", group.ChannelName(3));
+        Assert.Equal("继电器 CH3", group.ChannelName(3));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public sealed class ModuleChannelsTests
         Assert.Equal([1, 2, 6], group.Enabled());
         Assert.False(group.IsEnabled(3));
         Assert.Equal("3# 压合气缸", group.ChannelName(2));
-        Assert.Equal("继电器 5", group.ChannelName(5));
+        Assert.Equal("继电器 CH5", group.ChannelName(5));
     }
 
     [Theory]
@@ -56,6 +56,20 @@ public sealed class ModuleChannelsTests
     [Fact]
     public void EnabledChannelBeyondDeclaredCount_IsRejected()
         => Assert.True(ModuleChannels.Resolve(RelayBoard, new ModuleChannelConfig([new ChannelGroupSetting("relay", enabled: [17])])).IsFailure);
+
+    /// <summary>
+    /// 通道编号统一为 CH + 通道号（与驱动通道号、端子丝印一致）；单路组也带编号；启用的通道号合并成区间显示
+    /// </summary>
+    [Fact]
+    public void ChannelCode_IsChPlusIndex_AndRangesMerge()
+    {
+        Assert.Equal(("CH1", "CH16"), (ChannelGroup.Code(1), ChannelGroup.Code(16)));
+        Assert.Equal("输出 CH1", new ChannelGroup("output", "输出", ChannelKind.PowerSupply, 1).ChannelName(1));
+        Assert.Equal("CH1–CH4", HardwareMappingViewModel.DescribeRange([1, 2, 3, 4]));
+        Assert.Equal("CH1–CH3, CH6, CH8–CH9", HardwareMappingViewModel.DescribeRange([1, 2, 3, 6, 8, 9]));
+        Assert.Equal("CH5", HardwareMappingViewModel.DescribeRange([5]));
+        Assert.Equal(string.Empty, HardwareMappingViewModel.DescribeRange([]));
+    }
 
     [Fact]
     public void GenericModule_DefinesItsOwnGroups()

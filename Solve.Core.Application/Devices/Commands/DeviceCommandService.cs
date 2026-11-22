@@ -256,7 +256,7 @@ public sealed class DeviceCommandService
 
         var group = driver.Channels.FirstOrDefault(g => string.Equals(g.Key, wire.Channel.Group, StringComparison.Ordinal));
         if (group is null || wire.Channel.Index < 1 || wire.Channel.Index > group.Count)
-            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest($"{driver.Name}没有通道 {wire.Channel.Group} {wire.Channel.Index}。"));
+            return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest($"{driver.Name}没有通道 {ChannelGroup.DefaultName(wire.Channel.Group, wire.Channel.Index)}。"));
 
         var busName = _buses.GetRuntime(binding.Device.BusId) is { IsSuccess: true } runtime ? runtime.Value.Descriptor.Name : "未知总线";
         var moduleText = $"{busName} · {binding.Device.Name}";
@@ -445,7 +445,7 @@ public sealed class DeviceCommandService
             return Result<DeviceCommandPlan>.Failure(DeviceCommandErrors.UnknownCommand(driver.Name, request.CommandKey));
 
         var group = driver.Channels.FirstOrDefault(g => string.Equals(g.Key, wire.Channel.Group, StringComparison.Ordinal));
-        var channelText = group is null ? $"{wire.Channel.Group} {wire.Channel.Index}" : ChannelName(group, wire.Channel.Index);
+        var channelText = group is null ? ChannelGroup.DefaultName(wire.Channel.Group, wire.Channel.Index) : ChannelName(group, wire.Channel.Index);
         int channel;
         if (command.Group is null)
         {
@@ -622,5 +622,5 @@ public sealed class DeviceCommandService
 
     private static int TotalChannels(DriverInfo driver) => driver.Channels.Sum(g => g.Count);
 
-    private static string ChannelName(ChannelGroupInfo group, int index) => group.Count == 1 ? group.Name : $"{group.Name} {index}";
+    private static string ChannelName(ChannelGroupInfo group, int index) => ChannelGroup.DefaultName(group.Name, index);
 }

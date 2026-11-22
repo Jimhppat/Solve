@@ -552,7 +552,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     public bool IsDragging => _dragItem is not null;
 
     /// <summary>
-    /// 拖拽预览上的文字，如"GJ DA750-4-60A-02 · 地址 2 · 4 路"
+    /// 拖拽预览上的文字，模块如"GJ DA750-4-60A-02 · 地址 2 · 4 路通道"，通道如"CH3 · 负载"
     /// </summary>
     public string? DragText
     {
@@ -602,11 +602,11 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
         {
             case MappingModuleOption { Channels.Count: > 0 } module:
                 module.IsDragging = true;
-                DragText = $"{module.Text} · {module.Channels.Count} 路";
+                DragText = $"{module.Text} · {module.ChannelCountText}通道";
                 break;
             case MappingChannelViewModel channel:
                 channel.IsDragging = true;
-                DragText = $"{channel.NameText} · {channel.KindText}";
+                DragText = $"{channel.CodeText} · {channel.LabelText}";
                 break;
             default:
                 return false;
@@ -733,9 +733,14 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
         {
             var moduleText = $"{module.BusName} · {module.Device.Name}";
             var channels = new List<MappingChannelViewModel>();
+            var ranges = new List<string>();
             foreach (var group in module.Channels)
             {
-                foreach (var index in group.Enabled())
+                var enabled = group.Enabled().ToList();
+                if (enabled.Count > 0)
+                    ranges.Add($"{group.Name} {DescribeRange(enabled)}");
+
+                foreach (var index in enabled)
                 {
                     // 一路通道可以接到多个位置：已映射的通道照样能再关联、能勾选进映射草稿
                     var channel = new ChannelRef(module.Device.Id, group.Key, index);
@@ -752,6 +757,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
                     {
                         IsSelectable = _isDraftMode,
                         Kind = group.Kind,
+                        LabelText = group.Aliases.TryGetValue(index, out var alias) ? alias : group.Name,
                     });
                 }
             }
@@ -760,7 +766,8 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
                 continue;
 
             all.AddRange(channels);
-            modules.Add(new MappingModuleOption(module.Device.Id, module.BusId, $"{module.Device.Name} · 地址 {module.Device.Address}", channels));
+            modules.Add(new MappingModuleOption(module.Device.Id, module.BusId, module.Device.Name, module.Device.Address, channels,
+                string.Join(" · ", ranges)));
             var busIndex = buses.FindIndex(b => b.Id == module.BusId);
             if (busIndex < 0)
                 buses.Add((module.BusId, module.BusName, module.BusLink, 1));
@@ -787,6 +794,23 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
         ShowBus(_buses.FirstOrDefault(b => b.Id == keepBus) ?? _buses.FirstOrDefault());
         Draft.OnExternalChanged();
         ModuleDrop.OnExternalChanged();
+    }
+
+    /// <summary>
+    /// 启用的通道号（升序）写成编号区间，连续的合并：如"CH1–CH4"、"CH1–CH3, CH6"
+    /// </summary>
+    public static string DescribeRange(IReadOnlyList<int> indices)
+    {
+        var parts = new List<string>();
+        for (var i = 0; i < indices.Count; i++)
+        {
+            var start = indices[i];
+            while (i + 1 < indices.Count && indices[i + 1] == indices[i] + 1)
+                i++;
+            parts.Add(start == indices[i] ? ChannelGroup.Code(start) : $"{ChannelGroup.Code(start)}–{ChannelGroup.Code(indices[i])}");
+        }
+
+        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -1038,13 +1062,41 @@ public sealed record ChannelFilterOption(ChannelUse? Use, string Text)
 }
 
 /// <summary>
-/// 硬件通道的模块选项：一行一个模块，如"Chroma 62015B · 地址 1"，带"已接 x / y"
+/// 硬件通道的模块选项：一行一个模块，如"Chroma 62015B · 地址 1"，带"已接 x / y"。
+/// 选中后在通道列表上方显示为整体模块卡（名称、地址、通道编号范围），整张卡可拖到中间一次接全部通道。
 /// </summary>
-public sealed class MappingModuleOption(DeviceId id, BusId bus, string text, IReadOnlyList<MappingChannelViewModel> channels) : ViewModelBase
+/// <param name="channelRanges">各组启用的通道编号，如"负载 CH1–CH4"；多组用" · "连接</param>
+public sealed class MappingModuleOption(
+    DeviceId id,
+    BusId bus,
+    string name,
+    int address,
+    IReadOnlyList<MappingChannelViewModel> channels,
+    string channelRanges) : ViewModelBase
 {
     private bool _isDragging;
 
     public DeviceId Id { get; } = id;
+
+    /// <summary>
+    /// 模块名，如"GJ DA750-4-60A-01"
+    /// </summary>
+    public string NameText { get; } = name;
+
+    /// <summary>
+    /// 如"地址 1"
+    /// </summary>
+    public string AddressText { get; } = string.Create(CultureInfo.InvariantCulture, $"地址 {address}");
+
+    /// <summary>
+    /// 启用的通道数（即可以接线的路数），如"4 路"
+    /// </summary>
+    public string ChannelCountText { get; } = string.Create(CultureInfo.InvariantCulture, $"{channels.Count} 路");
+
+    /// <summary>
+    /// 各组启用的通道编号，如"负载 CH1–CH4"
+    /// </summary>
+    public string ChannelRangeText { get; } = channelRanges;
 
     /// <summary>
     /// 正被拖动：原位置半透明显示
@@ -1058,9 +1110,9 @@ public sealed class MappingModuleOption(DeviceId id, BusId bus, string text, IRe
     public BusId Bus { get; } = bus;
 
     /// <summary>
-    /// 模块名与地址（不含系统 Id）
+    /// 模块名与地址（不含系统 Id），如"GJ DA750-4-60A-01 · 地址 1"
     /// </summary>
-    public string Text { get; } = text;
+    public string Text { get; } = string.Create(CultureInfo.InvariantCulture, $"{name} · 地址 {address}");
 
     /// <summary>
     /// 这个模块上启用的通道，按通道组、通道号顺序
@@ -1171,7 +1223,20 @@ public sealed class MappingChannelViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsChecked));
     }
 
+    /// <summary>
+    /// 完整通道名，如"负载 CH3"；有别名时为别名。用于结果提示、映射草稿
+    /// </summary>
     public string NameText { get; }
+
+    /// <summary>
+    /// 通道编号，如"CH3"：与设备端子丝印、驱动通道号一致，卡片上最醒目的一项
+    /// </summary>
+    public string CodeText => ChannelGroup.Code(Channel.Index);
+
+    /// <summary>
+    /// 编号旁的说明：有别名显示别名，否则显示通道组名（如"负载"），同一模块上的多组通道靠它区分
+    /// </summary>
+    public string LabelText { get; init; } = string.Empty;
 
     public string KindText { get; }
 

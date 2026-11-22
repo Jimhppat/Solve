@@ -861,7 +861,7 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         Assert.True(stopped.IsSuccess, stopped.IsFailure ? stopped.Error.Message : null);
         Assert.Equal("C01-L01-S01-F01-P01", stopped.Value.Position);
         Assert.Equal("1# RS-485 · 继电器板", stopped.Value.ModuleText);
-        Assert.Equal("继电器 3", stopped.Value.TargetText);
+        Assert.Equal("继电器 CH3", stopped.Value.TargetText);
         Assert.Equal(1, SafeFrames(3));
         Assert.Equal(0, RelayFrames(0x02));
 

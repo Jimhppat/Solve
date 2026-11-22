@@ -137,7 +137,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
 
         var wire = Assert.Single(reloaded.Current.GetOwn(Node("C01-L01-S01-F01-P02").Id));
         Assert.Equal((new ChannelRef(daq.Id, "input", 5), ChannelKind.Measure, "VBAT"), (wire.Channel, wire.Kind, wire.Purpose));
-        Assert.Equal("采集卡 输入 5", reloaded.DescribeChannel(wire.Channel));
+        Assert.Equal("采集卡 输入 CH5", reloaded.DescribeChannel(wire.Channel));
         await reloaded.DisposeAsync();
     }
 
@@ -281,7 +281,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         var result = await _devices.UpdateAsync(daq with { Driver = Relay }, CancellationToken.None);
 
         Assert.Equal(WiringErrors.ChannelsInUseByWiresCode, result.Error.Code);
-        Assert.Contains("采集卡 输入 6", result.Error.Message);
+        Assert.Contains("采集卡 输入 CH6", result.Error.Message);
         Assert.True((await _devices.UpdateAsync(daq with { Name = "采集卡A" }, CancellationToken.None)).IsSuccess);
     }
 
@@ -363,7 +363,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
             CancellationToken.None);
 
         Assert.Equal(WiringErrors.ChannelsInUseByWiresCode, disable.Error.Code);
-        Assert.Contains("继电器 继电器 2", disable.Error.Message);
+        Assert.Contains("继电器 继电器 CH2", disable.Error.Message);
 
         // 别名可以随时改：接线按（组，通道号）定位，不受名称影响
         await ConfigureAsync(relay, new ModuleChannelConfig([new ChannelGroupSetting("relay", aliases: [new(2, "3# 压合")])]));
@@ -380,7 +380,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         await WireAsync("C01-L01-S01-F01", new ChannelRef(generic.Id, "g1", 4), purpose: "压合");
 
         var status = Assert.Single(_inspector.Inspect(Node("C01-L01-S01-F01").Id));
-        Assert.Equal(("1# RS-485 · 气缸阀岛", "电磁阀 4", WireHealth.NoProtocol), (status.ModuleText, status.ChannelText, status.Health));
+        Assert.Equal(("1# RS-485 · 气缸阀岛", "电磁阀 CH4", WireHealth.NoProtocol), (status.ModuleText, status.ChannelText, status.Health));
         Assert.True(_inspector.CheckReady(Node("C01-L01-S01-F01").Id).IsFailure);
     }
 
@@ -412,7 +412,9 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.Equal("继电器 · 地址 1", page.SelectedModule!.Text);
         Assert.Equal("已接 0 / 2", page.SelectedModule.UsageText);
         var channels = page.Hardware.ToList();
-        Assert.Equal(["继电器 1", "压合"], channels.Select(c => c.NameText));
+        Assert.Equal(["继电器 CH1", "压合"], channels.Select(c => c.NameText));
+        Assert.Equal([("CH1", "继电器"), ("CH2", "压合")], channels.Select(c => (c.CodeText, c.LabelText)));
+        Assert.Equal(("继电器", "地址 1", "2 路", "继电器 CH1–CH2"), (page.SelectedModule.NameText, page.SelectedModule.AddressText, page.SelectedModule.ChannelCountText, page.SelectedModule.ChannelRangeText));
         Assert.All(channels, c => Assert.Equal(("未接", true), (c.UseText, c.IsFree)));
 
         // 系统根不能接线
@@ -434,7 +436,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
 
         // 筛选"未接"；定位回到映射的位置（选别的位置后不再是"本位置"）
         page.ChannelFilter = Solve.UI.ViewModels.ChannelFilterOption.All.Single(f => f.Text == "未接");
-        Assert.Equal(["继电器 1"], page.Hardware.Select(c => c.NameText));
+        Assert.Equal(["继电器 CH1"], page.Hardware.Select(c => c.NameText));
         page.ChannelFilter = Solve.UI.ViewModels.ChannelFilterOption.All[0];
         page.SelectedItem = page.Roots[0];
         Assert.False(page.Hardware.Single(c => c.NameText == "压合").IsHere);
@@ -471,7 +473,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         page.SelectedItem = page.Roots[0].Children[0].Children[0];
         Assert.True(page.BeginDrag(module));
         Assert.False(page.BeginDrag(module));
-        Assert.Equal("继电器 · 地址 1 · 4 路", page.DragText);
+        Assert.Equal("继电器 · 地址 1 · 4 路通道", page.DragText);
         page.UpdateDrag(10, 10, overTarget: true);
         Assert.True(page.IsDropTargetActive);
         page.UpdateDrag(10, 10, overTarget: false);
@@ -488,14 +490,19 @@ public sealed class WiringServiceTests : IAsyncLifetime
         // 默认：4 路通道能分完的最近一级是产品位，按位置编码顺序一路一个
         Assert.Equal(TopologyLevel.Product, drop.SelectedLevel!.Level);
         Assert.Equal(
-            ["C01-L01-S01-F01-P01 ← 继电器 1", "C01-L01-S01-F01-P02 ← 继电器 2", "C01-L01-S02-F01-P01 ← 继电器 3", "C01-L01-S02-F01-P02 ← 继电器 4"],
-            drop.Rows.Select(r => $"{r.PositionText} ← {r.ChannelText}"));
-        await WaitUntilAsync(() => drop.ConfirmCommand.CanExecute(null));
+            ["CH1 继电器 → C01-L01-S01-F01-P01", "CH2 继电器 → C01-L01-S01-F01-P02", "CH3 继电器 → C01-L01-S02-F01-P01", "CH4 继电器 → C01-L01-S02-F01-P02"],
+            drop.Rows.Select(r => $"{r.CodeText} {r.LabelText} → {r.TargetText}"));
+        // 测试里没有 UI 线程，校验结果在线程池上逐项写入：等最后写入的提示出现，再看确认按钮
+        await WaitUntilAsync(() => drop.Message == "接 4 路通道，可以确认。");
+        Assert.True(drop.ConfirmCommand.CanExecute(null));
 
-        // 槽位只有 2 个：配 2 路，写明多出的通道
+        // 槽位只有 2 个：配 2 路，其余 2 路仍列在表里、标"不接"，写明多出的通道
         drop.SelectedLevel = drop.LevelOptions[1];
-        Assert.Equal(["C01-L01-S01", "C01-L01-S02"], drop.Rows.Select(r => r.PositionText));
+        Assert.Equal(["C01-L01-S01", "C01-L01-S02", "不接", "不接"], drop.Rows.Select(r => r.TargetText));
+        Assert.Equal([false, false, true, true], drop.Rows.Select(r => r.IsSkipped));
         await WaitUntilAsync(() => drop.Message?.Contains("模块还有 2 路通道不接") == true);
+        Assert.False(drop.IsError);
+        Assert.All(drop.Rows, r => Assert.False(r.HasProblem));
 
         // 本位置：4 路都接到层位上
         drop.SelectedLevel = drop.LevelOptions[0];
@@ -540,7 +547,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         page.SelectedItem = page.Roots[0].Children[0].Children[0].Children[1];
         Assert.Equal("槽位 C01-L01-S02", page.SelectedTitle);
         var channel = page.Hardware[1];
-        Assert.Equal("继电器 2", channel.NameText);
+        Assert.Equal(("继电器 CH2", "CH2"), (channel.NameText, channel.CodeText));
 
         // 区外松开：取消
         Assert.True(page.BeginDrag(channel));
@@ -573,7 +580,7 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.True(page.BeginDrag(page.Hardware.Single(c => c.Channel == wire.Channel)));
         await page.CompleteDragAsync(overTarget: true);
         Assert.True(page.IsError);
-        Assert.Equal("继电器 2 已接在 C01-L01-S02", page.Message);
+        Assert.Equal("继电器 CH2 已接在 C01-L01-S02", page.Message);
         Assert.Equal(1, _wiring.Current.Count);
 
         // 草稿模式下中间不是放置区
