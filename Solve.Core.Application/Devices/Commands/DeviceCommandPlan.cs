@@ -39,13 +39,20 @@ public sealed record DeviceCommandOptions
 }
 
 /// <summary>
-/// 按位置下发一条命令：在 <see cref="Node"/> 的有效接线里找功能为 <see cref="Kind"/>、用途为 <see cref="Purpose"/> 的那一路，
-/// 向它的模块通道执行 <see cref="CommandKey"/>
+/// 按位置下发一条命令：在 <see cref="Node"/> 的有效接线里找功能为 <see cref="Kind"/> 的那一路，向它的模块通道执行 <see cref="CommandKey"/>。
+/// 设置了 <see cref="Channel"/> 时按通道找（一个位置接多路同功能通道时用它区分），否则按 <see cref="Purpose"/> 找。
 /// </summary>
-/// <param name="Purpose">用途（如 "VBAT"）；未填用途的接线传 null。比较时忽略大小写与首尾空白，与接线规则一致</param>
+/// <param name="Purpose">用途（如 "VBAT"）；未填用途的接线传 null。比较时忽略大小写与首尾空白，与接线规则一致。
+/// 设置了 <see cref="Channel"/> 时不参与匹配</param>
 public sealed record DeviceCommandRequest(TopologyNodeId Node, ChannelKind Kind, string? Purpose, string CommandKey)
 {
     private static readonly IReadOnlyDictionary<string, double> NoArguments = FrozenDictionary<string, double>.Empty;
+
+    /// <summary>
+    /// 目标通道（模块 + 通道组 + CH 号）。一个位置可以接任意多路同功能通道，用途不再作区分时按它定位到唯一的一路；
+    /// 为 null 时按 <see cref="Purpose"/> 匹配（兼容按用途寻址的调用方）
+    /// </summary>
+    public ChannelRef? Channel { get; init; }
 
     /// <summary>
     /// 命令参数（工程值），按驱动声明的 <see cref="CommandInfo.Arguments"/>；没有参数为空表。

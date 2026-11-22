@@ -25,7 +25,7 @@ namespace Solve.UI.ViewModels;
 /// <para>一个位置就是拓扑里的一个节点：在树上选中位置，再在右边点某路通道的"关联"，这路通道就接到该位置上（向下生效）。
 /// 右边每路通道都显示它的使用状态（未接 / 已接 / 共用）与映射到的位置，点"定位"跳到那个位置；中间的接线点"定位通道"跳到右边的通道。</para>
 /// <para>拖拽：把右边的一路通道拖到中间，等同点它的"关联"；把整个模块拖到中间，打开整模块接线预览（<see cref="ModuleDrop"/>），
-/// 选层级、逐行校验后确认才写库。拖拽状态（预览文字与位置、放置区高亮、被拖项半透明）都在这里，视图只翻译指针事件。</para>
+/// 模块的全部通道都接到当前位置（一个位置不限通道数），逐行校验后确认才写库。拖拽状态（预览文字与位置、放置区高亮、被拖项半透明）都在这里，视图只翻译指针事件。</para>
 /// <para>硬件多时不平铺：一次只列出一个模块的通道。勾选按通道记录，切换总线、模块、筛选后不丢（映射草稿可以跨模块取通道）。</para>
 /// <para>只列出总线上有启用通道的模块：没用到的设备、在模块配置里停用的通道不出现。</para>
 /// <para>位置结构在"设备拓扑"页维护，本页只读拓扑；每次进入本页时按当前拓扑刷新（<see cref="Refresh"/>）。
@@ -73,7 +73,6 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     private MappingChannelViewModel? _selectedChannel;
     private double _treeWidth = DefaultTreeWidth;
     private double _hardwareWidth = DefaultHardwareWidth;
-    private string _purposeInput = string.Empty;
     private bool _busy;
     private string? _message;
     private bool _isError;
@@ -89,8 +88,8 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
     public HardwareMappingViewModel()
     {
-        Draft = new MappingDraftViewModel(CheckedChannels, () => _purposeInput, OnDraftMapped);
-        ModuleDrop = new ModuleDropViewModel(() => _purposeInput, OnModuleDropped);
+        Draft = new MappingDraftViewModel(CheckedChannels, OnDraftMapped);
+        ModuleDrop = new ModuleDropViewModel(OnModuleDropped);
         SelectVisibleChannelsCommand = new RelayCommand(() => SetVisibleChannels(true));
         ClearChannelsCommand = new RelayCommand(ClearCheckedChannels);
         Wiring.LocateChannelRequested += OnLocateChannelRequested;
@@ -109,7 +108,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     public MappingDraftViewModel Draft { get; }
 
     /// <summary>
-    /// 整模块拖到中间后的接线预览：选层级、逐行校验、确认才写库
+    /// 整模块拖到中间后的接线预览：全部通道接到当前位置，逐行校验、确认才写库
     /// </summary>
     public ModuleDropViewModel ModuleDrop { get; }
 
@@ -361,17 +360,6 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
     public string CheckedCountText => $"已选 {_checkedChannels.Count} 路";
 
-    /// <summary>
-    /// 点"关联"时一并写入的用途（如 VBAT），可不填
-    /// </summary>
-    public string PurposeInput
-    {
-        get => _purposeInput;
-        set => SetProperty(ref _purposeInput, value ?? string.Empty);
-    }
-
-    public int MaxPurposeLength => Wire.MaxPurposeLength;
-
     public string? Message
     {
         get => _message;
@@ -499,7 +487,6 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             return;
 
         var channel = row.Channel;
-        var purpose = _purposeInput;
         SetBusy(true);
         Message = null;
         try
@@ -507,7 +494,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             Result result;
             try
             {
-                var plan = await Task.Run(() => inspector.Wiring.PlanAdd(node.Id, channel, purpose, null));
+                var plan = await Task.Run(() => inspector.Wiring.PlanAdd(node.Id, channel, null, null));
                 result = plan.IsSuccess
                     ? await inspector.Wiring.ApplyAsync(plan.Value, CancellationToken.None)
                     : Result.Failure(plan.Error);
@@ -658,9 +645,9 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
                 case MappingChannelViewModel row:
                     await MapAsync(row);
                     break;
-                case MappingModuleOption module when _bound is { } topology:
+                case MappingModuleOption module:
                     Message = null;
-                    ModuleDrop.Open(module, node, topology);
+                    ModuleDrop.Open(module, node);
                     break;
             }
         }
@@ -1166,14 +1153,13 @@ public sealed class MappingChannelViewModel : ViewModelBase
             1 => ChannelUse.Used,
             _ => ChannelUse.Shared,
         };
-        MappedText = mapped.Count == 0 ? string.Empty : Describe(mapped[0].Node, mapped[0].Wire) + (mapped.Count > 1 ? $" 等 {mapped.Count} 个位置" : string.Empty);
+        MappedText = mapped.Count == 0 ? string.Empty : Describe(mapped[0].Node) + (mapped.Count > 1 ? $" 等 {mapped.Count} 个位置" : string.Empty);
         MapCommand = new AsyncRelayCommand(() => onMap(this), () => canMapTo(this));
         LocateCommand = new RelayCommand(() => onLocate(this), () => IsMapped);
     }
 
-    private static string Describe(TopologyNode node, Wire wire)
-        => $"{node.Level.DisplayName()} {node.Address}{(node.Name is { } n ? $"（{n}）" : string.Empty)}" +
-           $"{(wire.Purpose is { } purpose ? $" · {purpose}" : string.Empty)}";
+    private static string Describe(TopologyNode node)
+        => $"{node.Level.DisplayName()} {node.Address}{(node.Name is { } n ? $"（{n}）" : string.Empty)}";
 
     /// <summary>
     /// 这路通道已接在 <paramref name="node"/> 上
@@ -1289,7 +1275,7 @@ public sealed class MappingChannelViewModel : ViewModelBase
     public bool IsMapped => MappedNode is not null;
 
     /// <summary>
-    /// 接到的位置，如"层位 C01-L01 · VBAT 等 3 个位置"；未接为空串
+    /// 接到的位置，如"层位 C01-L01 等 3 个位置"；未接为空串
     /// </summary>
     public string MappedText { get; }
 

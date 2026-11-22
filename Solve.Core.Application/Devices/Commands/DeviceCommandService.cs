@@ -240,7 +240,7 @@ public sealed class DeviceCommandService
             return Result<SafeStopTarget>.Failure(DeviceCommandErrors.InvalidRequest($"安全停止范围未定义：{(int)request.Scope}。"));
 
         // 不做 CheckReady 与子树停用检查：安全方向不受维护屏蔽阻挡
-        var found = FindWire(request.Node, request.Kind, request.Purpose);
+        var found = FindWire(request.Node, request.Kind, request.Purpose, request.Channel);
         if (found.IsFailure)
             return Result<SafeStopTarget>.Failure(found.Error);
 
@@ -288,8 +288,8 @@ public sealed class DeviceCommandService
         var position = _inspector.Wiring.Current.Topology is { } topology && topology.TryGetNode(request.Node, out var node)
             ? node.Address.ToString()
             : $"节点 {request.Node}";
-        _logger.LogWarning("设备安全停止拒绝 范围 {Scope} 位置 {Position} 功能 {Kind} 用途 {Purpose} 结果 {Outcome} 原因 {Reason}",
-            request.Scope, position, request.Kind, request.Purpose, error.Code, error.Message);
+        _logger.LogWarning("设备安全停止拒绝 范围 {Scope} 位置 {Position} 功能 {Kind} 用途 {Purpose} 通道 {Channel} 结果 {Outcome} 原因 {Reason}",
+            request.Scope, position, request.Kind, request.Purpose, request.Channel, error.Code, error.Message);
         return Result<DeviceSafeStopResult>.Failure(error);
     }
 
@@ -395,8 +395,8 @@ public sealed class DeviceCommandService
         var position = _inspector.Wiring.Current.Topology is { } topology && topology.TryGetNode(request.Node, out var node)
             ? node.Address.ToString()
             : $"节点 {request.Node}";
-        _logger.LogWarning("设备命令拒绝 {CommandKey} 位置 {Position} 功能 {Kind} 用途 {Purpose} 结果 {Outcome} 原因 {Reason}",
-            request.CommandKey, position, request.Kind, request.Purpose, error.Code, error.Message);
+        _logger.LogWarning("设备命令拒绝 {CommandKey} 位置 {Position} 功能 {Kind} 用途 {Purpose} 通道 {Channel} 结果 {Outcome} 原因 {Reason}",
+            request.CommandKey, position, request.Kind, request.Purpose, request.Channel, error.Code, error.Message);
     }
 
     /// <summary>
@@ -420,7 +420,7 @@ public sealed class DeviceCommandService
         if (ValidateRequest(request) is { } invalid)
             return Result<DeviceCommandPlan>.Failure(invalid);
 
-        var found = FindWire(request.Node, request.Kind, request.Purpose);
+        var found = FindWire(request.Node, request.Kind, request.Purpose, request.Channel);
         if (found.IsFailure)
             return Result<DeviceCommandPlan>.Failure(found.Error);
 
@@ -518,13 +518,33 @@ public sealed class DeviceCommandService
     private readonly record struct FoundWire(WiringMap Map, EquipmentTopology Topology, TopologyNode Target, Wire Wire, TopologyNode Source);
 
     /// <summary>
-    /// 在位置的有效接线里找功能、用途都匹配的那一路；没有或多于一路都拒绝
+    /// 在位置的有效接线里找目标那一路：给了通道时按（功能，通道）找，否则按（功能，用途）找；没有或多于一路都拒绝
     /// </summary>
-    private Result<FoundWire> FindWire(TopologyNodeId nodeId, ChannelKind kind, string? purpose)
+    private Result<FoundWire> FindWire(TopologyNodeId nodeId, ChannelKind kind, string? purpose, ChannelRef? channel)
     {
         var map = _inspector.Wiring.Current;
         if (map.Topology is not { } topology || !topology.TryGetNode(nodeId, out var target))
             return Result<FoundWire>.Failure(WiringErrors.NodeNotFound());
+
+        if (channel is { } wanted)
+        {
+            // 一个位置可以接任意多路同功能通道，按通道定位到唯一的一路。同一路通道同时接在上级和这里时，
+            // 两条接线的生效范围不同（影响的产品位不同），不替操作员挑一条：拒绝并说明，拆掉多余的那条后再下发
+            var byChannel = map.GetEffective(target.Id)
+                .Where(e => e.Wire.Kind == kind && e.Wire.Channel == wanted)
+                .ToList();
+            var channelText = $"{kind.DisplayName()} {ChannelGroup.Code(wanted.Index)}";
+            if (byChannel.Count == 0)
+                return Result<FoundWire>.Failure(DeviceCommandErrors.NotWired(target.Address.ToString(), channelText));
+            if (byChannel.Count > 1)
+            {
+                var places = string.Join("、", byChannel.Select(e => e.Source.Address.ToString()));
+                return Result<FoundWire>.Failure(DeviceCommandErrors.InvalidRequest(
+                    $"「{channelText}」同时接在 {places}，无法确定命令的生效范围，请拆除多余的接线。"));
+            }
+
+            return Result<FoundWire>.Success(new FoundWire(map, topology, target, byChannel[0].Wire, byChannel[0].Source));
+        }
 
         // 映射不拦截同一路径上的同功能同用途接线：必须恰好匹配一路，多于一路无法确定目标即拒绝
         var purposeKey = Wire.NormalizeText(purpose)?.ToUpperInvariant() ?? string.Empty;

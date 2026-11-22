@@ -62,11 +62,12 @@ public sealed class DraftPositionViewModel(TopologyNode node, Action onCheckedCh
 public sealed class DraftRowViewModel : ViewModelBase
 {
     private MappingChannelViewModel _channel;
-    private string _purpose;
+    private readonly string? _purpose;
     private string? _problem;
 
-    public DraftRowViewModel(TopologyNode position, MappingChannelViewModel channel, string purpose,
-        Action<DraftRowViewModel, int> onMove, Action<DraftRowViewModel> onRemove, Action onPurposeChanged)
+    /// <param name="purpose">按接点配对时为接点名（写入接线，供产品位接点核对匹配；界面不显示）；按位置配对时为 null</param>
+    public DraftRowViewModel(TopologyNode position, MappingChannelViewModel channel, string? purpose,
+        Action<DraftRowViewModel, int> onMove, Action<DraftRowViewModel> onRemove)
     {
         Position = position;
         _channel = channel;
@@ -75,10 +76,7 @@ public sealed class DraftRowViewModel : ViewModelBase
         MoveUpCommand = new RelayCommand(() => onMove(this, -1));
         MoveDownCommand = new RelayCommand(() => onMove(this, +1));
         RemoveCommand = new RelayCommand(() => onRemove(this));
-        PurposeChanged = onPurposeChanged;
     }
-
-    private Action PurposeChanged { get; }
 
     public TopologyNode Position { get; }
 
@@ -99,17 +97,7 @@ public sealed class DraftRowViewModel : ViewModelBase
 
     public string ChannelText => $"{_channel.ModuleText}  {_channel.NameText}（{_channel.KindText}）";
 
-    public string Purpose
-    {
-        get => _purpose;
-        set
-        {
-            if (SetProperty(ref _purpose, value ?? string.Empty))
-                PurposeChanged();
-        }
-    }
-
-    public int MaxPurposeLength => Wire.MaxPurposeLength;
+    public string? Purpose => _purpose;
 
     public string? Problem
     {
@@ -145,7 +133,6 @@ public sealed class DraftRowViewModel : ViewModelBase
 public sealed class MappingDraftViewModel : ViewModelBase
 {
     private readonly Func<IReadOnlyList<MappingChannelViewModel>> _checkedChannels;
-    private readonly Func<string> _defaultPurpose;
     private readonly Action<IReadOnlyCollection<ChannelRef>>? _onMapped;
     private WiringInspector? _inspector;
     private TopologyNode? _scope;
@@ -161,13 +148,11 @@ public sealed class MappingDraftViewModel : ViewModelBase
     private bool _isError;
 
     /// <param name="checkedChannels">硬件通道列表中当前勾选的通道（按列表顺序）</param>
-    /// <param name="defaultPurpose">组装时各行的默认用途（页面上的"关联用途"）</param>
     /// <param name="onMapped">确认写入后通知接上的通道（硬件列表据此取消勾选）</param>
-    public MappingDraftViewModel(Func<IReadOnlyList<MappingChannelViewModel>> checkedChannels, Func<string> defaultPurpose,
+    public MappingDraftViewModel(Func<IReadOnlyList<MappingChannelViewModel>> checkedChannels,
         Action<IReadOnlyCollection<ChannelRef>>? onMapped = null)
     {
         _checkedChannels = checkedChannels;
-        _defaultPurpose = defaultPurpose;
         _onMapped = onMapped;
         SelectAllPositionsCommand = new RelayCommand(() => SetAllPositions(true));
         ClearPositionsCommand = new RelayCommand(() => SetAllPositions(false));
@@ -332,10 +317,9 @@ public sealed class MappingDraftViewModel : ViewModelBase
         }
 
         var count = Math.Min(positions.Count, channels.Count);
-        var purpose = _defaultPurpose();
         Rows.Clear();
         for (var i = 0; i < count; i++)
-            Rows.Add(new DraftRowViewModel(positions[i], channels[i], purpose, Move, Remove, OnRowPurposeChanged));
+            Rows.Add(new DraftRowViewModel(positions[i], channels[i], null, Move, Remove));
         OnPropertyChanged(nameof(HasRows));
 
         var extra = positions.Count != channels.Count
@@ -398,7 +382,7 @@ public sealed class MappingDraftViewModel : ViewModelBase
         for (var i = 0; i < openPorts.Count; i++)
         {
             if (assigned[i] is { } channel)
-                Rows.Add(new DraftRowViewModel(openPorts[i].Node, channel, openPorts[i].Port.Purpose, Move, Remove, OnRowPurposeChanged));
+                Rows.Add(new DraftRowViewModel(openPorts[i].Node, channel, openPorts[i].Port.Purpose, Move, Remove));
         }
 
         OnPropertyChanged(nameof(HasRows));
@@ -510,7 +494,6 @@ public sealed class MappingDraftViewModel : ViewModelBase
         _ = ValidateAsync();
     }
 
-    private void OnRowPurposeChanged() => _ = ValidateAsync();
 
     // ==================== 内部 ====================
 

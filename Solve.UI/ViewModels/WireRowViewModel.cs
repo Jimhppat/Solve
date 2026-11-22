@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Wiring;
+using Solve.Core.Domain.Drivers;
 using Solve.Core.Domain.Topology;
 using Solve.Core.Domain.Wiring;
 using Solve.Device.Sdk;
@@ -172,9 +173,9 @@ public sealed class WireRowViewModel : ViewModelBase
     public bool IsOwn { get; }
 
     /// <summary>
-    /// 功能与用途，如"供电 VBAT"
+    /// 功能，如"负载"（界面不显示用途：同一位置上的多路通道按 CHn 区分）
     /// </summary>
-    public string KindText => Wire.KindText;
+    public string KindText => Wire.Kind.DisplayName();
 
     /// <summary>
     /// "总线 · 模块  通道"，如"1# RS-485 · 电源-01  输出"

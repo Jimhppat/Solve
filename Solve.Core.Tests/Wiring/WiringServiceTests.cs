@@ -424,11 +424,11 @@ public sealed class WiringServiceTests : IAsyncLifetime
         // 选中一个治具位，把"压合"关联上去
         page.SelectedItem = page.Roots[0].Children[0].Children[0].Children[0].Children[0];
         Assert.Equal("治具位 C01-L01-S01-F01", page.SelectedTitle);
-        page.PurposeInput = "压合";
         await channels[1].MapCommand.ExecuteAsync();
 
+        // 界面不再填用途：接线只记位置与通道
         var wire = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S01-F01").Id));
-        Assert.Equal((new ChannelRef(relay.Id, "relay", 2), "压合"), (wire.Channel, wire.Purpose));
+        Assert.Equal((new ChannelRef(relay.Id, "relay", 2), (string?)null), (wire.Channel, wire.Purpose));
         var mapped = page.Hardware.Single(c => c.NameText == "压合");
         Assert.Equal(("已接", true, true), (mapped.UseText, mapped.IsUsed, mapped.IsHere));
         Assert.StartsWith("治具位 C01-L01-S01-F01", mapped.MappedText);
@@ -446,11 +446,11 @@ public sealed class WiringServiceTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// 整模块拖到中间：选中可接线的位置才高亮、才放得下；放下后出预览，默认配到通道能分完的最近一级，
-    /// 可改成本位置或其他层级；确认才写库；同一位置已接过的通道逐行标出，不能确认
+    /// 整模块拖到中间：选中可接线的位置才高亮、才放得下；放下后模块的全部通道都接到这个位置（不选层级、不限数量、不写用途），
+    /// 确认才写库；同一位置已接过的通道逐行标出，不能确认
     /// </summary>
     [Fact]
-    public async Task MappingPage_DragModule_PreviewsByLevel_AndConfirmsOnlyWhenAllRowsValid()
+    public async Task MappingPage_DragModule_MapsAllChannelsToDroppedPosition_AndConfirmsOnlyWhenAllRowsValid()
     {
         var relay = await AddModuleAsync(Relay, "继电器", 1);
         var page = new Solve.UI.ViewModels.HardwareMappingViewModel();
@@ -469,8 +469,8 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.False(module.IsDragging);
         Assert.False(drop.IsOpen);
 
-        // 层位 C01-L01：拖进接线区高亮、拖出恢复；拖拽中不重入
-        page.SelectedItem = page.Roots[0].Children[0].Children[0];
+        // 治具位 C01-L01-S01-F01（下面只有 2 个产品位）：拖进接线区高亮、拖出恢复；拖拽中不重入
+        page.SelectedItem = page.Roots[0].Children[0].Children[0].Children[0].Children[0];
         Assert.True(page.BeginDrag(module));
         Assert.False(page.BeginDrag(module));
         Assert.Equal("继电器 · 地址 1 · 4 路通道", page.DragText);
@@ -483,42 +483,20 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.False(page.IsDropTargetActive);
         Assert.Null(page.DragText);
 
+        // 4 路通道全部接到放下的治具位，不因下级位置少而只接一部分
         Assert.True(drop.IsOpen);
-        Assert.Equal("继电器 · 地址 1 → 层位 C01-L01", drop.TitleText);
-        Assert.Equal(["本位置", "全部槽位（2 个）", "全部治具位（2 个）", "全部产品位（4 个）"], drop.LevelOptions.Select(o => o.ToString()));
+        Assert.Equal("继电器 · 地址 1 → 治具位 C01-L01-S01-F01", drop.TitleText);
+        Assert.Equal(["CH1 继电器", "CH2 继电器", "CH3 继电器", "CH4 继电器"], drop.Rows.Select(r => $"{r.CodeText} {r.LabelText}"));
 
-        // 默认：4 路通道能分完的最近一级是产品位，按位置编码顺序一路一个
-        Assert.Equal(TopologyLevel.Product, drop.SelectedLevel!.Level);
-        Assert.Equal(
-            ["CH1 继电器 → C01-L01-S01-F01-P01", "CH2 继电器 → C01-L01-S01-F01-P02", "CH3 继电器 → C01-L01-S02-F01-P01", "CH4 继电器 → C01-L01-S02-F01-P02"],
-            drop.Rows.Select(r => $"{r.CodeText} {r.LabelText} → {r.TargetText}"));
         // 测试里没有 UI 线程，校验结果在线程池上逐项写入：等最后写入的提示出现，再看确认按钮
         await WaitUntilAsync(() => drop.Message == "接 4 路通道，可以确认。");
         Assert.True(drop.ConfirmCommand.CanExecute(null));
-
-        // 槽位只有 2 个：配 2 路，其余 2 路仍列在表里、标"不接"，写明多出的通道
-        drop.SelectedLevel = drop.LevelOptions[1];
-        Assert.Equal(["C01-L01-S01", "C01-L01-S02", "不接", "不接"], drop.Rows.Select(r => r.TargetText));
-        Assert.Equal([false, false, true, true], drop.Rows.Select(r => r.IsSkipped));
-        await WaitUntilAsync(() => drop.Message?.Contains("模块还有 2 路通道不接") == true);
-        Assert.False(drop.IsError);
-        Assert.All(drop.Rows, r => Assert.False(r.HasProblem));
-
-        // 本位置：4 路都接到层位上
-        drop.SelectedLevel = drop.LevelOptions[0];
-        Assert.Equal(4, drop.Rows.Count);
-        Assert.All(drop.Rows, r => Assert.Equal("C01-L01", r.PositionText));
-
-        // 选回产品位确认：带上关联用途写库，预览收起，结果显示在右边
-        drop.SelectedLevel = drop.LevelOptions[3];
-        page.PurposeInput = "K";
-        await WaitUntilAsync(() => drop.ConfirmCommand.CanExecute(null));
         await drop.ConfirmCommand.ExecuteAsync();
         Assert.False(drop.IsOpen);
-        Assert.Equal("已接线 4 路：继电器 · 地址 1 → 层位 C01-L01", page.Message);
-        Assert.Equal(4, _wiring.Current.Count);
-        var third = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S02-F01-P01").Id));
-        Assert.Equal((new ChannelRef(relay.Id, "relay", 3), "K"), (third.Channel, third.Purpose));
+        Assert.Equal("已接线 4 路：继电器 · 地址 1 → 治具位 C01-L01-S01-F01", page.Message);
+        var own = _wiring.Current.GetOwn(Node("C01-L01-S01-F01").Id);
+        Assert.Equal([1, 2, 3, 4], own.Select(w => w.Channel.Index).Order());
+        Assert.All(own, w => Assert.Equal((relay.Id, (string?)null), (w.Channel.Device, w.Purpose)));
         Assert.Equal("已接 4 / 4", page.SelectedModule!.UsageText);
 
         // 再放一次：同一位置已接同一路通道，逐行标出，不能确认；换了位置预览作废
@@ -567,12 +545,11 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.Null(page.DragText);
         Assert.Equal(0, _wiring.Current.Count);
 
-        // 放进接线区：与点"关联"相同，带上关联用途，中间立即列出
-        page.PurposeInput = "压合";
+        // 放进接线区：与点"关联"相同，中间立即列出
         Assert.True(page.BeginDrag(channel));
         await page.CompleteDragAsync(overTarget: true);
         var wire = Assert.Single(_wiring.Current.GetOwn(Node("C01-L01-S02").Id));
-        Assert.Equal((new ChannelRef(relay.Id, "relay", 2), "压合"), (wire.Channel, wire.Purpose));
+        Assert.Equal(new ChannelRef(relay.Id, "relay", 2), wire.Channel);
         Assert.Single(page.Wiring.Rows);
         Assert.True(page.Hardware.Single(c => c.Channel == wire.Channel).IsHere);
 
@@ -852,7 +829,6 @@ public sealed class WiringServiceTests : IAsyncLifetime
         Assert.True(row.ShowCheckBox);
         Assert.EndsWith("等 2 个位置", row.MappedText);
         row.IsChecked = true;
-        page.PurposeInput = "电源";
 
         // P01 上已经接过这路通道：这一行标出重复，不能确认
         draft.Positions[0].IsChecked = true;
