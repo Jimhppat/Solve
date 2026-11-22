@@ -18,7 +18,7 @@ public sealed class SampleDriverPackage : IDriverPackage
 /// 输出：请求 AA 地址 10 状态(0/1) 和校验  响应 55 地址 10 状态 和校验
 /// 和校验 = 前面所有字节之和的低 8 位
 /// </code>
-/// 同时演示可选的仿真能力（<see cref="IDeviceSimulatorProvider"/>）：仿真模式下由 <see cref="Simulator"/> 按同一协议应答。
+/// 同时演示必备的仿真能力（<see cref="IDeviceSimulatorProvider"/>，SDK 1.4 起每个驱动都必须实现）：仿真模式下由 <see cref="Simulator"/> 按同一协议应答。
 /// </summary>
 public sealed class SamplePowerDriver : IDeviceDriver, IDeviceSimulatorProvider
 {

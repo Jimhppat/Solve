@@ -1,7 +1,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Threading;
 using Solve.Core.Application.Buses;
 using Solve.Core.Application.DeviceLibrary;
 using Solve.Core.Application.Devices;
@@ -27,15 +26,20 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public const int RuntimeLogNavIndex = 5;
     public const int SettingsNavIndex = 6;
 
+    // 状态圆点与胶囊开关的滑块同色系：仿真蓝、生产红（琥珀色在其他页面表示警告，不用于模式）
+    private const string SimulationBadgeColor = "#3B82F6";
+    private const string ProductionBadgeColor = "#EF4444";
+
     private Action<string>? _onEmergencyStop;
     private string _modeText = "仿真模式";
-    private string _modeBadgeColor = "#F59E0B";
+    private string _modeBadgeColor = SimulationBadgeColor;
     private bool _isHardwareMode;
     private int _selectedNavIndex = 0;
     private ViewModelBase _currentPage;
     private IOperatingModeSwitch? _modeSwitch;
     private Func<bool>? _requestRestart;
     private OperatingMode? _pendingModeTarget;
+    private OperatingMode? _savedModeTarget;
     private string? _modeDialogError;
     private bool _isModeSaving;
 
@@ -59,6 +63,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         EmergencyStopCommand = new RelayCommand(EmergencyStop);
         CancelModeSwitchCommand = new RelayCommand(CancelModeSwitch);
+        RequestModeToggleCommand = new RelayCommand(RequestModeToggle, () => CanSwitchMode);
         ConfirmModeSwitchCommand = new AsyncRelayCommand(ConfirmModeSwitchAsync, () => CanConfirmModeSwitch && !_isModeSaving);
     }
 
@@ -139,7 +144,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         private set
         {
             if (SetProperty(ref _isHardwareMode, value))
-                OnPropertyChanged(nameof(IsProductionSelected));
+                OnPropertyChanged(nameof(IsModeThumbProduction));
         }
     }
 
@@ -150,27 +155,26 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     // ==================== 生产 / 仿真切换 ====================
 
     /// <summary>
-    /// 状态栏滑块的位置，始终反映本次运行实际生效的模式。
-    /// 操作员拨动时只打开确认弹窗，滑块随即弹回实际模式；确认保存后程序重启，新进程按新模式启动。
+    /// 状态栏胶囊开关的滑块在"生产"一侧。只读、单向绑定：显示位置完全由这里决定，控件自己不改状态。
     /// </summary>
-    public bool IsProductionSelected
-    {
-        get => _modeSwitch?.CurrentMode == OperatingMode.Production || _modeSwitch is null && IsHardwareMode;
-        set
-        {
-            var target = value ? OperatingMode.Production : OperatingMode.Simulation;
-            if (_modeSwitch is not null && target != _modeSwitch.CurrentMode && CanSwitchMode)
-                OpenModeDialog(target);
-
-            // 不在 setter 里同步回弹：控件正处于自身的属性变更中，投递到下一轮再通知，滑块才会可靠地回到实际位置
-            Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(IsProductionSelected)));
-        }
-    }
+    /// <remarks>
+    /// <para>不用双向绑定的开关：控件被点击时会先改掉自己的选中状态，而绑定只在源值变化时才回推界面，
+    /// 源值没变（切换被拒绝或取消）时控件就停在错误的一侧。</para>
+    /// <para>位置的优先级：已保存、等待重启的目标 → 确认中的目标（本机不允许时不移动）→ 本次运行实际生效的模式。
+    /// 取消或"知道了"后确认中的目标清空，滑块随即滑回实际模式。</para>
+    /// </remarks>
+    public bool IsModeThumbProduction
+        => (_savedModeTarget ?? (IsModeDialogBlocked ? null : _pendingModeTarget) ?? ActualMode) == OperatingMode.Production;
 
     /// <summary>
-    /// 滑块可用：模式切换已接入，且没有正在处理或等待重启的切换
+    /// 胶囊开关可用：模式切换已接入，且没有正在处理或等待重启的切换
     /// </summary>
     public bool CanSwitchMode => _modeSwitch is { IsRestartPending: false } && !_isModeSaving;
+
+    /// <summary>
+    /// 点击胶囊开关：请求切到另一侧的模式，只打开确认弹窗，不直接切换
+    /// </summary>
+    public RelayCommand RequestModeToggleCommand { get; }
 
     /// <summary>
     /// 等待确认的目标模式；非空时显示切换弹窗
@@ -189,10 +193,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(ModeDialogTitle));
                 OnPropertyChanged(nameof(ModeDialogMessage));
                 OnPropertyChanged(nameof(ModeDialogCancelText));
+                OnPropertyChanged(nameof(IsModeThumbProduction));
                 ConfirmModeSwitchCommand.RaiseCanExecuteChanged();
             }
         }
     }
+
+    /// <summary>
+    /// 本次运行实际生效的模式；模式切换接入前按启动报告的模式
+    /// </summary>
+    private OperatingMode ActualMode
+        => _modeSwitch?.CurrentMode ?? (IsHardwareMode ? OperatingMode.Production : OperatingMode.Simulation);
 
     public bool IsModeDialogOpen => _pendingModeTarget is not null;
 
@@ -338,7 +349,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         ModeText = modeText;
         IsHardwareMode = isHardware;
-        ModeBadgeColor = isHardware ? "#EF4444" : "#F59E0B";
+        ModeBadgeColor = isHardware ? ProductionBadgeColor : SimulationBadgeColor;
 
         await BusConsole.InitializeAsync(busService);
     }
@@ -361,12 +372,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         _modeSwitch = modeSwitch;
         _requestRestart = requestRestart;
-        OnPropertyChanged(nameof(IsProductionSelected));
-        OnPropertyChanged(nameof(CanSwitchMode));
+        OnPropertyChanged(nameof(IsModeThumbProduction));
+        OnModeSwitchAvailabilityChanged();
     }
 
-    private void OpenModeDialog(OperatingMode target)
+    private void RequestModeToggle()
     {
+        if (!CanSwitchMode || IsModeDialogOpen)
+            return;
+
+        // 目标总是另一侧：胶囊只有两个位置，点哪里都等于"换到另一种模式"
+        var target = ActualMode == OperatingMode.Production ? OperatingMode.Simulation : OperatingMode.Production;
         ModeDialogError = null;
         PendingModeTarget = target;
     }
@@ -408,9 +424,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             SetModeSaving(false);
         }
 
+        // 先记下已保存的目标再关弹窗：滑块停在新模式一侧直到重启，而不是滑回去又在新进程里出现在另一侧
+        _savedModeTarget = target;
         PendingModeTarget = null;
         ModeText = $"正在切换到{OperatingModeErrors.Describe(target)}模式，程序即将重启…";
-        OnPropertyChanged(nameof(CanSwitchMode));
+        OnModeSwitchAvailabilityChanged();
 
         if (_requestRestart?.Invoke() != true)
             ModeText = $"已保存为{OperatingModeErrors.Describe(target)}模式，但未能自动重启，请手动重启程序";
@@ -419,8 +437,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void SetModeSaving(bool saving)
     {
         _isModeSaving = saving;
-        OnPropertyChanged(nameof(CanSwitchMode));
+        OnModeSwitchAvailabilityChanged();
         ConfirmModeSwitchCommand.RaiseCanExecuteChanged();
+    }
+
+    private void OnModeSwitchAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(CanSwitchMode));
+        RequestModeToggleCommand.RaiseCanExecuteChanged();
     }
 
     private static readonly TimeSpan ModeSaveTimeout = TimeSpan.FromSeconds(15);

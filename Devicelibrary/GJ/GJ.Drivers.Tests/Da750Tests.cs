@@ -137,6 +137,11 @@ public sealed class Da750Tests
     public void Package_ListsDriver()
         => Assert.Equal(["gj.da750-4-60a"], new GJDriverPackage().Drivers.Select(d => d.Info.Id));
 
+    // SDK 1.4 起每个驱动都必须带仿真设备，否则设备库拒绝载入整个驱动包；仿真行为见 Da750SimulatorTests
+    [Fact]
+    public void Package_EveryDriverProvidesSimulator()
+        => Assert.All(new GJDriverPackage().Drivers, d => Assert.IsAssignableFrom<IDeviceSimulatorProvider>(d));
+
     [Fact]
     public void Package_DependsOnlyOnSdkAndFramework()
     {
