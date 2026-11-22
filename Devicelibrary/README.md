@@ -308,7 +308,8 @@ new CommandInfo("load.cc", "恒流带载", CommandSafety.Output)
 ```csharp
 internal sealed class Da750Session : IDeviceSession, ISafeStateProvider
 {
-    // group = null, channel = 0：整台模块；group = 通道组 Key, channel = 1..数量：这一路（编号同 DeviceCommand.Channel）
+    // group = null, channel = 0：整台模块
+    // group = 通道组 Key, channel = 1..数量：这一路（编号同 DeviceCommand.Channel）
     public IExchange BeginSafeState(string? group, int channel) => /* 卸载目标通道 */;
 }
 ```
