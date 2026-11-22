@@ -24,6 +24,8 @@ namespace Solve.UI.ViewModels;
 /// <remarks>
 /// <para>一个位置就是拓扑里的一个节点：在树上选中位置，再在右边点某路通道的"关联"，这路通道就接到该位置上（向下生效）。
 /// 右边每路通道都显示它的使用状态（未接 / 已接 / 共用）与映射到的位置，点"定位"跳到那个位置；中间的接线点"定位通道"跳到右边的通道。</para>
+/// <para>拖拽：把右边的一路通道拖到中间，等同点它的"关联"；把整个模块拖到中间，打开整模块接线预览（<see cref="ModuleDrop"/>），
+/// 选层级、逐行校验后确认才写库。拖拽状态（预览文字与位置、放置区高亮、被拖项半透明）都在这里，视图只翻译指针事件。</para>
 /// <para>硬件多时不平铺：一次只列出一个模块的通道。勾选按通道记录，切换总线、模块、筛选后不丢（映射草稿可以跨模块取通道）。</para>
 /// <para>只列出总线上有启用通道的模块：没用到的设备、在模块配置里停用的通道不出现。</para>
 /// <para>位置结构在"设备拓扑"页维护，本页只读拓扑；每次进入本页时按当前拓扑刷新（<see cref="Refresh"/>）。
@@ -78,9 +80,17 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     private bool _disposed;
     private bool _isDraftMode;
 
+    // 拖拽：被拖的模块（MappingModuleOption）或通道（MappingChannelViewModel）；没在拖为 null
+    private object? _dragItem;
+    private string? _dragText;
+    private double _dragX;
+    private double _dragY;
+    private bool _isDropTargetActive;
+
     public HardwareMappingViewModel()
     {
         Draft = new MappingDraftViewModel(CheckedChannels, () => _purposeInput, OnDraftMapped);
+        ModuleDrop = new ModuleDropViewModel(() => _purposeInput, OnModuleDropped);
         SelectVisibleChannelsCommand = new RelayCommand(() => SetVisibleChannels(true));
         ClearChannelsCommand = new RelayCommand(ClearCheckedChannels);
         Wiring.LocateChannelRequested += OnLocateChannelRequested;
@@ -99,6 +109,11 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
     public MappingDraftViewModel Draft { get; }
 
     /// <summary>
+    /// 整模块拖到中间后的接线预览：选层级、逐行校验、确认才写库
+    /// </summary>
+    public ModuleDropViewModel ModuleDrop { get; }
+
+    /// <summary>
     /// 中栏显示映射草稿（否则显示选中位置的接线）；草稿模式下硬件通道可以勾选
     /// </summary>
     public bool IsDraftMode
@@ -113,6 +128,10 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             foreach (var row in _allChannels)
                 row.IsSelectable = value;
             Draft.SetScope(_selectedItem?.Node, _bound);
+
+            // 放置区只在"按位置查看"下存在：切走时拖拽与整模块预览一并作废
+            EndDrag();
+            ModuleDrop.Close();
         }
     }
 
@@ -189,6 +208,9 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
             Wiring.ShowNode(value?.Node);
             if (_isDraftMode)
                 Draft.SetScope(value?.Node, _bound);
+
+            // 预览是按放下时的位置配的：换了位置就作废
+            ModuleDrop.Close();
             Message = null;
             OnPropertyChanged(nameof(SelectedTitle));
             OnPropertyChanged(nameof(CanMapHere));
@@ -411,6 +433,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
         _inspector = inspector;
         Wiring.Attach(inspector, commands);
         Draft.Attach(inspector);
+        ModuleDrop.Attach(inspector);
         inspector.Wiring.Changed += OnWiringChanged;
         Refresh();
     }
@@ -460,6 +483,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        EndDrag();
         _disposed = true;
         Wiring.LocateChannelRequested -= OnLocateChannelRequested;
         if (_inspector is not null)
@@ -508,6 +532,163 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
         {
             SetBusy(false);
         }
+    }
+
+    /// <summary>
+    /// 整模块接线写库成功：结果显示在右边（与"关联"的结果同处），刷新通道使用状态与中间接线
+    /// </summary>
+    private void OnModuleDropped(TopologyNode node, string text)
+    {
+        ShowMessage(text);
+        RebuildHardware();
+        Wiring.ShowNode(_selectedItem?.Node ?? node);
+    }
+
+    // ==================== 拖拽：模块 / 通道 → 中间接线区 ====================
+
+    /// <summary>
+    /// 正在拖动右边的模块或通道（拖拽预览跟随指针）
+    /// </summary>
+    public bool IsDragging => _dragItem is not null;
+
+    /// <summary>
+    /// 拖拽预览上的文字，如"GJ DA750-4-60A-02 · 地址 2 · 4 路"
+    /// </summary>
+    public string? DragText
+    {
+        get => _dragText;
+        private set => SetProperty(ref _dragText, value);
+    }
+
+    /// <summary>
+    /// 拖拽预览的位置（页面坐标，由视图换算）
+    /// </summary>
+    public double DragX
+    {
+        get => _dragX;
+        private set => SetProperty(ref _dragX, value);
+    }
+
+    public double DragY
+    {
+        get => _dragY;
+        private set => SetProperty(ref _dragY, value);
+    }
+
+    /// <summary>
+    /// 指针在中间接线区内且此处可以放下：接线区高亮
+    /// </summary>
+    public bool IsDropTargetActive
+    {
+        get => _isDropTargetActive;
+        private set => SetProperty(ref _isDropTargetActive, value);
+    }
+
+    /// <summary>
+    /// 中间接线区现在能接收放下：按位置查看、选中了可接线的位置、没有写操作在进行
+    /// </summary>
+    public bool CanDropHere => IsWiringMode && CanMapHere && !ModuleDrop.IsBusy;
+
+    /// <summary>
+    /// 开始拖动一个模块（有启用通道的）或一路通道。草稿模式下中间没有放置区，不开始；已在拖时不重入。
+    /// </summary>
+    /// <returns>是否开始了拖拽</returns>
+    public bool BeginDrag(object? item)
+    {
+        if (_dragItem is not null || _isDraftMode || _disposed)
+            return false;
+
+        switch (item)
+        {
+            case MappingModuleOption { Channels.Count: > 0 } module:
+                module.IsDragging = true;
+                DragText = $"{module.Text} · {module.Channels.Count} 路";
+                break;
+            case MappingChannelViewModel channel:
+                channel.IsDragging = true;
+                DragText = $"{channel.NameText} · {channel.KindText}";
+                break;
+            default:
+                return false;
+        }
+
+        _dragItem = item;
+        IsDropTargetActive = false;
+        OnPropertyChanged(nameof(IsDragging));
+        return true;
+    }
+
+    /// <summary>
+    /// 指针移动：更新预览位置；<paramref name="overTarget"/> 为指针在接线区边界内（视图判定）
+    /// </summary>
+    public void UpdateDrag(double x, double y, bool overTarget)
+    {
+        if (_dragItem is null)
+            return;
+
+        DragX = x;
+        DragY = y;
+        IsDropTargetActive = overTarget && CanDropHere;
+    }
+
+    /// <summary>
+    /// 取消拖拽（Esc、失去指针捕获、离开页面）：清掉预览与高亮，不改任何数据
+    /// </summary>
+    public void CancelDrag() => EndDrag();
+
+    /// <summary>
+    /// 松开指针：在接线区内且此处可以放下时执行（通道 = 关联到当前位置；模块 = 打开整模块接线预览），否则等同取消。
+    /// 拖拽状态先清掉，再执行放置，任何情况下都不会残留高亮或预览。
+    /// </summary>
+    public async Task CompleteDragAsync(bool overTarget)
+    {
+        var item = _dragItem;
+        var drop = overTarget && CanDropHere;
+        EndDrag();
+        if (item is null || !drop || _selectedItem?.Node is not { Level: not TopologyLevel.System } node)
+            return;
+
+        try
+        {
+            switch (item)
+            {
+                case MappingChannelViewModel row when row.IsMappedAt(node.Id):
+                    ShowMessage($"{row.NameText} 已接在 {node.Address}", isError: true);
+                    break;
+                case MappingChannelViewModel row:
+                    await MapAsync(row);
+                    break;
+                case MappingModuleOption module when _bound is { } topology:
+                    Message = null;
+                    ModuleDrop.Open(module, node, topology);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // 由视图在 UI 线程上发起：异常不能逃逸，否则会触发全站安全跳闸
+            ShowMessage($"放置失败：{ex.Message}", isError: true);
+        }
+    }
+
+    private void EndDrag()
+    {
+        switch (_dragItem)
+        {
+            case MappingModuleOption module:
+                module.IsDragging = false;
+                break;
+            case MappingChannelViewModel channel:
+                channel.IsDragging = false;
+                break;
+        }
+
+        var wasDragging = _dragItem is not null;
+        _dragItem = null;
+        DragText = null;
+        IsDropTargetActive = false;
+        if (wasDragging)
+            OnPropertyChanged(nameof(IsDragging));
     }
 
     /// <summary>
@@ -605,6 +786,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
         _selectedBusId = keepBus;
         ShowBus(_buses.FirstOrDefault(b => b.Id == keepBus) ?? _buses.FirstOrDefault());
         Draft.OnExternalChanged();
+        ModuleDrop.OnExternalChanged();
     }
 
     /// <summary>
@@ -858,9 +1040,20 @@ public sealed record ChannelFilterOption(ChannelUse? Use, string Text)
 /// <summary>
 /// 硬件通道的模块选项：一行一个模块，如"Chroma 62015B · 地址 1"，带"已接 x / y"
 /// </summary>
-public sealed class MappingModuleOption(DeviceId id, BusId bus, string text, IReadOnlyList<MappingChannelViewModel> channels)
+public sealed class MappingModuleOption(DeviceId id, BusId bus, string text, IReadOnlyList<MappingChannelViewModel> channels) : ViewModelBase
 {
+    private bool _isDragging;
+
     public DeviceId Id { get; } = id;
+
+    /// <summary>
+    /// 正被拖动：原位置半透明显示
+    /// </summary>
+    public bool IsDragging
+    {
+        get => _isDragging;
+        internal set => SetProperty(ref _isDragging, value);
+    }
 
     public BusId Bus { get; } = bus;
 
@@ -890,6 +1083,7 @@ public sealed class MappingChannelViewModel : ViewModelBase
     private bool _isChecked;
     private bool _isSelectable;
     private bool _isHere;
+    private bool _isDragging;
 
     /// <param name="moduleText">"总线 · 模块"，映射草稿里显示</param>
     /// <param name="mapped">这路通道接到的位置（按接线顺序）及接线</param>
@@ -1011,6 +1205,15 @@ public sealed class MappingChannelViewModel : ViewModelBase
     {
         get => _isHere;
         internal set => SetProperty(ref _isHere, value);
+    }
+
+    /// <summary>
+    /// 正被拖动：原位置半透明显示
+    /// </summary>
+    public bool IsDragging
+    {
+        get => _isDragging;
+        internal set => SetProperty(ref _isDragging, value);
     }
 
     /// <summary>
