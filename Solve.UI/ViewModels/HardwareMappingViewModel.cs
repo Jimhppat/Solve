@@ -370,6 +370,7 @@ public sealed class HardwareMappingViewModel : ViewModelBase, IDisposable
                         MapAsync, Locate, () => CanMapHere, OnChannelCheckedChanged)
                     {
                         IsSelectable = _isDraftMode,
+                        Kind = group.Kind,
                     });
                 }
             }
@@ -513,6 +514,11 @@ public sealed class MappingChannelViewModel : MappingRowViewModel
     }
 
     public ChannelRef Channel { get; }
+
+    /// <summary>
+    /// 通道功能：映射草稿按接点配对时只配同功能的接点
+    /// </summary>
+    public ChannelKind? Kind { get; init; }
 
     public string ModuleText { get; }
 

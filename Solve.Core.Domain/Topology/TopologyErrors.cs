@@ -25,6 +25,7 @@ public static class TopologyErrors
     public const string ChildrenField = "Children";
     public const string DepthField = "Depth";
     public const string NodeLimitField = "NodeLimit";
+    public const string PortsField = "Ports";
 
     public static Error InvalidField(string field, string message) => new(DefinitionCodePrefix + field, message);
 

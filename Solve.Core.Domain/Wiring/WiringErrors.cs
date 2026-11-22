@@ -29,6 +29,11 @@ public static class WiringErrors
     public const string StorageCorruptRowCode = "Wiring.Storage.CorruptRow";
 
     /// <summary>
+    /// 产品位要求的接点没有接完（安全联锁拒绝向它发命令）
+    /// </summary>
+    public const string PortsMissingCode = "Wiring.PortsMissing";
+
+    /// <summary>
     /// 一次报告中最多列出的冲突数：批量接线一处写错可能重复上百次
     /// </summary>
     public const int MaxListed = 10;

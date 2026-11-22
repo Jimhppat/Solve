@@ -12,6 +12,14 @@ namespace Solve.Core.Domain.Wiring;
 public readonly record struct EffectiveWire(Wire Wire, TopologyNode Source);
 
 /// <summary>
+/// 产品位的一个接点及满足它的有效接线；<see cref="Wire"/> 为 null 表示还没接
+/// </summary>
+public readonly record struct PortCoverage(RequiredPort Required, EffectiveWire? Wire)
+{
+    public bool IsConnected => Wire is not null;
+}
+
+/// <summary>
 /// 整台设备的接线快照（数字孪生里"线怎么接"）：按拓扑定位每条接线，并负责接线规则的校验。
 /// </summary>
 /// <remarks>
@@ -124,6 +132,41 @@ public sealed class WiringMap
 
             foreach (var wire in GetOwn(source.Id))
                 result.Add(new EffectiveWire(wire, source));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 产品位的接点核对：它要求的每个接点（自身与上级声明的）由哪一路有效接线满足，未满足的为 null。
+    /// 只核对产品位（见 <see cref="PortGroup"/>）；不是产品位、不在拓扑中或没有接点要求时为空列表。
+    /// </summary>
+    public IReadOnlyList<PortCoverage> GetPortCoverage(TopologyNodeId nodeId)
+    {
+        if (Topology is not { } topology || !topology.TryGetNode(nodeId, out var node)
+            || node.Level != TopologyLevel.Product || node.RequiredPorts.Count == 0)
+        {
+            return [];
+        }
+
+        var effective = GetEffective(nodeId);
+        var result = new PortCoverage[node.RequiredPorts.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            var required = node.RequiredPorts[i];
+
+            // 路径唯一规则保证同一（功能，用途）在一条路径上最多一路，取第一路即可
+            EffectiveWire? match = null;
+            foreach (var wire in effective)
+            {
+                if (required.Port.Matches(wire.Wire.Kind, wire.Wire.PurposeKey))
+                {
+                    match = wire;
+                    break;
+                }
+            }
+
+            result[i] = new PortCoverage(required, match);
         }
 
         return result;

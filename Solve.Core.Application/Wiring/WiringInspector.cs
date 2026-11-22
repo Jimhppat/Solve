@@ -137,9 +137,12 @@ public sealed class WiringInspector
     }
 
     /// <summary>
-    /// 安全联锁的判据：位置可用（自身与上级都启用）、至少有一路接线、全部有效接线都就绪，才允许向这里发命令。
-    /// 将来的命令执行必须先通过本检查；不满足时返回第一个原因，故障安全方向是拒绝。
+    /// 安全联锁的判据：位置可用（自身与上级都启用）、产品位要求的接点全部接上、至少有一路接线、全部有效接线都就绪，才允许向这里发命令。
+    /// 命令执行必须先通过本检查；不满足时返回第一个原因，故障安全方向是拒绝。
     /// </summary>
+    /// <remarks>
+    /// 接点不全时拒绝全部命令（含写参数）：接线不完整的产品位上，命令的实际作用对象与操作员看到的不一致。
+    /// </remarks>
     public Result CheckReady(TopologyNodeId nodeId)
     {
         var map = _wiring.Current;
@@ -147,6 +150,14 @@ public sealed class WiringInspector
             return Result.Failure(WiringErrors.NodeNotFound());
         if (!node.IsEffectivelyEnabled)
             return Result.Failure(new Error("Wiring.NodeDisabled", $"{node.Address} 已停用（维护屏蔽），不能发出命令。"));
+
+        var missing = map.GetPortCoverage(nodeId).Where(p => !p.IsConnected).Select(p => p.Required.Port.DisplayText).ToList();
+        if (missing.Count > 0)
+        {
+            const int listed = 5;
+            var names = string.Join("、", missing.Take(listed)) + (missing.Count > listed ? $" 等 {missing.Count} 个" : string.Empty);
+            return Result.Failure(new Error(WiringErrors.PortsMissingCode, $"{node.Address} 的接点没有接完，缺少：{names}。"));
+        }
 
         var statuses = Inspect(nodeId);
         if (statuses.Count == 0)

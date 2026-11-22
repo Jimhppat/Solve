@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Solve.Core.Application.Topology;
 using Solve.Core.Domain.Topology;
@@ -135,7 +136,8 @@ public sealed partial class TopologyViewModel
         && (NormalizeName(_nodeNameInput) != node.Name
             || _nodeEnabledInput != node.IsEnabled
             || (ShowPositionInputs && _ordinalInput != node.Ordinal)
-            || (ShowChildCountInput && _childCountInput != node.Children.Count));
+            || (ShowChildCountInput && _childCountInput != node.Children.Count)
+            || HasPortChanges(node));
 
     // ==================== 命令 ====================
 
@@ -178,7 +180,18 @@ public sealed partial class TopologyViewModel
             childCount = value;
         }
 
-        var edit = new TopologyNodeEdit(name, isRoot || _nodeEnabledInput, ordinal, childCount);
+        IReadOnlyList<PortGroup>? ports = null;
+        if (HasPortChanges(node))
+        {
+            ports = ReadPorts(out error);
+            if (ports is null)
+            {
+                ShowMessage(PendingOrigin.Node, error!, isError: true);
+                return;
+            }
+        }
+
+        var edit = new TopologyNodeEdit(name, isRoot || _nodeEnabledInput, ordinal, childCount, ports);
         var plan = await PlanAsync(() => service.PlanNodeEdit(node.Id, edit), PendingOrigin.Node);
         if (plan is null)
             return;
@@ -243,6 +256,7 @@ public sealed partial class TopologyViewModel
         _nodeEnabledInput = node?.IsEnabled ?? true;
         _ordinalInput = node is { Level: not TopologyLevel.System } ? node.Ordinal : null;
         _childCountInput = node is { Level: not TopologyLevel.Product } ? node.Children.Count : null;
+        ShowPortInputs(node);
 
         OnPropertyChanged(nameof(NodeNameInput));
         OnPropertyChanged(nameof(NodeEnabledInput));

@@ -17,6 +17,8 @@ public sealed class TopologyNode
         string? name,
         bool isEnabled,
         bool isEffectivelyEnabled,
+        IReadOnlyList<PortGroup> ports,
+        IReadOnlyList<RequiredPort> requiredPorts,
         TopologyNode[] children)
     {
         Id = id;
@@ -24,6 +26,8 @@ public sealed class TopologyNode
         Name = name;
         IsEnabled = isEnabled;
         IsEffectivelyEnabled = isEffectivelyEnabled;
+        Ports = ports;
+        RequiredPorts = requiredPorts;
         _children = children;
         Children = children.Length == 0 ? ReadOnlyCollection<TopologyNode>.Empty : Array.AsReadOnly(children);
     }
@@ -64,6 +68,17 @@ public sealed class TopologyNode
     /// 本节点及全部祖先是否都启用。任一祖先停用，整棵子树都视为停用。
     /// </summary>
     public bool IsEffectivelyEnabled { get; }
+
+    /// <summary>
+    /// 本位置自身声明的接点组（配置值，已规范化）
+    /// </summary>
+    public IReadOnlyList<PortGroup> Ports { get; }
+
+    /// <summary>
+    /// 本位置下的产品位要求的接点：全部上级与自身声明的接点组展开后合并（上级的在前；同一接点只保留最上层的声明）。
+    /// 只在产品位上核对，见 <see cref="PortGroup"/>
+    /// </summary>
+    public IReadOnlyList<RequiredPort> RequiredPorts { get; }
 
     /// <summary>
     /// 下级节点，按序号升序

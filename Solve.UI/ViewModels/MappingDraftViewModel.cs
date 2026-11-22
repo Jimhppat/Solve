@@ -135,7 +135,8 @@ public sealed class DraftRowViewModel : ViewModelBase
 /// 逐行校验、可调整 → 确认后一次写入。
 /// </summary>
 /// <remarks>
-/// <para>组装规则：勾选的位置按位置编码排序，勾选的通道按硬件列表顺序，一一对应；两边数量不同时只配对较少的一边，并明确提示多出的数量。</para>
+/// <para>组装规则：勾选的位置声明了接点且还有没接的时，按接点配对——每路勾选的通道（按硬件列表顺序）取第一个同功能、还没配上的接点，
+/// 用途填接点名；否则勾选的位置按位置编码排序，与勾选的通道一一对应。两种方式都明确提示没配上的数量。</para>
 /// <para>草稿只在内存里，确认前不写库；任何一行有问题都不能确认（整批要么全接上、要么一条不写）。
 /// 建立映射只是写配置，不会让任何输出动作。</para>
 /// <para>只能在 UI 线程上使用；校验与写库在线程池上完成。</para>
@@ -317,6 +318,14 @@ public sealed class MappingDraftViewModel : ViewModelBase
         if (positions.Count == 0 || channels.Count == 0)
             return;
 
+        // 选中的位置声明了接点且还有没接的：按接点配对，用途就是接点名；否则按位置一一对应
+        var openPorts = OpenPorts(positions);
+        if (openPorts.Count > 0)
+        {
+            await AssembleByPortsAsync(openPorts, channels);
+            return;
+        }
+
         var count = Math.Min(positions.Count, channels.Count);
         var purpose = _defaultPurpose();
         Rows.Clear();
@@ -330,6 +339,70 @@ public sealed class MappingDraftViewModel : ViewModelBase
                 : $"多出的 {channels.Count - count} 路通道没有分配位置。"
             : null;
         await ValidateAsync(extra);
+    }
+
+    /// <summary>
+    /// 选中位置上还没接的接点，按位置编码、接点声明顺序
+    /// </summary>
+    private List<(TopologyNode Node, Port Port)> OpenPorts(IReadOnlyList<TopologyNode> positions)
+    {
+        var open = new List<(TopologyNode, Port)>();
+        if (_inspector?.Wiring.Current is not { } map)
+            return open;
+
+        foreach (var node in positions)
+        {
+            foreach (var coverage in map.GetPortCoverage(node.Id))
+            {
+                if (!coverage.IsConnected)
+                    open.Add((node, coverage.Required.Port));
+            }
+        }
+
+        return open;
+    }
+
+    /// <summary>
+    /// 按接点配对：勾选的通道按列表顺序，各取第一个同功能、还没配上的接点；行按位置、接点顺序排列，用途填接点名
+    /// </summary>
+    private async Task AssembleByPortsAsync(List<(TopologyNode Node, Port Port)> openPorts, IReadOnlyList<MappingChannelViewModel> channels)
+    {
+        var assigned = new MappingChannelViewModel?[openPorts.Count];
+        var unmatched = 0;
+        foreach (var channel in channels)
+        {
+            var slot = -1;
+            for (var i = 0; i < openPorts.Count; i++)
+            {
+                if (assigned[i] is null && openPorts[i].Port.Kind == channel.Kind)
+                {
+                    slot = i;
+                    break;
+                }
+            }
+
+            if (slot < 0)
+                unmatched++;
+            else
+                assigned[slot] = channel;
+        }
+
+        Rows.Clear();
+        for (var i = 0; i < openPorts.Count; i++)
+        {
+            if (assigned[i] is { } channel)
+                Rows.Add(new DraftRowViewModel(openPorts[i].Node, channel, openPorts[i].Port.Purpose, Move, Remove, OnRowPurposeChanged));
+        }
+
+        OnPropertyChanged(nameof(HasRows));
+
+        var notes = new List<string>();
+        var empty = openPorts.Count - Rows.Count;
+        if (empty > 0)
+            notes.Add($"还有 {empty} 个接点没有分配通道。");
+        if (unmatched > 0)
+            notes.Add($"{unmatched} 路通道没有同功能的空接点，未使用。");
+        await ValidateAsync(notes.Count == 0 ? null : string.Join("", notes));
     }
 
     private async Task ConfirmAsync()
@@ -494,7 +567,10 @@ public sealed class MappingDraftViewModel : ViewModelBase
         var list = new List<DraftPositionViewModel>(nodes.Count);
         foreach (var node in nodes)
         {
-            if (_filter.Missing is { } kind && map is not null && map.GetEffective(node.Id).Any(e => e.Wire.Kind == kind))
+            // "缺少某功能"：没有这种功能的接线，或声明的这种功能的接点还有没接的
+            if (_filter.Missing is { } kind && map is not null
+                && map.GetEffective(node.Id).Any(e => e.Wire.Kind == kind)
+                && !map.GetPortCoverage(node.Id).Any(p => !p.IsConnected && p.Required.Port.Kind == kind))
                 continue;
 
             var item = new DraftPositionViewModel(node, OnPositionCheckedChanged);
