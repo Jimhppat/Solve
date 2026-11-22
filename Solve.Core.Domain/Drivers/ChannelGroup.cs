@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Solve.Core.Domain.Drivers;
 
 /// <summary>
@@ -121,8 +123,19 @@ public sealed record ChannelGroup(string Key, string Name, ChannelKind Kind, int
     public int EnabledCount => EnabledIndices?.Count(Contains) ?? Count;
 
     /// <summary>
-    /// 一路通道的显示名：有别名用别名；单路组只显示组名，多路组加通道号，如"继电器 3"
+    /// 一路通道的显示名：有别名用别名，否则为组名 + 通道编号，如"负载 CH3"（单路组同样带编号，如"输出 CH1"）
     /// </summary>
     public string ChannelName(int index)
-        => Aliases.TryGetValue(index, out var alias) ? alias : Count == 1 ? Name : $"{Name} {index}";
+        => Aliases.TryGetValue(index, out var alias) ? alias : DefaultName(Name, index);
+
+    /// <summary>
+    /// 通道编号，如"CH3"。编号即通道号（驱动的 DeviceCommand.Channel、点位上报的通道号），从 1 开始，
+    /// 与设备面板 / 端子排上的丝印一致，接线时按它核对，所以任何地方都不另起编号。
+    /// </summary>
+    public static string Code(int index) => string.Create(CultureInfo.InvariantCulture, $"CH{index}");
+
+    /// <summary>
+    /// 不带别名的通道名，如"负载 CH3"：组名区分同一模块上的多组通道（如"输出 CH1"与"继电器 CH1"）
+    /// </summary>
+    public static string DefaultName(string groupName, int index) => $"{groupName} {Code(index)}";
 }

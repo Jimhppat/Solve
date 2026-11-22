@@ -10,11 +10,19 @@ using Solve.Core.Domain.Topology;
 namespace Solve.UI.ViewModels;
 
 /// <summary>
-/// 整模块接线预览的一行：位置 ← 通道，以及这一行的问题
+/// 整模块接线预览的一行：通道 → 位置，以及这一行的问题。拖来的是模块的通道，所以按通道逐行列出，模块的每一路都在表里
 /// </summary>
-public sealed record ModuleDropRow(string PositionText, string ChannelText, string? Problem)
+/// <param name="CodeText">通道编号，如"CH1"</param>
+/// <param name="LabelText">通道别名或组名，如"负载"</param>
+/// <param name="PositionText">接到的位置编码（有名称时带名称）；null 表示这路通道这次不接（选中的层级位置不够分）</param>
+/// <param name="Problem">校验问题；null 表示这一行可以写入</param>
+public sealed record ModuleDropRow(string CodeText, string LabelText, string? PositionText, string? Problem)
 {
     public bool HasProblem => Problem is not null;
+
+    public bool IsSkipped => PositionText is null;
+
+    public string TargetText => PositionText ?? "不接";
 }
 
 /// <summary>
@@ -242,9 +250,14 @@ public sealed class ModuleDropViewModel : ViewModelBase
                     : null;
         }
 
+        // 每一路通道都列出：分不到位置的标"不接"，操作员能直接看出是哪几路没接
         _pairs = pairs;
         _preview = null;
-        Rows = pairs.Select((p, i) => new ModuleDropRow(positions[i].Address.ToString(), channels[i].NameText, null)).ToList();
+        Rows = channels.Select((channel, i) => new ModuleDropRow(
+            channel.CodeText,
+            channel.LabelText,
+            i < positions.Count ? Describe(positions[i]) : null,
+            null)).ToList();
         RaiseCommands();
         _ = ValidateAsync();
     }
@@ -346,9 +359,13 @@ public sealed class ModuleDropViewModel : ViewModelBase
         return pairs.Select(p => p with { Purpose = purpose }).ToList();
     }
 
+    private static string Describe(TopologyNode node)
+        => node.Name is { } name ? $"{node.Address}（{name}）" : node.Address.ToString();
+
     private void ApplyPreview(WiringAssignPreview preview)
     {
-        if (preview.Rows.Count != _rows.Count)
+        // 校验结果按配对顺序逐行对应；表里配对行在前，"不接"的行在后、不参与校验
+        if (preview.Rows.Count != _pairs.Count || _rows.Count < _pairs.Count)
         {
             _preview = null;
             RaiseCommands();
@@ -356,9 +373,11 @@ public sealed class ModuleDropViewModel : ViewModelBase
         }
 
         _preview = preview;
-        Rows = _rows.Select((row, i) => row with { Problem = preview.Rows[i].Problem }).ToList();
+        Rows = _rows.Select((row, i) => i < preview.Rows.Count ? row with { Problem = preview.Rows[i].Problem } : row).ToList();
         var problems = preview.ProblemCount;
-        var summary = problems == 0 ? $"共 {_rows.Count} 路，可以确认。" : $"共 {_rows.Count} 路，其中 {problems} 行有问题，不能确认。";
+        var summary = problems == 0
+            ? $"接 {_pairs.Count} 路通道，可以确认。"
+            : $"接 {_pairs.Count} 路通道，其中 {problems} 行有问题，不能确认。";
         ShowMessage(_note is null ? summary : $"{summary} {_note}", isError: problems > 0);
         RaiseCommands();
     }

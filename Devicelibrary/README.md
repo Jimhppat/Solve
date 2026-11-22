@@ -197,6 +197,19 @@ public sealed class AcmeDriverPackage : IDriverPackage
 
 点位 / 命令属于某一路通道时设置 `Group = 通道组 Key`，上报 / 执行时用通道号（1..Count）区分；模块级的保持 `null`。
 
+**通道数量与编号**：模块有几路通道，由驱动在 `Channels` 里按组声明（`ChannelGroupInfo.Count`），主程序不另外配置、也不猜测；模块的通道总数 = 各组数量之和。例如 4 路电子负载声明一组 `new ChannelGroupInfo("load", "负载", ChannelFunction.Load, 4)`。
+
+主程序把每一路通道统一编号为 **CH + 通道号**：
+
+| 项 | 规则 |
+|---|---|
+| 编号 | `CH1`..`CHn`，n = 该组的 `Count`；通道号就是 `DeviceCommand.Channel`、`PointSample.Channel`、`BeginSafeState(group, channel)` 的 `channel`，从 1 开始，不另起编号 |
+| 与设备对应 | 通道号 1 必须是设备面板 / 端子排上的第 1 路（丝印 CH1）：现场照着硬件映射页的 CH 编号接线、查线。设备手册从 0 编号时，驱动在编解码时换算，对外一律从 1 开始 |
+| 显示名 | 组名 + 编号，如"负载 CH3"；单路组同样带编号，如"输出 CH1"。模块配置里给某一路起了别名时显示别名 |
+| 多组 | 同一模块的不同组各自从 CH1 编号（如"输出 CH1"与"继电器 CH1"），界面用组名区分，所以组名要短而明确 |
+
+模块实例可以在模块配置里只启用其中几路（停用的端子不出现在硬件映射页），但不能超出驱动声明的数量。
+
 Key 常量集中定义在驱动类型里（`public const string VoltageKey = "voltage";`），会话、仿真器、测试都引用常量，不要散落字符串字面量。
 
 `CreateSession(DeviceContext context)`：每个模块调用一次，读取 `context.Parameters` 后构造会话。`context.Address` 已按地址范围校验，`context.Parameters` 已校验并补全默认值。

@@ -60,7 +60,7 @@ public static class WireHealths
 /// <param name="Source">接线实际所在的位置</param>
 /// <param name="IsInherited">接线来自查询位置的上级</param>
 /// <param name="ModuleText">"总线 · 模块"，模块已不存在时为说明文字</param>
-/// <param name="ChannelText">通道名，如"输出 3"</param>
+/// <param name="ChannelText">通道名，如"输出 CH3"</param>
 /// <param name="Problem">非就绪时的原因（面向操作员）</param>
 /// <param name="Driver">驱动的点位声明（有驱动实现时），用于格式化读数</param>
 /// <param name="Module">模块通信状态与读数；未轮询过为 null</param>
@@ -200,7 +200,7 @@ public sealed class WiringInspector
 
         if (!_bindings.TryGet(wire.Channel.Device, out var binding))
         {
-            return new WireStatus(wire, effective.Source, inherited, "模块已不存在", $"{wire.Channel.Group} {wire.Channel.Index}",
+            return new WireStatus(wire, effective.Source, inherited, "模块已不存在", ChannelGroup.DefaultName(wire.Channel.Group, wire.Channel.Index),
                 WireHealth.Invalid, "接线指向的模块已被删除，或所在总线未注册。", null, null);
         }
 
@@ -211,7 +211,7 @@ public sealed class WiringInspector
         // 模块实际可用的通道 = 驱动的通道能力 + 模块的通道配置
         var channels = ModuleChannelLookup.Resolve(_catalog, device);
         var group = channels.IsSuccess ? ModuleChannelLookup.Find(channels.Value, wire.Channel.Group) : null;
-        var channelText = group?.ChannelName(wire.Channel.Index) ?? $"{wire.Channel.Group} {wire.Channel.Index}";
+        var channelText = group?.ChannelName(wire.Channel.Index) ?? ChannelGroup.DefaultName(wire.Channel.Group, wire.Channel.Index);
         if (channels.IsFailure)
             return Invalid(channels.Error.Message);
         if (group is null || !group.Contains(wire.Channel.Index))
