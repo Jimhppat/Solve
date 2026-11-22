@@ -1,4 +1,5 @@
 using Solve.Core.Application.Wiring;
+using Solve.Core.Domain.Drivers;
 
 namespace Solve.UI.ViewModels.Twin;
 
@@ -14,7 +15,7 @@ public sealed record TwinWireLine(string Text, string HealthColor)
         var readings = status is { Driver: { } driver, Module: { } module }
             ? ReadingFormat.Channel(driver.Points, module.Points, status.Wire.Channel.Group, status.Wire.Channel.Index)
             : string.Empty;
-        var parts = new List<string> { status.Wire.KindText, $"{status.ModuleText} {status.ChannelText}", status.Health.DisplayName() };
+        var parts = new List<string> { status.Wire.Kind.DisplayName(), $"{status.ModuleText} {status.ChannelText}", status.Health.DisplayName() };
         if (readings.Length > 0)
             parts.Add(readings);
 

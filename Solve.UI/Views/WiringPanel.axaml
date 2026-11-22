@@ -222,11 +222,6 @@
                 <CheckBox Grid.Column="1" Content="通道不够时续接同型号的下一个模块"
                           IsChecked="{Binding ContinueNextInput}" />
             </Grid>
-            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
-                <TextBlock Grid.Column="0" Classes="label" Text="用途" />
-                <TextBox Grid.Column="1" AutomationProperties.Name="用途" PlaceholderText="如 VBAT"
-                         MaxLength="{Binding MaxPurposeLength}" Text="{Binding PurposeInput}" />
-            </Grid>
             <Grid ColumnDefinitions="72,*" ColumnSpacing="12" IsVisible="{Binding IsSingle}">
                 <TextBlock Grid.Column="0" Classes="label" Text="线号" />
                 <TextBox Grid.Column="1" AutomationProperties.Name="线号"
@@ -254,15 +249,10 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- 修改用途与线号 -->
+        <!-- 修改线号 -->
         <StackPanel Spacing="12" IsVisible="{Binding IsEditing}" IsEnabled="{Binding CanEdit}">
             <Border Height="1" Background="{DynamicResource SemiColorBorder}" />
             <TextBlock Text="{Binding EditingTitle}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource SemiColorText0}" />
-            <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
-                <TextBlock Grid.Column="0" Classes="label" Text="用途" />
-                <TextBox Grid.Column="1" AutomationProperties.Name="用途" PlaceholderText="如 VBAT"
-                         MaxLength="{Binding MaxPurposeLength}" Text="{Binding PurposeInput}" />
-            </Grid>
             <Grid ColumnDefinitions="72,*" ColumnSpacing="12">
                 <TextBlock Grid.Column="0" Classes="label" Text="线号" />
                 <TextBox Grid.Column="1" AutomationProperties.Name="线号"

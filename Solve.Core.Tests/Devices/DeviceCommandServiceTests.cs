@@ -844,6 +844,51 @@ public sealed class DeviceCommandServiceTests : IAsyncLifetime
         await WaitUntilAsync(() => _wiring.Current.Topology?.GetNode(TopologyAddress.Parse(address)).Value.IsEnabled == false);
     }
 
+    /// <summary>
+    /// 一个位置接多路同功能通道、都不写用途（整模块拖到一个位置）：按用途寻址无法确定目标、被拒绝；
+    /// 按通道（CHn）定位只下发到那一路，安全停止同样按通道；同一路通道同时接在上级时拒绝并说明
+    /// </summary>
+    [Fact]
+    public async Task SameKindChannelsWithoutPurpose_AreAddressedByChannel()
+    {
+        var relay = await AddModuleAsync(Relay, "继电器板", 2);
+        for (var index = 1; index <= 4; index++)
+            await WireAsync("C01-L01-S01-F01", new ChannelRef(relay.Id, TestRelayDriver.Group, index));
+        await StartPollingAsync(relay);
+        var service = Service();
+        var product = Node("C01-L01-S01-F01-P01");
+        ChannelRef Ch(int index) => new(relay.Id, TestRelayDriver.Group, index);
+
+        var byPurpose = service.Prepare(new DeviceCommandRequest(product.Id, ChannelKind.Switch, null, TestRelayDriver.On));
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, byPurpose.Error.Code);
+        Assert.Contains("4 路", byPurpose.Error.Message);
+
+        var plan = service.Prepare(new DeviceCommandRequest(product.Id, ChannelKind.Switch, null, TestRelayDriver.On) { Channel = Ch(2) });
+        Assert.True(plan.IsSuccess, plan.IsFailure ? plan.Error.Message : null);
+        Assert.Equal("继电器 CH2", plan.Value.ChannelText);
+        var executed = await service.ExecuteAsync(plan.Value, confirmed: false, CancellationToken.None);
+        Assert.True(executed.IsSuccess, executed.IsFailure ? executed.Error.Message : null);
+        var on = Assert.Single(_transport.GetTxHistory(), f => f.Length == 4 && f[0] == TestRelayDriver.RequestHeader && f[2] == TestRelayDriver.OnCode);
+        Assert.Equal(2, on[3]);
+
+        var stopped = await service.SafeStopAsync(
+            new DeviceSafeStopRequest(product.Id, ChannelKind.Switch, null, SafeStopScope.Channel) { Channel = Ch(3) }, CancellationToken.None);
+        Assert.True(stopped.IsSuccess, stopped.IsFailure ? stopped.Error.Message : null);
+        Assert.Equal("继电器 CH3", stopped.Value.TargetText);
+        Assert.Equal(1, SafeFrames(3));
+
+        // 没接到这里的通道、功能对不上：照样拒绝，不发任何报文
+        Assert.Equal(DeviceCommandErrors.NotWiredCode,
+            service.Prepare(new DeviceCommandRequest(product.Id, ChannelKind.Load, null, TestRelayDriver.On) { Channel = Ch(2) }).Error.Code);
+
+        // 同一路同时接在上级层位：生效范围不同，不替操作员挑，拒绝并说明
+        await WireAsync("C01-L01", Ch(2));
+        var twice = service.Prepare(new DeviceCommandRequest(product.Id, ChannelKind.Switch, null, TestRelayDriver.Off) { Channel = Ch(2) });
+        Assert.Equal(DeviceCommandErrors.InvalidRequestCode, twice.Error.Code);
+        Assert.Contains("同时接在 C01-L01、C01-L01-S01-F01", twice.Error.Message);
+        Assert.Equal((1, 0), (RelayFrames(TestRelayDriver.OnCode), RelayFrames(0x02)));
+    }
+
     [Fact]
     public async Task SafeStop_Channel_OnDisabledPosition_IsSent_WhileOrdinaryOffIsStillInterlocked()
     {

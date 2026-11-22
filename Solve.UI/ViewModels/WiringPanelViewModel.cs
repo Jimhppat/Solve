@@ -31,7 +31,7 @@ public enum WiringEditorMode
     Batch,
 
     /// <summary>
-    /// 修改一路接线的用途与线号
+    /// 修改一路接线的线号
     /// </summary>
     Edit,
 }
@@ -84,7 +84,6 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     private WiringLevelOption? _selectedLevel;
     private decimal? _channelInput;
     private bool _continueNext = true;
-    private string _purposeInput = string.Empty;
     private string _labelInput = string.Empty;
     private WireRowViewModel? _editing;
     private WireRowViewModel? _pendingRemove;
@@ -307,16 +306,6 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public string PurposeInput
-    {
-        get => _purposeInput;
-        set
-        {
-            if (SetProperty(ref _purposeInput, value ?? string.Empty))
-                OnInputChanged();
-        }
-    }
-
     public string LabelInput
     {
         get => _labelInput;
@@ -326,8 +315,6 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
                 OnInputChanged();
         }
     }
-
-    public int MaxPurposeLength => Wire.MaxPurposeLength;
 
     public int MaxLabelLength => Wire.MaxLabelLength;
 
@@ -507,9 +494,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         SetPendingBatch(null, null);
         Message = null;
         _editing = null;
-        _purposeInput = string.Empty;
         _labelInput = string.Empty;
-        OnPropertyChanged(nameof(PurposeInput));
         OnPropertyChanged(nameof(LabelInput));
         SetMode(mode);
 
@@ -540,9 +525,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         SetPendingBatch(null, null);
         Message = null;
         _editing = row;
-        _purposeInput = row.Wire.Purpose ?? string.Empty;
         _labelInput = row.Wire.Label ?? string.Empty;
-        OnPropertyChanged(nameof(PurposeInput));
         OnPropertyChanged(nameof(LabelInput));
         OnPropertyChanged(nameof(EditingTitle));
         SetMode(WiringEditorMode.Edit);
@@ -649,7 +632,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         if (!CanCommand || _commands is not { } commands || _node is not { } node)
             return;
 
-        var request = new DeviceCommandRequest(node.Id, row.Wire.Kind, row.Wire.Purpose, option.Key) { Arguments = arguments };
+        var request = new DeviceCommandRequest(node.Id, row.Wire.Kind, row.Wire.Purpose, option.Key) { Channel = row.Wire.Channel, Arguments = arguments };
 
         SetBusy(true);
         Result<DeviceCommandPlan> plan;
@@ -754,11 +737,11 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return;
 
         var channel = new ChannelRef(module.Module.Device.Id, group.Group.Key, index);
-        var purpose = _purposeInput;
         var label = _labelInput;
         await RunAsync(async () =>
         {
-            var plan = await Task.Run(() => inspector.Wiring.PlanAdd(node.Id, channel, purpose, label));
+            // 界面不再填用途：一个位置上的多路通道按通道（CHn）区分，命令也按通道定位
+            var plan = await Task.Run(() => inspector.Wiring.PlanAdd(node.Id, channel, null, label));
             if (plan.IsFailure)
                 return Result.Failure(plan.Error);
 
@@ -785,7 +768,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
                 .Select(m => new ChannelSource(m.Device.Id, group.Group)));
         }
 
-        var request = new WiringBatchRequest(node.Id, level.Level, sources, start) { Purpose = _purposeInput };
+        var request = new WiringBatchRequest(node.Id, level.Level, sources, start);
         SetBusy(true);
         Message = null;
         try
@@ -831,7 +814,8 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         if (_inspector is not { } inspector || _editing is not { } row)
             return;
 
-        var purpose = _purposeInput;
+        // 只改线号；旧数据里已有的用途原样保留（产品位接点核对仍按它匹配）
+        var purpose = row.Wire.Purpose;
         var label = _labelInput;
         var ok = await RunAsync(() => inspector.Wiring.UpdateAsync(row.Id, purpose, label, CancellationToken.None), success: "已保存");
         if (ok)
