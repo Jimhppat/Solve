@@ -59,10 +59,15 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     /// </summary>
     private const int PreviewLines = 5;
 
+    private static readonly IReadOnlyDictionary<string, double> NoArguments = new Dictionary<string, double>();
+
     private readonly CancellationTokenSource _lifetime = new();
     private WiringInspector? _inspector;
     private DeviceCommandService? _commands;
     private DeviceCommandPlan? _pendingCommand;
+    private WireRowViewModel? _argumentRow;
+    private DeviceCommandOption? _argumentCommand;
+    private IReadOnlyList<CommandArgumentInputViewModel> _argumentInputs = [];
     private TopologyNode? _node;
     private IReadOnlyList<PortStatusRow> _portRows = [];
     private DispatcherTimer? _timer;
@@ -103,6 +108,8 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         CancelRemoveCommand = new RelayCommand(() => PendingRemove = null);
         ConfirmCommandCommand = new AsyncRelayCommand(ConfirmCommandAsync, () => CanCommand && _pendingCommand is not null);
         CancelCommandCommand = new RelayCommand(() => PendingCommand = null);
+        SubmitArgumentsCommand = new AsyncRelayCommand(SubmitArgumentsAsync, () => CanCommand && _argumentCommand is not null);
+        CancelArgumentsCommand = new RelayCommand(CloseArguments);
     }
 
     // ==================== 显示 ====================
@@ -398,6 +405,36 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
     public bool IsPendingHazardous => _pendingCommand?.Safety == CommandSafety.Hazardous;
 
+    // ==================== 命令参数输入 ====================
+
+    /// <summary>
+    /// 正在为带参数的命令（如"恒流带载"）输入设定值
+    /// </summary>
+    public bool IsArgumentInputOpen => _argumentCommand is not null;
+
+    /// <summary>
+    /// 如"恒流带载 · 1# RS-485 · 电子负载-01  负载 1"
+    /// </summary>
+    public string? ArgumentTitle => _argumentCommand is { } option && _argumentRow is { } row
+        ? $"{option.Name} · {row.HardwareText}"
+        : null;
+
+    /// <summary>
+    /// 按驱动声明生成的输入项（名称、单位、范围，有默认值的已预填）
+    /// </summary>
+    public IReadOnlyList<CommandArgumentInputViewModel> ArgumentInputs
+    {
+        get => _argumentInputs;
+        private set => SetProperty(ref _argumentInputs, value);
+    }
+
+    /// <summary>
+    /// 校验输入后下发：照常解析、过联锁，需要确认的先确认
+    /// </summary>
+    public AsyncRelayCommand SubmitArgumentsCommand { get; }
+
+    public RelayCommand CancelArgumentsCommand { get; }
+
     // ==================== 接入与显示 ====================
 
     /// <summary>
@@ -430,6 +467,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         if (changed)
         {
             CloseEditor();
+            CloseArguments();
             PendingRemove = null;
             PendingCommand = null;
             Message = null;
@@ -465,6 +503,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
     {
         PendingRemove = null;
         PendingCommand = null;
+        CloseArguments();
         SetPendingBatch(null, null);
         Message = null;
         _editing = null;
@@ -497,6 +536,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
         PendingRemove = null;
         PendingCommand = null;
+        CloseArguments();
         SetPendingBatch(null, null);
         Message = null;
         _editing = row;
@@ -514,24 +554,102 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return;
 
         CloseEditor();
+        CloseArguments();
         Message = null;
         PendingCommand = null;
         PendingRemove = row;
     }
 
     /// <summary>
-    /// 点了接线行上的命令：解析并过联锁；需要确认的先显示确认，其余直接执行。联锁不满足时显示原因。
+    /// 点了接线行上的命令：带参数的先打开参数输入；其余解析并过联锁，需要确认的先显示确认，其余直接执行。
     /// </summary>
     private async void RequestCommand(WireRowViewModel row, DeviceCommandOption option)
     {
-        if (!CanCommand || _commands is not { } commands || _node is not { } node)
+        if (!CanCommand || _node is null)
             return;
 
         CloseEditor();
         PendingRemove = null;
         PendingCommand = null;
         Message = null;
-        var request = new DeviceCommandRequest(node.Id, row.Wire.Kind, row.Wire.Purpose, option.Key);
+        if (option.Arguments.Count > 0)
+        {
+            OpenArguments(row, option);
+            return;
+        }
+
+        CloseArguments();
+        await PrepareCommandAsync(row, option, NoArguments);
+    }
+
+    /// <summary>
+    /// 为带参数的命令打开输入项；再点同一路接线的同一命令时保留已输入的值
+    /// </summary>
+    private void OpenArguments(WireRowViewModel row, DeviceCommandOption option)
+    {
+        if (_argumentCommand == option && _argumentRow?.Id == row.Id)
+            return;
+
+        _argumentRow = row;
+        _argumentCommand = option;
+        ArgumentInputs = option.Arguments.Select(a => new CommandArgumentInputViewModel(a)).ToList();
+        OnArgumentsChanged();
+    }
+
+    private void CloseArguments()
+    {
+        if (_argumentCommand is null)
+            return;
+
+        _argumentRow = null;
+        _argumentCommand = null;
+        ArgumentInputs = [];
+        OnArgumentsChanged();
+    }
+
+    private void OnArgumentsChanged()
+    {
+        OnPropertyChanged(nameof(IsArgumentInputOpen));
+        OnPropertyChanged(nameof(ArgumentTitle));
+        SubmitArgumentsCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// 参数输入后的"下发"：逐项校验（原因显示在各输入项旁），全部合法才交给内核解析；
+    /// 内核按同一声明再校验一次并补全默认值
+    /// </summary>
+    private async Task SubmitArgumentsAsync()
+    {
+        if (_argumentRow is not { } row || _argumentCommand is not { } option)
+            return;
+
+        var arguments = new Dictionary<string, double>(StringComparer.Ordinal);
+        var valid = true;
+        foreach (var input in _argumentInputs)
+        {
+            // 不在第一个错处停下：一次把全部不合法的输入项都标出来
+            if (!input.TryRead(out var value))
+                valid = false;
+            else if (value is { } number)
+                arguments[input.Info.Key] = number;
+        }
+
+        if (!valid)
+            return;
+
+        Message = null;
+        await PrepareCommandAsync(row, option, arguments);
+    }
+
+    /// <summary>
+    /// 解析并过联锁；需要确认的先显示确认，其余直接执行。联锁不满足或参数被拒绝时显示原因（参数输入保持打开以便修改）。
+    /// </summary>
+    private async Task PrepareCommandAsync(WireRowViewModel row, DeviceCommandOption option, IReadOnlyDictionary<string, double> arguments)
+    {
+        if (!CanCommand || _commands is not { } commands || _node is not { } node)
+            return;
+
+        var request = new DeviceCommandRequest(node.Id, row.Wire.Kind, row.Wire.Purpose, option.Key) { Arguments = arguments };
 
         SetBusy(true);
         Result<DeviceCommandPlan> plan;
@@ -560,6 +678,8 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // 计划已冻结参数值，确认文案里列出：输入项到此收起
+        CloseArguments();
         if (plan.Value.RequiresConfirmation)
         {
             PendingCommand = plan.Value;
@@ -621,9 +741,9 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
 
     private IReadOnlyList<DeviceCommandOption> ListCommands(Wire wire)
     {
-        // 接线面板还没有参数输入：写参数类命令、带必填参数的命令（如电子负载的恒流带载）暂不在这里提供，
-        // 否则点了只会因缺少参数被内核拒绝。只有默认参数的命令按默认值下发，确认文案里会列出参数值
-        return _commands?.ListCommands(wire).Where(c => c.Safety != CommandSafety.Parameter && !c.NeedsInput).ToList() ?? [];
+        // 写参数类命令（改设备里保存的配置，下电不丢）不在接线面板上提供：这里只做输出动作。
+        // 带参数的命令（如电子负载的恒流带载）点了先输入设定值
+        return _commands?.ListCommands(wire).Where(c => c.Safety != CommandSafety.Parameter).ToList() ?? [];
     }
 
     private async Task AddAsync()
@@ -1026,6 +1146,7 @@ public sealed class WiringPanelViewModel : ViewModelBase, IDisposable
         SaveEditCommand.RaiseCanExecuteChanged();
         ConfirmRemoveCommand.RaiseCanExecuteChanged();
         ConfirmCommandCommand.RaiseCanExecuteChanged();
+        SubmitArgumentsCommand.RaiseCanExecuteChanged();
         foreach (var row in _rows)
             row.RaiseCommandsChanged();
     }

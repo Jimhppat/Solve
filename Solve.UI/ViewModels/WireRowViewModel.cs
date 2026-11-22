@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Solve.Core.Application.Devices.Commands;
 using Solve.Core.Application.Wiring;
@@ -24,6 +25,91 @@ public sealed class WireCommandViewModel(DeviceCommandOption option, RelayComman
     public bool IsHazardous => Option.Safety == CommandSafety.Hazardous;
 
     public RelayCommand Command { get; } = command;
+}
+
+/// <summary>
+/// 带参数命令的一个输入项（如电子负载"恒流带载"的电流）：按驱动声明的名称、单位、范围生成，有默认值时预填。
+/// 输入一变就按 <see cref="CommandArgumentInfo.Check"/> 校验，不合法的原因显示在输入框旁；留空只在下发时才提示。
+/// </summary>
+public sealed class CommandArgumentInputViewModel : ViewModelBase
+{
+    private string _text;
+    private string? _error;
+
+    public CommandArgumentInputViewModel(CommandArgumentInfo info)
+    {
+        Info = info ?? throw new ArgumentNullException(nameof(info));
+        _text = info.DefaultValue is { } value ? Format(value) : string.Empty;
+    }
+
+    public CommandArgumentInfo Info { get; }
+
+    /// <summary>
+    /// 如"电流（A）"
+    /// </summary>
+    public string Label => Info.Unit.Length == 0 ? Info.Name : $"{Info.Name}（{Info.Unit}）";
+
+    /// <summary>
+    /// 允许范围，如"0～60"，输入框为空时作占位文字
+    /// </summary>
+    public string RangeText => $"{Format(Info.Minimum)}～{Format(Info.Maximum)}";
+
+    public string Text
+    {
+        get => _text;
+        set
+        {
+            if (SetProperty(ref _text, value ?? string.Empty))
+                Error = Validate(_text, out _, reportEmpty: false);
+        }
+    }
+
+    /// <summary>
+    /// 不合法的原因（正常字号显示在输入框下方）；合法或尚未输入时为 null
+    /// </summary>
+    public string? Error
+    {
+        get => _error;
+        private set
+        {
+            if (SetProperty(ref _error, value))
+                OnPropertyChanged(nameof(HasError));
+        }
+    }
+
+    public bool HasError => _error is not null;
+
+    /// <summary>
+    /// 下发前读取输入值。合法时返回 true，<paramref name="value"/> 为 null 表示可选参数留空（由内核补默认值）；
+    /// 不合法（含必填参数留空）时返回 false，并把原因显示在输入项旁。
+    /// </summary>
+    public bool TryRead(out double? value)
+    {
+        Error = Validate(_text, out value, reportEmpty: true);
+        return _error is null;
+    }
+
+    private string? Validate(string text, out double? value, bool reportEmpty)
+    {
+        value = null;
+
+        // 中文输入法下的全角数字、全角小数点与句号按半角处理
+        var normalized = text.Normalize(System.Text.NormalizationForm.FormKC).Replace('。', '.').Trim();
+        if (normalized.Length == 0)
+            return reportEmpty && Info.IsRequired ? $"请输入{Info.Name}。" : null;
+
+        // 只按半角小数点解析，不随系统区域设置把逗号当小数点（"1,5" 不会被读成 15 或 1.5）
+        if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+            return $"{Info.Name}必须是数字。";
+
+        if (Info.Check(number) is { } error)
+            return error;
+
+        value = number;
+        return null;
+    }
+
+    private static string Format(double value) => value.ToString("G", CultureInfo.InvariantCulture);
 }
 
 /// <summary>
